@@ -39,6 +39,14 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, the search's replay of a block does no work twice.** Chosen because the replay that closes
+a block's search counted its coefficients and reconstructed it again. It now takes the bits counted
+during the search (e1f02b11) and leaves luma alone, and chroma too if the winner was the last tried (f04be867). The first
+gives cycles e0 0.91-0.98, e2 0.95-0.98, e4 0.96-0.98; the second instructions e0 0.93-0.95, e2 0.95-0.96, e4 0.985-0.994.
+Bytes and dB equal in 36 of 36 and 16 of 16 cells, photos and drawn. A fault that keeps stale chroma fails
+tests by name, and my first version took a chroma palette trial for plain DC, which review caught
+before the run; palette blocks keep the old path. `enc::` 54 passed.
+
 **2026-11-02, the writing pass reconstructs nothing.** Chosen because a profile of the encoder alone
 at effort 0 shows every block predicted and reconstructed again after the search left the same pixels in
 place. Predicted: about 6% at effort 0, the same bytes everywhere. `search_sb` now restores only the
