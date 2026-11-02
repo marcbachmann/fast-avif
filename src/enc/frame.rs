@@ -452,6 +452,10 @@ pub struct Encoder<D: Decide> {
     spare: (Vec<Vec<i32>>, Vec<Vec<TxDone>>),
     /// The bits of the levels `rd_residual` chose.
     residual_bits: Option<u32>,
+    /// The chroma modes tried last and so still in the reconstruction.
+    last_chroma: Option<(u8, i8, [i8; 2], u8)>,
+    /// A block's transform blocks when its reconstruction needs no replay.
+    searched: Option<Vec<TxDone>>,
     /// Their distortion.
     residual_dist: u64,
     /// A cost the planes being predicted must stay under, their decided transform blocks'
@@ -656,6 +660,8 @@ impl<D: Decide> Encoder<D> {
             chosen: Vec::new(),
             spare: (Vec::new(), Vec::new()),
             residual_bits: None,
+            last_chroma: None,
+            searched: None,
             residual_dist: 0,
             limit: None,
             spent: (0, 0),
@@ -1241,6 +1247,7 @@ impl<D: Decide> Encoder<D> {
         let (limits, max_tx) = self.limits(bs);
         let mut searched = None;
         let (intra, depth) = if self.dry {
+            searched = self.searched.take();
             self.trial.unwrap()
         } else if self.decide.searches() {
             match self.next_node() {
@@ -2549,6 +2556,7 @@ impl<D: Decide> Encoder<D> {
             let luma_done = self.snap(x, y, w4, h4);
             self.stage = 2;
             let chroma = |e: &mut Self, intra: &Intra, limit: f64| -> (f64, Vec<TxDone>) {
+                e.last_chroma = Some((intra.uv_mode, intra.uv_angle, intra.cfl, intra.pal_sz[1]));
                 e.restore_contexts(&luma_done);
                 (e.limit, e.spent) = (Some(limit), (0, 0));
                 let txs = e.predict_block(ti, bs, x, y, edge_flags, intra, depth, 1..3);
@@ -2653,7 +2661,10 @@ impl<D: Decide> Encoder<D> {
             if limits.cfl && !cuts.no_cfl && !dc_alone {
                 let alphas = match fit {
                     Some((alphas, ..)) => alphas,
-                    None => self.cfl_alphas(ti, bs, x, y, &intra, depth, &luma_done),
+                    None => {
+                        self.last_chroma = None;
+                        self.cfl_alphas(ti, bs, x, y, &intra, depth, &luma_done)
+                    }
                 };
                 if alphas != [0, 0] {
                     let c = Intra { uv_mode: CFL_PRED, uv_angle: 0, cfl: alphas, ..intra };
@@ -2671,13 +2682,31 @@ impl<D: Decide> Encoder<D> {
         }
 
         self.lap(&mut clock, 2);
-        self.restore(&start);
         self.trial = Some((intra, depth));
         self.stage = 4;
-        luma_txs.append(&mut chroma_txs);
-        self.recycle(chroma_txs);
-        luma_txs.reverse();
-        self.replay = Some(luma_txs);
+        // Luma was coded last for the winner and chroma trials leave it alone; its chroma stands
+        // if it was the last tried. A palette's index map may be another candidate's.
+        if limits.chroma && intra.pal_sz == [0, 0] && !chroma_txs.is_empty() {
+            if self.last_chroma != Some((intra.uv_mode, intra.uv_angle, intra.cfl, intra.pal_sz[1])) {
+                chroma_txs.reverse();
+                self.replay = Some(chroma_txs);
+                self.restore_contexts(&start);
+                chroma_txs = self.predict_block(ti, bs, x, y, edge_flags, &intra, depth, 1..3);
+                if let Some(r) = self.replay.take() {
+                    self.recycle(r);
+                }
+            }
+            self.restore_contexts(&start);
+            luma_txs.append(&mut chroma_txs);
+            self.recycle(chroma_txs);
+            self.searched = Some(luma_txs);
+        } else {
+            self.restore(&start);
+            luma_txs.append(&mut chroma_txs);
+            self.recycle(chroma_txs);
+            luma_txs.reverse();
+            self.replay = Some(luma_txs);
+        }
         let txs = self.code_b(ti, bs, x, y, edge_flags);
         self.lap(&mut clock, 4);
         self.stage = 5;
