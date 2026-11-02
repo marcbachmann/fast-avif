@@ -60,6 +60,18 @@ const fn kinds(t: TxfmType) -> (Tx1d, Tx1d) {
     }
 }
 
+/// The 1-D transform of a 2-D type in one pass; `COLS` is the second. Branching on it in a `const`
+/// block keeps the other kernels out of the IR, which they would otherwise grow by every
+/// `inline(always)` below until LLVM folds the branch.
+const fn kind(t: TxfmType, cols: bool) -> Tx1d {
+    let (rows, columns) = kinds(t);
+    if cols {
+        columns
+    } else {
+        rows
+    }
+}
+
 /// What the 1-D kernels take of a lane type: butterflies clipped where the C clips, products
 /// with 12-bit constants rounded as `(x * k + 2048) >> 12`. The `i16` lanes saturate to `i16`,
 /// the C's clip at 8 bpc and in the column pass at 10; [`Row10`] runs the 10-bit row pass.
@@ -350,15 +362,16 @@ fn identity4<V: Lanes>(v: &mut [V; 4], shift: u32) {
 }
 
 #[inline(always)]
-fn tx4<V: Lanes + Butterfly>(v: &mut [V; 4], t: Tx1d, shift: u32) {
-    match t {
-        Dct => dct4(v),
-        Adst => adst4(v),
-        FlipAdst => {
-            adst4(v);
-            v.reverse();
-        }
-        Identity => identity4(v, shift),
+fn tx4<V: Lanes + Butterfly, const COLS: bool, const TYPE: TxfmType>(v: &mut [V; 4], shift: u32) {
+    if const { matches!(kind(TYPE, COLS), Dct) } {
+        dct4(v)
+    } else if const { matches!(kind(TYPE, COLS), Adst) } {
+        adst4(v)
+    } else if const { matches!(kind(TYPE, COLS), FlipAdst) } {
+        adst4(v);
+        v.reverse();
+    } else {
+        identity4(v, shift)
     }
 }
 
@@ -909,62 +922,68 @@ fn identity16<V: Lanes>(v: &mut [V; 16], shift: u32) {
 }
 
 #[inline(always)]
-fn tx8<V: Lanes + Butterfly, const COLS: bool>(v: &mut [V; 8], t: Tx1d, half: bool) {
-    match t {
-        Dct if half => dct8::<_, true>(v),
-        Dct => dct8::<_, false>(v),
-        Adst => adst8::<_, COLS>(v),
-        FlipAdst => {
-            adst8::<_, COLS>(v);
-            v.reverse();
+fn tx8<V: Lanes + Butterfly, const COLS: bool, const TYPE: TxfmType>(v: &mut [V; 8], half: bool) {
+    if const { matches!(kind(TYPE, COLS), Dct) } {
+        if half {
+            dct8::<_, true>(v)
+        } else {
+            dct8::<_, false>(v)
         }
-        Identity => {}
+    } else if const { matches!(kind(TYPE, COLS), Adst) } {
+        adst8::<_, COLS>(v)
+    } else if const { matches!(kind(TYPE, COLS), FlipAdst) } {
+        adst8::<_, COLS>(v);
+        v.reverse();
     }
 }
 
 #[inline(always)]
-fn tx16<V: Lanes + Butterfly, const COLS: bool>(
+fn tx16<V: Lanes + Butterfly, const COLS: bool, const TYPE: TxfmType>(
     v: &mut [V; 16],
-    t: Tx1d,
     shift: u32,
     half: bool,
 ) {
-    match t {
-        Dct if half => dct16::<_, true>(v),
-        Dct => dct16::<_, false>(v),
-        Adst => adst16::<_, COLS>(v),
-        FlipAdst => {
-            adst16::<_, COLS>(v);
-            v.reverse();
+    if const { matches!(kind(TYPE, COLS), Dct) } {
+        if half {
+            dct16::<_, true>(v)
+        } else {
+            dct16::<_, false>(v)
         }
-        Identity => identity16(v, shift),
+    } else if const { matches!(kind(TYPE, COLS), Adst) } {
+        adst16::<_, COLS>(v)
+    } else if const { matches!(kind(TYPE, COLS), FlipAdst) } {
+        adst16::<_, COLS>(v);
+        v.reverse();
+    } else {
+        identity16(v, shift)
     }
 }
 
 /// Only the DCT and the identity reach 32 points; the identity's factor of 4 is a shift the
 /// rounding absorbs.
 #[inline(always)]
-fn tx32<V: Lanes + Butterfly>(v: &mut [V; 32], t: Tx1d, half: bool) {
-    match (t, half) {
-        (Dct, true) => dct32::<_, true>(v),
-        (Dct, false) => dct32::<_, false>(v),
-        _ => {}
+fn tx32<V: Lanes + Butterfly, const COLS: bool, const TYPE: TxfmType>(v: &mut [V; 32], half: bool) {
+    if const { matches!(kind(TYPE, COLS), Dct) } {
+        if half {
+            dct32::<_, true>(v)
+        } else {
+            dct32::<_, false>(v)
+        }
     }
 }
 
 /// `half`: the upper half of the inputs is zero.
 #[inline(always)]
-fn tx<V: Lanes + Butterfly, const N: usize, const COLS: bool>(
+fn tx<V: Lanes + Butterfly, const N: usize, const COLS: bool, const TYPE: TxfmType>(
     v: &mut [V; N],
-    t: Tx1d,
     shift: u32,
     half: bool,
 ) {
     match N {
-        4 => tx4((&mut v[..4]).try_into().unwrap(), t, shift),
-        8 => tx8::<_, COLS>((&mut v[..8]).try_into().unwrap(), t, half),
-        16 => tx16::<_, COLS>((&mut v[..16]).try_into().unwrap(), t, shift, half),
-        32 => tx32((&mut v[..32]).try_into().unwrap(), t, half),
+        4 => tx4::<_, COLS, TYPE>((&mut v[..4]).try_into().unwrap(), shift),
+        8 => tx8::<_, COLS, TYPE>((&mut v[..8]).try_into().unwrap(), half),
+        16 => tx16::<_, COLS, TYPE>((&mut v[..16]).try_into().unwrap(), shift, half),
+        32 => tx32::<_, COLS, TYPE>((&mut v[..32]).try_into().unwrap(), half),
         64 => dct64((&mut v[..64]).try_into().unwrap()),
         _ => unreachable!(),
     }
@@ -1085,17 +1104,17 @@ fn scatter<const W: usize, const H: usize, const G: usize>(
 
 /// The column pass over groups `g0..` into the picture.
 #[inline(always)]
-fn cols_128<BD: BitDepth, const W: usize, const H: usize, const G: usize>(
+fn cols_128<BD: BitDepth, const W: usize, const H: usize, const G: usize, const TYPE: TxfmType>(
     dst: Rav1dPictureDataComponentOffset,
     groups: &mut [[I16x8; H]; G],
     g0: usize,
-    cols: Tx1d,
     half: bool,
     px_max: i16,
 ) {
+    let cols = const { kind(TYPE, true) };
     for g in g0..G {
         let group = &mut groups[g];
-        tx::<_, H, true>(group, cols, 4, half);
+        tx::<_, H, true, TYPE>(group, 4, half);
         round(group, round_mul(cols, H, 4), negated(cols, H));
         add_rows::<BD, W, H>(dst, g * 8, group, px_max);
     }
@@ -1120,7 +1139,7 @@ fn add_block<
     coeff: &mut [i16],
     eob: i32,
 ) {
-    let (rows, cols) = kinds(TYPE);
+    let rows = const { kind(TYPE, false) };
     if TYPE == DCT_DCT && eob == 0 {
         let dc = coeff[0] as i32;
         coeff[0] = 0;
@@ -1147,7 +1166,7 @@ fn add_block<
     #[cfg(target_arch = "x86_64")]
     if WIDE && h >= 16 {
         while y0 < h {
-            wide::rows::<W, H, G>(coeff, ch, y0, w, rect, rows, shift, half, &mut groups);
+            wide::rows::<W, H, G, TYPE>(coeff, ch, y0, w, rect, shift, half, &mut groups);
             y0 += 16;
         }
     }
@@ -1175,7 +1194,7 @@ fn add_block<
             y0 += 8;
             continue;
         }
-        tx::<_, W, false>(&mut v, rows, shift, half);
+        tx::<_, W, false, TYPE>(&mut v, shift, half);
         round(&mut v, round_mul(rows, W, shift), negated(rows, W));
         scatter(&v, y0, &mut groups);
         y0 += 8;
@@ -1185,36 +1204,63 @@ fn add_block<
     #[cfg(target_arch = "x86_64")]
     if WIDE && W >= 16 {
         while g + 1 < G {
-            wide::cols::<BD, H>(dst, g * 8, &groups[g], &groups[g + 1], cols, half, 255);
+            wide::cols::<BD, H, TYPE>(dst, g * 8, &groups[g], &groups[g + 1], half, 255);
             g += 2;
         }
     }
-    cols_128::<BD, W, H, G>(dst, &mut groups, g, cols, half, 255);
+    cols_128::<BD, W, H, G, TYPE>(dst, &mut groups, g, half, 255);
 }
 
 /// The 10-bit row transform of `t` over `N` points, the identity's scale left to [`rows10`].
 #[inline(always)]
-fn tx10<D: Dwords, const N: usize>(v: &mut [Row10<D>; N], t: Tx1d, half: bool) {
-    match (N, t) {
-        (_, Identity) => {}
-        (4, _) => {
+fn tx10<D: Dwords, const N: usize, const TYPE: TxfmType>(v: &mut [Row10<D>; N], half: bool) {
+    if const { matches!(kind(TYPE, false), Identity) } {
+        return;
+    }
+    match N {
+        4 => {
             let v: &mut [_; 4] = (&mut v[..4]).try_into().unwrap();
-            match t {
-                Dct => dct4(v),
-                _ => adst4(v),
+            if const { matches!(kind(TYPE, false), Dct) } {
+                dct4(v)
+            } else {
+                adst4(v)
             }
         }
-        (8, Dct) if half => dct8::<_, true>((&mut v[..8]).try_into().unwrap()),
-        (8, Dct) => dct8::<_, false>((&mut v[..8]).try_into().unwrap()),
-        (8, _) => adst8::<_, false>((&mut v[..8]).try_into().unwrap()),
-        (16, Dct) if half => dct16::<_, true>((&mut v[..16]).try_into().unwrap()),
-        (16, Dct) => dct16::<_, false>((&mut v[..16]).try_into().unwrap()),
-        (16, _) => adst16::<_, false>((&mut v[..16]).try_into().unwrap()),
-        (32, _) if half => dct32::<_, true>((&mut v[..32]).try_into().unwrap()),
-        (32, _) => dct32::<_, false>((&mut v[..32]).try_into().unwrap()),
+        8 => {
+            let v: &mut [_; 8] = (&mut v[..8]).try_into().unwrap();
+            if const { matches!(kind(TYPE, false), Dct) } {
+                if half {
+                    dct8::<_, true>(v)
+                } else {
+                    dct8::<_, false>(v)
+                }
+            } else {
+                adst8::<_, false>(v)
+            }
+        }
+        16 => {
+            let v: &mut [_; 16] = (&mut v[..16]).try_into().unwrap();
+            if const { matches!(kind(TYPE, false), Dct) } {
+                if half {
+                    dct16::<_, true>(v)
+                } else {
+                    dct16::<_, false>(v)
+                }
+            } else {
+                adst16::<_, false>(v)
+            }
+        }
+        32 => {
+            let v: &mut [_; 32] = (&mut v[..32]).try_into().unwrap();
+            if half {
+                dct32::<_, true>(v)
+            } else {
+                dct32::<_, false>(v)
+            }
+        }
         _ => dct64((&mut v[..64]).try_into().unwrap()),
     }
-    if t == FlipAdst {
+    if const { matches!(kind(TYPE, false), FlipAdst) } {
         v.reverse();
     }
 }
@@ -1222,13 +1268,12 @@ fn tx10<D: Dwords, const N: usize>(v: &mut [Row10<D>; N], t: Tx1d, half: bool) {
 /// Rows `y0..y0 + 4` of the 10-bit row pass into `out`, one column per vector, before the
 /// pass's rounding shift: false, with `out` untouched, where all their coefficients are zero.
 #[inline(always)]
-fn rows10<D: Dwords, const W: usize>(
+fn rows10<D: Dwords, const W: usize, const TYPE: TxfmType>(
     coeff: &mut [i32],
     ch: usize,
     y0: usize,
     w: usize,
     rect: bool,
-    t: Tx1d,
     half: bool,
     out: &mut [D; W],
 ) -> bool {
@@ -1249,11 +1294,11 @@ fn rows10<D: Dwords, const W: usize>(
             v[x] = v[x].mul12(2896);
         }
     }
-    tx10(&mut v, t, half);
-    let neg = negated(t, W);
+    tx10::<_, W, TYPE>(&mut v, half);
+    let neg = negated(const { kind(TYPE, false) }, W);
     for x in 0..W {
         let mut a = v[x].0;
-        if t == Identity {
+        if const { matches!(kind(TYPE, false), Identity) } {
             a = match W {
                 4 => a.add(a.mul_q12(1697)),
                 8 => a.add(a),
@@ -1286,7 +1331,6 @@ fn add_block10<
     eob: i32,
     px_max: i16,
 ) {
-    let (rows, cols) = kinds(TYPE);
     if TYPE == DCT_DCT && eob == 0 {
         let dc = coeff[0];
         coeff[0] = 0;
@@ -1305,7 +1349,7 @@ fn add_block10<
         if WIDE && h >= 8 {
             use crate::simd128::I32x8;
             let mut o = [I32x8::splat(0); W];
-            if rows10(coeff, ch, y0, w, rect, rows, half, &mut o) {
+            if rows10::<_, W, TYPE>(coeff, ch, y0, w, rect, half, &mut o) {
                 let mut v = [I16x8::splat(0); W];
                 for x in 0..W {
                     v[x] = match shift {
@@ -1321,8 +1365,9 @@ fn add_block10<
         }
         let zero = I32x4::splat(0);
         let (mut lo, mut hi) = ([zero; W], [zero; W]);
-        let set_lo = rows10(coeff, ch, y0, w, rect, rows, half, &mut lo);
-        let set_hi = H > 4 && y0 + 4 < h && rows10(coeff, ch, y0 + 4, w, rect, rows, half, &mut hi);
+        let set_lo = rows10::<_, W, TYPE>(coeff, ch, y0, w, rect, half, &mut lo);
+        let set_hi =
+            H > 4 && y0 + 4 < h && rows10::<_, W, TYPE>(coeff, ch, y0 + 4, w, rect, half, &mut hi);
         if set_lo || set_hi {
             let mut v = [I16x8::splat(0); W];
             for x in 0..W {
@@ -1350,11 +1395,11 @@ fn add_block10<
     #[cfg(target_arch = "x86_64")]
     if WIDE && W >= 16 {
         while g + 1 < G {
-            wide::cols::<BD, H>(dst, g * 8, &groups[g], &groups[g + 1], cols, half, px_max);
+            wide::cols::<BD, H, TYPE>(dst, g * 8, &groups[g], &groups[g + 1], half, px_max);
             g += 2;
         }
     }
-    cols_128::<BD, W, H, G>(dst, &mut groups, g, cols, half, px_max);
+    cols_128::<BD, W, H, G, TYPE>(dst, &mut groups, g, half, px_max);
 }
 
 /// The passes sixteen lanes at a time: rows where a column holds 16 coefficients, columns where
@@ -1367,13 +1412,12 @@ mod wide {
     use crate::simd128::I16x16;
 
     #[inline(always)]
-    pub fn rows<const W: usize, const H: usize, const G: usize>(
+    pub fn rows<const W: usize, const H: usize, const G: usize, const TYPE: TxfmType>(
         coeff: &mut [i16],
         ch: usize,
         y0: usize,
         w: usize,
         rect: bool,
-        rows: Tx1d,
         shift: u32,
         half: bool,
         groups: &mut [[I16x8; H]; G],
@@ -1393,7 +1437,8 @@ mod wide {
         if !set.any() {
             return;
         }
-        tx::<_, W, false>(&mut v, rows, shift, half);
+        tx::<_, W, false, TYPE>(&mut v, shift, half);
+        let rows = const { kind(TYPE, false) };
         round(&mut v, round_mul(rows, W, shift), negated(rows, W));
         for (g, group) in groups.iter_mut().enumerate() {
             let mut block = [zero; 8];
@@ -1409,12 +1454,11 @@ mod wide {
     }
 
     #[inline(always)]
-    pub fn cols<BD: BitDepth, const H: usize>(
+    pub fn cols<BD: BitDepth, const H: usize, const TYPE: TxfmType>(
         dst: Rav1dPictureDataComponentOffset,
         x0: usize,
         a: &[I16x8; H],
         b: &[I16x8; H],
-        cols: Tx1d,
         half: bool,
         px_max: i16,
     ) {
@@ -1422,7 +1466,8 @@ mod wide {
         for y in 0..H {
             v[y] = I16x16::from_halves(a[y], b[y]);
         }
-        tx::<_, H, true>(&mut v, cols, 4, half);
+        tx::<_, H, true, TYPE>(&mut v, 4, half);
+        let cols = const { kind(TYPE, true) };
         round(&mut v, round_mul(cols, H, 4), negated(cols, H));
         let stride = dst.pixel_stride::<BD>();
         for y in 0..H {
