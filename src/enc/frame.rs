@@ -277,6 +277,9 @@ pub struct Cuts {
     pub uv_few: bool,
     pub no_uv_angles: bool,
     pub no_cfl: bool,
+    /// Above 0, a block splits where its luma variance is over this many squared quantizer steps,
+    /// else stays whole, with neither tried.
+    pub var_split: f32,
 }
 
 /// What the syntax allows a block to choose.
@@ -1765,6 +1768,15 @@ impl<D: Decide> Encoder<D> {
     /// Which of four activity classes a 16×16 luma block at `(x, y)` (in 4-pixel units) belongs
     /// to, by its variance: under 4, 32, 256, and above.
     fn activity_bucket(&self, x: i32, y: i32, n4: usize) -> usize {
+        match self.block_variance(x, y, n4) {
+            ..4 => 0,
+            ..32 => 1,
+            ..256 => 2,
+            _ => 3,
+        }
+    }
+
+    fn block_variance(&self, x: i32, y: i32, n4: usize) -> u64 {
         let x0 = x as usize * 4;
         let w = cmp::min(n4 * 4, (self.seq.width as usize).saturating_sub(x0));
         let h = cmp::min(n4 * 4, (self.seq.height as usize).saturating_sub(y as usize * 4));
@@ -1774,13 +1786,7 @@ impl<D: Decide> Encoder<D> {
         let px = self.source(0, x, y, w, h);
         let n = (w * h) as u64;
         let (sum, sse) = px.iter().fold((0u64, 0u64), |(s, q), &p| (s + p as u64, q + (p as u64) * (p as u64)));
-        let var = (sse * n - sum * sum) / (n * n);
-        match var {
-            ..4 => 0,
-            ..32 => 1,
-            ..256 => 2,
-            _ => 3,
-        }
+        (sse * n - sum * sum) / (n * n)
     }
 
     /// Chooses a transform type from `cands`, its levels and their end of block by rate and
@@ -2152,8 +2158,16 @@ impl<D: Decide> Encoder<D> {
             let (met, tried, gained, total, big) = *seen;
             tried >= 32 && gained <= total * 0.05 && big * 4 <= tried && met % 16 != 0
         };
+        let decided = (self.cuts.var_split > 0.0 && halves == Halves::Both && none_allowed && split_allowed).then(|| {
+            let step = self.dq[0][1] as f32 / 8.0;
+            self.block_variance(x, y, n4) as f32 > self.cuts.var_split * step * step
+        });
         for &bp in cands {
-            if halves == Halves::Both && cands.len() > 1 {
+            if let Some(split) = decided {
+                if bp != if split { Split } else { None } {
+                    continue;
+                }
+            } else if halves == Halves::Both && cands.len() > 1 {
                 // The CNN may prune None only where Split is searched: with Split pruned as
                 // well, by the CNN or the learnt prune, nothing would be left to code.
                 let split_pruned = cnn.split && none_allowed || prune8;
@@ -4033,6 +4047,8 @@ pub(crate) mod tests {
                             "uv_few" => o.cuts.uv_few = v == "1",
                             "no_uv_angles" => o.cuts.no_uv_angles = v == "1",
                             "no_cfl" => o.cuts.no_cfl = v == "1",
+                            "var_split" => o.cuts.var_split = v.parse().unwrap(),
+                            "cnn" => o.cnn_prune = v.parse().unwrap(),
                             _ => panic!("ENC_SET {k}"),
                         }
                     }
