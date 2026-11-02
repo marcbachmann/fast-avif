@@ -213,6 +213,12 @@ impl Options {
 }
 
 impl Options {
+    /// The search of efforts 2-3 for drawn pictures at efforts 0-3: they lost 17-93% more bytes
+    /// to the cuts below it, where photos lost 1-13%.
+    pub fn drawn(self) -> Self {
+        Self { cuts: Default::default(), keep_modes: 3, levels: 0..self.levels.end, tx_depths: 1, ..self }
+    }
+
     /// Everything libaom's tune IQ changes that the encoder has.
     pub fn tune_iq(self) -> Self {
         Self { variance_boost: true, ssim: true, quant_matrices: true, chroma_delta_q: true, iq_rdmult: true, iq_filters: true, ..self }
