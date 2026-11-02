@@ -1239,14 +1239,20 @@ impl<D: Decide> Encoder<D> {
         let b_dim = bs.dimensions();
         self.block_lambda(x, y, b_dim[0] as usize, b_dim[1] as usize);
         let (limits, max_tx) = self.limits(bs);
+        let mut searched = None;
         let (intra, depth) = if self.dry {
             self.trial.unwrap()
         } else if self.decide.searches() {
             match self.next_node() {
                 Node::Block(intra, depth, k) => {
                     let mut txs = std::mem::take(&mut self.chosen[k]);
-                    txs.reverse();
-                    self.replay = Some(txs);
+                    // The search left the pixels in place; a palette's index map is all it did not keep.
+                    if intra.pal_sz == [0, 0] {
+                        searched = Some(txs);
+                    } else {
+                        txs.reverse();
+                        self.replay = Some(txs);
+                    }
                     (intra, depth)
                 }
                 n => panic!("plan has {n:?} where a block is due"),
@@ -1255,7 +1261,10 @@ impl<D: Decide> Encoder<D> {
             self.decide.mode(bs, x, y, &limits)
         };
         assert!(depth <= limits.max_depth);
-        let txs = self.predict_block(ti, bs, x, y, edge_flags, &intra, depth, 0..self.planes);
+        let txs = match searched {
+            Some(txs) => txs,
+            None => self.predict_block(ti, bs, x, y, edge_flags, &intra, depth, 0..self.planes),
+        };
         debug_assert!(self.replay.as_ref().is_none_or(|r| r.is_empty()));
         if let Some(r) = self.replay.take() {
             self.recycle(r);
@@ -2049,13 +2058,17 @@ impl<D: Decide> Encoder<D> {
         for p in &self.rec {
             p.read(x as usize * 4, wy, w4 * 4, h4 * 4, &mut pixels);
         }
+        Snap { pixels, ..self.snap_contexts(x, y, w4, h4) }
+    }
+
+    fn snap_contexts(&self, x: i32, y: i32, w4: usize, h4: usize) -> Snap {
         let (ax, ly) = (x as usize, (y & 15) as usize);
         Snap {
             x,
             y,
             w4,
             h4,
-            pixels,
+            pixels: Vec::new(),
             above: self.above.save(ax..ax + w4),
             left: self.left.save(ly..ly + h4),
         }
@@ -2097,7 +2110,7 @@ impl<D: Decide> Encoder<D> {
             self.recycle(txs);
         }
         self.next = 0;
-        let s = self.snap(x, y, 16, 16);
+        let s = self.snap_contexts(x, y, 16, 16);
         self.dry = true;
         self.counter = Counter::default();
         self.cnn = (self.cnn_prune != 0 && x + 16 <= self.bw && y + 16 <= self.bh).then(|| Box::new(self.cnn_of(x)));
@@ -2108,7 +2121,7 @@ impl<D: Decide> Encoder<D> {
         self.estimated += self.counter.bits as u64;
         self.estimated_sse += self.sse(x, y, 16, 16, 0..self.planes);
         self.dry = false;
-        self.restore(&s);
+        self.restore_contexts(&s);
     }
 
     /// The CNN of the superblock at column `x` of the current row: its luma from one row above
@@ -4198,7 +4211,8 @@ pub(crate) mod tests {
                 println!("  16x16 splits met/tried/gain%/big by activity: {}", split_seen.iter().map(|s| format!("{}/{}/{:.3}/{}", s.0, s.1, 100.0 * s.2 / s.3.max(1.0), s.4)).collect::<Vec<_>>().join(" "));
                 println!("  ms by block side: 4 {} 8 {} 16 {} 32 {} 64 {}", sizes[0], sizes[1], sizes[2], sizes[3], sizes[4]);
             }
-            let d = psnr(&planes, &decode_with(c.data.clone(), w, h, 3, true));
+            // `ENC_NO_DECODE=1` leaves only the encoder for a profile or a cycle count.
+            let d = if std::env::var("ENC_NO_DECODE").is_ok() { 0.0 } else { psnr(&planes, &decode_with(c.data.clone(), w, h, 3, true)) };
             println!("{:20} {t:6} ms {:7} B {d:6.2} dB", path.file_stem().unwrap().to_string_lossy(), c.data.len());
             if std::env::var("ENC_UNFILTERED").is_ok() {
                 println!("  before the in-loop filters {:.2} dB", psnr(&planes, &decode_with(c.data.clone(), w, h, 3, false)));
