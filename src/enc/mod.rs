@@ -202,7 +202,7 @@ impl Options {
             _ => (1, 2, 0, 1..4, 4.0),
         };
         let levels = if effort <= 1 || effort <= 3 && qidx > 100 { levels.start..levels.end.min(3) } else { levels };
-        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false, var_split: 0.0 };
+        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false, var_split: if effort == 0 { 4.0 } else { 0.0 }, one_pass: effort <= 1 };
         // Text and graphics need the H or V partition along None's direction; photos gain 0.03 dB for 30% more time.
         let rect = if screen && rect == 2 { 3 } else { rect };
         let fine = effort >= 4 && (qidx <= 64 || pixels <= 512 * 512);
@@ -423,7 +423,7 @@ pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Optio
     e.tx_depths = options.tx_depths;
     e.levels = options.levels.clone();
     e.variance_boost = boost;
-    e.cnn_prune = options.cnn_prune;
+    e.cnn_prune = if options.cuts.var_split > 0.0 { 0 } else { options.cnn_prune };
     e.rdoq = options.rdoq;
     e.prune = options.prune;
     if options.ssim && options.qidx != 0 {

@@ -280,6 +280,9 @@ pub struct Cuts {
     /// Above 0, a block splits where its luma variance is over this many squared quantizer steps,
     /// else stays whole, with neither tried.
     pub var_split: f32,
+    /// With one luma candidate at one depth there is nothing to compare, so its DCT-only code,
+    /// which the transform type search repeats, is not made.
+    pub one_pass: bool,
 }
 
 /// What the syntax allows a block to choose.
@@ -2445,7 +2448,8 @@ impl<D: Decide> Encoder<D> {
         self.lap(&mut clock, 0);
         // The kept modes' depth-0 codes are the depth search's where that too is DCT-only.
         let mut coded: Vec<(Intra, f64, Vec<TxDone>, bool)> = Vec::new();
-        if keep > 0 {
+        let one_pass = cuts.one_pass && cuts.one_luma && keep == 1 && self.late_txtp && inside && self.tx_depths == 0;
+        if keep > 0 && !one_pass {
             scored.truncate(keep);
             for s in scored.iter_mut() {
                 let (cost, txs) = luma(self, &s.1, 0, None);
@@ -2464,7 +2468,7 @@ impl<D: Decide> Encoder<D> {
         let depths = if inside { self.tx_depths } else { 2 };
         let mut best_luma = (f64::MAX, scored[0].1, 0u8);
         let mut luma_txs = Vec::new();
-        for &(_, c) in scored.iter().take(if cuts.one_luma { 1 } else { 2 }) {
+        for &(_, c) in scored.iter().take(if one_pass { 0 } else if cuts.one_luma { 1 } else { 2 }) {
             for depth in 0..=cmp::min(limits.max_depth, depths) {
                 let done = (depth == 0).then(|| coded.iter().position(|d| d.0 == c)).flatten();
                 let (cost, txs) = match done {
@@ -4048,6 +4052,7 @@ pub(crate) mod tests {
                             "no_uv_angles" => o.cuts.no_uv_angles = v == "1",
                             "no_cfl" => o.cuts.no_cfl = v == "1",
                             "var_split" => o.cuts.var_split = v.parse().unwrap(),
+                            "one_pass" => o.cuts.one_pass = v == "1",
                             "cnn" => o.cnn_prune = v.parse().unwrap(),
                             _ => panic!("ENC_SET {k}"),
                         }
