@@ -39,7 +39,7 @@ use crate::itx::Rav1dInvTxfmDSPContext;
 use crate::levels::{
     BlockLevel, BlockPartition, BlockSize, TxClass, TxfmSize, TxfmType, CFL_PRED, DCT_DCT,
     DC_PRED, FILTER_PRED, HOR_DOWN_PRED, HOR_PRED, HOR_UP_PRED, IDTX, N_INTRA_PRED_MODES,
-    N_UV_INTRA_PRED_MODES, SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, VERT_LEFT_PRED, VERT_PRED,
+    N_UV_INTRA_PRED_MODES, PAETH_PRED, SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, VERT_LEFT_PRED, VERT_PRED,
     VERT_RIGHT_PRED, WHT_WHT,
 };
 use crate::qm::DAV1D_QM_TBL;
@@ -267,8 +267,6 @@ pub enum Halves {
     Left,
 }
 
-/// What the syntax allows a block to choose.
-#[derive(Clone, Copy, Debug)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Cuts {
     pub few_modes: bool,
@@ -281,6 +279,8 @@ pub struct Cuts {
     pub no_cfl: bool,
 }
 
+/// What the syntax allows a block to choose.
+#[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub angles: bool,
     pub cfl: bool,
