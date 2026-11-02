@@ -39,6 +39,21 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, drawn pictures: their own search at efforts 0-2.** Chosen because the committed matrix
+has every effort from 4 up under libaom's time, photos at efforts 0-1 near it, and drawn pictures
+at efforts 0-1 at 1.7-2.3x with about 11 and 4.5 dB in hand at equal bytes. Predicted: 0.43x at
+effort 0, which is about libaom's time. Each cut alone on six drawn pictures, then combined against
+the old search. Effort 2 drops luma angles and takes chroma DC plus CfL by the fit; effort 1 also
+five luma modes and no 8x8; effort 0 also one luma candidate, depth 0, no 64x64, no filter-intra,
+no chroma angles and CfL by share. Time on the laptop, sum over the seven qindexes, faster of two
+rounds, no control: e0 0.45x, e1 0.58x, e2 0.64x. dB at equal bytes against the old search, in
+range: text screenshot -0.1 to -2.4, logo -0.2 to -2.5, red -1 to -4.5, plum to -4.3, the small
+plum and star gain at some rates and lose up to -4.4; bytes up to 2.5x at the lowest qualities.
+The photo search is rejected: 0.29x, but -10.7 dB on text. The partitions by variance took text
+down the same way. A test now decodes every low-effort cut for photos and drawn pictures against
+its reconstruction: 54 passed, and it fails on an injected alpha range. Effort 3 is unchanged.
+Not yet measured against libaom on these commits, which needs the matrix on worker.
+
 **2026-11-02, efforts 0-3: CfL by a closed-form fit, tried only where luma explains the chroma.**
 Chosen because chroma was the largest stage left at effort 0. Predicted: about 0.85x at effort 0
 at under 0.1 dB. The fit takes the alphas from the least squares of the source on the luma AC
