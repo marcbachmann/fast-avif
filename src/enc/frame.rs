@@ -283,6 +283,12 @@ pub struct Cuts {
     /// With one luma candidate at one depth there is nothing to compare, so its DCT-only code,
     /// which the transform type search repeats, is not made.
     pub one_pass: bool,
+    /// CfL alphas from the least squares fit of the source on the luma AC, without predicting.
+    pub cfl_fit: bool,
+    /// Above 0, chroma tries CfL only where the fit explains this share of its variance. Photos
+    /// rarely gain from the rest; hard-edged colour gains most. Coding CfL alone on the fit's
+    /// word lost 0.5 dB at the same bytes, so it still has to win against DC.
+    pub cfl_share: f32,
 }
 
 /// What the syntax allows a block to choose.
@@ -2545,6 +2551,7 @@ impl<D: Decide> Encoder<D> {
                 })
                 .collect();
             let keep_chroma = self.keep_chroma;
+            let fit = (limits.cfl && !cuts.no_cfl && cuts.cfl_fit).then(|| self.cfl_fit(x, y, bs, depth));
             if cuts.uv_few {
                 modes.retain(|m| m.1.uv_mode == DC_PRED);
             } else if self.uv_from_luma {
@@ -2614,8 +2621,14 @@ impl<D: Decide> Encoder<D> {
                     }
                 }
             }
-            if limits.cfl && !cuts.no_cfl {
-                let alphas = self.cfl_alphas(ti, bs, x, y, &intra, depth, &luma_done);
+            let step = self.dq[1][1] as f32 / 8.0;
+            let dc_alone = cuts.cfl_share > 0.0
+                && fit.is_some_and(|(_, gain, variance)| (gain as f32) <= 2.0 * step * step || (gain as f32) < cuts.cfl_share * variance as f32);
+            if limits.cfl && !cuts.no_cfl && !dc_alone {
+                let alphas = match fit {
+                    Some((alphas, ..)) => alphas,
+                    None => self.cfl_alphas(ti, bs, x, y, &intra, depth, &luma_done),
+                };
                 if alphas != [0, 0] {
                     let c = Intra { uv_mode: CFL_PRED, uv_angle: 0, cfl: alphas, ..intra };
                     let (cost, txs) = chroma(self, &c, best.0);
@@ -2644,6 +2657,44 @@ impl<D: Decide> Encoder<D> {
         self.stage = 5;
         self.chosen.push(txs);
         self.plan.push(Node::Block(intra, depth, self.chosen.len() - 1));
+    }
+
+    /// The alphas that minimise each chroma plane's error against the luma AC, whose mean is
+    /// about 0 so that the DC does not enter, and how much error they take off the DC prediction.
+    fn cfl_fit(&self, x: i32, y: i32, bs: BlockSize, depth: u8) -> ([i8; 2], u64, u64) {
+        let b_dim = bs.dimensions();
+        let (bw4, bh4) = (b_dim[0] as i32, b_dim[1] as i32);
+        let (tx, _) = self.tx_sizes(bs, depth);
+        let ac = self.cfl_ac(x, y, cmp::min(bw4, self.bw - x), cmp::min(bh4, self.bh - y), bw4, bh4, tx);
+        let (stride, x0, wy) = (bw4 as usize * 4, x as usize * 4, (y as usize * 4) % SB);
+        let w = cmp::min(stride, (self.seq.width as usize).saturating_sub(x0));
+        let h = cmp::min(bh4 as usize * 4, (self.seq.height as usize).saturating_sub(y as usize * 4));
+        let (mut alphas, mut gain, mut variance) = ([0; 2], 0.0, 0.0);
+        for p in 0..2 {
+            let src = &self.src[1 + p];
+            let plane = src.comp.slice::<BD, _>((wy * src.stride + x0.., ..(h - 1) * src.stride + w));
+            let (mut ac_ac, mut ac_s, mut sum_ac, mut sum_s, mut s_s) = (0i64, 0i64, 0i64, 0i64, 0i64);
+            for (row, a) in plane.chunks(src.stride).zip(ac.0.chunks_exact(stride)) {
+                for (&s, &a) in row[..w].iter().zip(&a[..w]) {
+                    let (s, a) = (s as i32, a as i32);
+                    ac_ac += (a * a) as i64;
+                    ac_s += (a * s) as i64;
+                    sum_ac += a as i64;
+                    sum_s += s as i64;
+                    s_s += (s * s) as i64;
+                }
+            }
+            variance += s_s as f64 - (sum_s * sum_s) as f64 / (w * h) as f64;
+            if ac_ac == 0 {
+                continue;
+            }
+            let cov = ac_s as f64 - (sum_ac * sum_s) as f64 / (w * h) as f64;
+            let alpha = (64.0 * cov / ac_ac as f64).round().clamp(-16.0, 16.0);
+            alphas[p] = alpha as i8;
+            let scaled = alpha / 64.0;
+            gain += 2.0 * scaled * cov - scaled * scaled * ac_ac as f64;
+        }
+        (alphas, gain.max(0.0) as u64, variance as u64)
     }
 
     /// CfL alphas that best predict each chroma plane from the reconstructed luma.
@@ -4053,6 +4104,8 @@ pub(crate) mod tests {
                             "no_cfl" => o.cuts.no_cfl = v == "1",
                             "var_split" => o.cuts.var_split = v.parse().unwrap(),
                             "one_pass" => o.cuts.one_pass = v == "1",
+                            "cfl_fit" => o.cuts.cfl_fit = v == "1",
+                            "cfl_share" => o.cuts.cfl_share = v.parse().unwrap(),
                             "cnn" => o.cnn_prune = v.parse().unwrap(),
                             _ => panic!("ENC_SET {k}"),
                         }
