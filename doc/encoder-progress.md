@@ -39,6 +39,12 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**Open, 2026-11-02: threads can change the bytes.** At efforts 4-7 with tile columns and the filter search, outside
+the fast search, `still_on` on threads and `still` on one thread code a graphic to different bytes:
+520x40 at qidx 120, tile_cols_log2 1, 3649 against 3656 B; 700x90, 8159 against 8107. 75333cf9 gives the same sizes, so this
+is older than the low-effort work. `tile_threads` passes because it codes a photo. The doc of
+`tile_threads` claims the same bytes, so the claim or the code has to change.
+
 **2026-11-02, efforts 0-1: bits of a one-type transform block estimated; where the day ended.** Those blocks
 count bits only to choose between coding and not. An estimate of 4 bits per nonzero level plus twice its log2 gives
 instructions e0 0.96-0.98 at +0.002 dB mean, -0.01 worst, and e1 0.98-0.99 at -0.023, -0.14 worst (5b7169d8). Efforts 2-3
