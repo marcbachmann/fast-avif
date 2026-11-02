@@ -65,6 +65,8 @@ fn cdef_from_q(qidx: u8) -> Cdef {
 
 #[derive(Clone, Default)]
 pub struct Options {
+    /// Parts of the search taken out for trials of the low efforts.
+    pub cuts: frame::Cuts,
     /// 0 is lossless.
     pub qidx: u8,
     /// Luma modes of the SATD ranking that go on to rate and distortion, all of them when 0.
@@ -205,7 +207,7 @@ impl Options {
         let fine = effort >= 4 && (qidx <= 64 || pixels <= 512 * 512);
         let (keep_modes, keep_chroma) = if fine { (4, 0) } else { (keep_modes, keep_chroma) };
         let rdoq = if effort >= 8 { 8 } else { 0 };
-        Self { qidx, keep_modes, keep_chroma, screen, rect, late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512), reduced_txtp: effort <= 5 || effort <= 7 && !fine, tx_domain_dist: effort <= 7, uv_from_luma: effort <= 5, prune_intra: effort <= 5 || effort <= 7 && !fine, rank_rd: fine, rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 { 6 } else { 0 }, tx_depths: if effort <= 5 { 1 } else { 2 }, levels, prune, variance_boost: false, cnn_prune: if effort > 3 { 0 } else if screen { 1 } else { 2 }, rdoq, ssim: false, quant_matrices: false, chroma_delta_q: false, iq_rdmult: false, skip_prediction: true, iq_filters: false, filter_search: effort >= 4, uv_outward: !screen && pixels > 512 * 512, rect_ratio: if effort >= 4 { 0.9 } else { 0.0 }, rect_adaptive: true, split8_adaptive: effort <= 5 && pixels > 512 * 512, fast_cdef: false, graphic_guard: false, tile_cols_log2: (!screen && pixels > 512 * 512) as u8 }
+        Self { cuts: Default::default(), qidx, keep_modes, keep_chroma, screen, rect, late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512), reduced_txtp: effort <= 5 || effort <= 7 && !fine, tx_domain_dist: effort <= 7, uv_from_luma: effort <= 5, prune_intra: effort <= 5 || effort <= 7 && !fine, rank_rd: fine, rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 { 6 } else { 0 }, tx_depths: if effort <= 5 { 1 } else { 2 }, levels, prune, variance_boost: false, cnn_prune: if effort > 3 { 0 } else if screen { 1 } else { 2 }, rdoq, ssim: false, quant_matrices: false, chroma_delta_q: false, iq_rdmult: false, skip_prediction: true, iq_filters: false, filter_search: effort >= 4, uv_outward: !screen && pixels > 512 * 512, rect_ratio: if effort >= 4 { 0.9 } else { 0.0 }, rect_adaptive: true, split8_adaptive: effort <= 5 && pixels > 512 * 512, fast_cdef: false, graphic_guard: false, tile_cols_log2: (!screen && pixels > 512 * 512) as u8 }
     }
 }
 
@@ -400,6 +402,7 @@ pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Optio
     e.rect_ratio = options.rect_ratio;
     e.rect_adaptive = options.rect_adaptive;
     e.split8_adaptive = options.split8_adaptive;
+    e.cuts = options.cuts;
     e.keep_modes = options.keep_modes;
     e.keep_chroma = options.keep_chroma;
     e.rect = options.rect;

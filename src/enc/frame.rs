@@ -269,6 +269,18 @@ pub enum Halves {
 
 /// What the syntax allows a block to choose.
 #[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Cuts {
+    pub few_modes: bool,
+    pub no_y_angles: bool,
+    pub no_filter: bool,
+    pub one_luma: bool,
+    pub dct: bool,
+    pub uv_few: bool,
+    pub no_uv_angles: bool,
+    pub no_cfl: bool,
+}
+
 pub struct Limits {
     pub angles: bool,
     pub cfl: bool,
@@ -453,6 +465,7 @@ pub struct Encoder<D: Decide> {
     /// Prediction alone, no residual: ranks luma modes by SATD before rate and distortion.
     predict_only: bool,
     /// Luma modes kept from the SATD ranking for rate and distortion, all when 0.
+    pub cuts: Cuts,
     pub keep_modes: usize,
     /// Chroma modes kept from the SATD ranking for rate and distortion, all when 0.
     pub keep_chroma: usize,
@@ -647,6 +660,7 @@ impl<D: Decide> Encoder<D> {
             dry: false,
             dct_only: false,
             predict_only: false,
+            cuts: Cuts::default(),
             keep_modes: 0,
             keep_chroma: 0,
             rect: 1,
@@ -2364,15 +2378,17 @@ impl<D: Decide> Encoder<D> {
         let mut clock = self.timing.then(std::time::Instant::now);
         self.dct_only = true;
         let prune_intra = self.prune_intra;
+        let cuts = self.cuts;
         let mut scored: Vec<(f64, Intra)> = (0..N_INTRA_PRED_MODES as u8)
             .filter(|&m| !(prune_intra && matches!(m, SMOOTH_V_PRED | SMOOTH_H_PRED)))
+            .filter(|&m| !cuts.few_modes || matches!(m, DC_PRED | VERT_PRED | HOR_PRED | SMOOTH_PRED | PAETH_PRED))
             .map(|m| {
                 let c = Intra { y_mode: m, ..Default::default() };
                 (score(self, &c, rank_rd && pre == 0), c)
             })
             .collect();
         scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-        if limits.angles {
+        if limits.angles && !cuts.no_y_angles {
             let dirs: Vec<Intra> = scored
                 .iter()
                 .filter(|s| (VERT_PRED..=VERT_LEFT_PRED).contains(&s.1.y_mode))
@@ -2386,7 +2402,7 @@ impl<D: Decide> Encoder<D> {
                 }
             }
         }
-        if limits.filter {
+        if limits.filter && !cuts.no_filter {
             let best_so_far = scored[0].1.y_mode as usize;
             for f in 0..5 {
                 if prune_intra && FILTER_FROM_BEST[best_so_far] >> f & 1 == 0 {
@@ -2434,7 +2450,7 @@ impl<D: Decide> Encoder<D> {
         let depths = if inside { self.tx_depths } else { 2 };
         let mut best_luma = (f64::MAX, scored[0].1, 0u8);
         let mut luma_txs = Vec::new();
-        for &(_, c) in scored.iter().take(2) {
+        for &(_, c) in scored.iter().take(if cuts.one_luma { 1 } else { 2 }) {
             for depth in 0..=cmp::min(limits.max_depth, depths) {
                 let done = (depth == 0).then(|| coded.iter().position(|d| d.0 == c)).flatten();
                 let (cost, txs) = match done {
@@ -2460,7 +2476,7 @@ impl<D: Decide> Encoder<D> {
         for (_, _, txs, _) in coded {
             self.recycle(txs);
         }
-        self.dct_only = false;
+        self.dct_only = cuts.dct;
         let (_, mut intra, depth) = best_luma;
         let mut chroma_txs = Vec::new();
         if self.late_txtp {
@@ -2511,7 +2527,9 @@ impl<D: Decide> Encoder<D> {
                 })
                 .collect();
             let keep_chroma = self.keep_chroma;
-            if self.uv_from_luma {
+            if cuts.uv_few {
+                modes.retain(|m| m.1.uv_mode == DC_PRED);
+            } else if self.uv_from_luma {
                 let y_mode = if intra.y_mode == FILTER_PRED { DC_PRED } else { intra.y_mode };
                 modes.retain(|m| UV_FROM_LUMA[y_mode as usize] >> m.1.uv_mode & 1 != 0);
             } else if keep_chroma > 0 {
@@ -2539,7 +2557,7 @@ impl<D: Decide> Encoder<D> {
                     self.recycle(txs);
                 }
             }
-            if limits.angles && (VERT_PRED..=VERT_LEFT_PRED).contains(&best.1.uv_mode) {
+            if limits.angles && !cuts.no_uv_angles && (VERT_PRED..=VERT_LEFT_PRED).contains(&best.1.uv_mode) {
                 let d = best.1;
                 let outward = self.uv_outward;
                 let deltas: &[[i8; 3]] = if outward { &[[-1, -2, -3], [1, 2, 3]] } else { &[[-3, -2, -1], [1, 2, 3]] };
@@ -2578,7 +2596,7 @@ impl<D: Decide> Encoder<D> {
                     }
                 }
             }
-            if limits.cfl {
+            if limits.cfl && !cuts.no_cfl {
                 let alphas = self.cfl_alphas(ti, bs, x, y, &intra, depth, &luma_done);
                 if alphas != [0, 0] {
                     let c = Intra { uv_mode: CFL_PRED, uv_angle: 0, cfl: alphas, ..intra };
@@ -3934,6 +3952,7 @@ pub(crate) mod tests {
         let qidx: u8 = std::env::var("ENC_QIDX").map_or(120, |v| v.parse().unwrap());
         let options = crate::enc::Options {
             qidx,
+            cuts: Default::default(),
             keep_modes: std::env::var("ENC_KEEP").map_or(0, |v| v.parse().unwrap()),
             keep_chroma: std::env::var("ENC_KEEP_UV").map_or(0, |v| v.parse().unwrap()),
             screen: std::env::var("ENC_SCREEN").map_or(true, |v| v != "0"),
@@ -4005,6 +4024,15 @@ pub(crate) mod tests {
                             "prune" => o.prune = v.parse().unwrap(),
                             "rank_pre" => o.rank_pre = v.parse().unwrap(),
                             "filter_search" => o.filter_search = v == "1",
+                            "depths" => o.tx_depths = v.parse().unwrap(),
+                            "few_modes" => o.cuts.few_modes = v == "1",
+                            "no_y_angles" => o.cuts.no_y_angles = v == "1",
+                            "no_filter" => o.cuts.no_filter = v == "1",
+                            "one_luma" => o.cuts.one_luma = v == "1",
+                            "dct" => o.cuts.dct = v == "1",
+                            "uv_few" => o.cuts.uv_few = v == "1",
+                            "no_uv_angles" => o.cuts.no_uv_angles = v == "1",
+                            "no_cfl" => o.cuts.no_cfl = v == "1",
                             _ => panic!("ENC_SET {k}"),
                         }
                     }
