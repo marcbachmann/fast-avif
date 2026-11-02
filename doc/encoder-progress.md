@@ -42,8 +42,8 @@ An incremental build takes about 17 s.
 **2026-11-02, efforts 0-1: bits of a one-type transform block estimated; where the day ended.** Those blocks
 count bits only to choose between coding and not. An estimate of 4 bits per nonzero level plus twice its log2 gives
 instructions e0 0.96-0.98 at +0.002 dB mean, -0.01 worst, and e1 0.98-0.99 at -0.023, -0.14 worst (5b7169d8). Efforts 2-3
-would pay -0.04 for 2-4% and stay as they are. Against c93e4db9 at the day's start of this work, five photos, ten
-paired rounds' median on the laptop with an old-against-old control at 0.97-1.02, qidx 200, 140, 90, 60: e0 0.70, 0.69, 0.74, 0.72;
+would pay -0.04 for 2-4% and stay as they are. Against c93e4db9, which already had effort 0's variance partitions, five photos, the median of five
+paired rounds on the laptop with an old-against-old control at 0.97-1.02, qidx 200, 140, 90, 60: e0 0.70, 0.69, 0.74, 0.72;
 e1 0.38, 0.54, 0.70, 0.74; e2 0.43, 0.59, 0.69, 0.73; e3 0.45, 0.60, 0.83, 0.77. Bytes -0.9 to +1.1%, dB +0.006 to -0.238.
 Open: the matrix against libaom, steady x86 timing, the JS gates and a refuter, all on worker; Cuts is still trial code;
 the rate bound and the CfL fit at effort 4 and up need those gates.
