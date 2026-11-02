@@ -198,16 +198,17 @@ impl Options {
             8.. => (0, 0, 1, 0..5, 0.0),
             6..=7 => (4, 0, 1, 0..5, 0.0),
             4..=5 => (4, 4, 2, 0..4, 1.0),
-            2..=3 => (3, 3, 0, 0..4, 2.0),
-            _ => (2, 2, 0, 0..4, 4.0),
+            1..=3 => (1, 3, 0, 1..4, 2.0),
+            _ => (1, 2, 0, 1..4, 4.0),
         };
-        let levels = if effort <= 3 && qidx > 100 { levels.start..levels.end.min(3) } else { levels };
+        let levels = if effort <= 1 || effort <= 3 && qidx > 100 { levels.start..levels.end.min(3) } else { levels };
+        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false };
         // Text and graphics need the H or V partition along None's direction; photos gain 0.03 dB for 30% more time.
         let rect = if screen && rect == 2 { 3 } else { rect };
         let fine = effort >= 4 && (qidx <= 64 || pixels <= 512 * 512);
         let (keep_modes, keep_chroma) = if fine { (4, 0) } else { (keep_modes, keep_chroma) };
         let rdoq = if effort >= 8 { 8 } else { 0 };
-        Self { cuts: Default::default(), qidx, keep_modes, keep_chroma, screen, rect, late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512), reduced_txtp: effort <= 5 || effort <= 7 && !fine, tx_domain_dist: effort <= 7, uv_from_luma: effort <= 5, prune_intra: effort <= 5 || effort <= 7 && !fine, rank_rd: fine, rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 { 6 } else { 0 }, tx_depths: if effort <= 5 { 1 } else { 2 }, levels, prune, variance_boost: false, cnn_prune: if effort > 3 { 0 } else if screen { 1 } else { 2 }, rdoq, ssim: false, quant_matrices: false, chroma_delta_q: false, iq_rdmult: false, skip_prediction: true, iq_filters: false, filter_search: effort >= 4, uv_outward: !screen && pixels > 512 * 512, rect_ratio: if effort >= 4 { 0.9 } else { 0.0 }, rect_adaptive: true, split8_adaptive: effort <= 5 && pixels > 512 * 512, fast_cdef: false, graphic_guard: false, tile_cols_log2: (!screen && pixels > 512 * 512) as u8 }
+        Self { cuts, qidx, keep_modes, keep_chroma, screen, rect, late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512), reduced_txtp: effort <= 5 || effort <= 7 && !fine, tx_domain_dist: effort <= 7, uv_from_luma: effort <= 5, prune_intra: effort <= 5 || effort <= 7 && !fine, rank_rd: fine, rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 { 6 } else { 0 }, tx_depths: if effort <= 1 { 0 } else if effort <= 5 { 1 } else { 2 }, levels, prune, variance_boost: false, cnn_prune: if effort > 3 { 0 } else if screen { 1 } else { 2 }, rdoq, ssim: false, quant_matrices: false, chroma_delta_q: false, iq_rdmult: false, skip_prediction: true, iq_filters: false, filter_search: effort >= 4, uv_outward: !screen && pixels > 512 * 512, rect_ratio: if effort >= 4 { 0.9 } else { 0.0 }, rect_adaptive: true, split8_adaptive: effort <= 5 && pixels > 512 * 512, fast_cdef: false, graphic_guard: false, tile_cols_log2: (!screen && pixels > 512 * 512) as u8 }
     }
 }
 
