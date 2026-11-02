@@ -8,6 +8,9 @@ use crate::enc::ec::{adapt, Writer};
 
 /// Where symbols go: the range writer, or a counter of their cost.
 pub trait Sink {
+    /// Only counts bits, so a count made earlier can stand in for writing the symbols again.
+    const COUNTS: bool = false;
+
     /// `n` is the number of symbols minus one.
     fn symbol(&mut self, s: u8, cdf: &mut [u16], n: u8);
     fn bool_adapt(&mut self, bit: bool, cdf: &mut [u16; 2]);
@@ -130,6 +133,8 @@ pub fn cost(p: u32) -> u32 {
 }
 
 impl Sink for Counter {
+    const COUNTS: bool = true;
+
     fn symbol(&mut self, s: u8, cdf: &mut [u16], n: u8) {
         let (s, n) = (s as usize, n as usize);
         let fl = if s > 0 { cdf[s - 1] as u32 } else { 32768 };

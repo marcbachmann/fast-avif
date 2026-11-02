@@ -2983,6 +2983,14 @@ impl BlockWrite {
         if !self.skip {
             for t in txs {
                 let (a, l) = coef_ctx(above, left, t.plane);
+                if let (true, Some(bits)) = (S::COUNTS, t.bits) {
+                    s.add(bits);
+                    let t_dim = &DAV1D_TXFM_DIMENSIONS[t.tx as usize];
+                    let v = res_ctx(&t.coefs.levels, t.eob);
+                    a[t.x4 as usize..][..cmp::min(t_dim.w as i32, self.bw - t.x4) as usize].fill(v);
+                    l[(t.y4 & 15) as usize..][..cmp::min(t_dim.h as i32, self.bh - t.y4) as usize].fill(v);
+                    continue;
+                }
                 write_coefs(
                     s,
                     cdf,
