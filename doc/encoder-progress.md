@@ -39,6 +39,18 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, effort 0: partitions by variance, one luma code.** Chosen because effort 0 sat at
+about 2.5x libaom's effort 0 on photos. Predicted: 0.4x its old time, at no more than 0.3 dB.
+`pick_partition` takes None or Split from the block's variance against the quantizer step
+(`var_split` 4) instead of trying both, without the partition CNN. `one_pass` skips the DCT-only
+luma RD when one candidate and no depth search leave nothing to choose, which codes the same
+bytes and dB at efforts 0 and 1, all four qindexes. Five photos, laptop (aarch64), three
+interleaved rounds, effort 4 control within 2%: qidx 200 199-200 -> 82-83 ms (0.41x), 140 257-259
+-> 116-117 (0.45x), 90 289-292 -> 164-169 (0.57x), 60 299-304 -> 197-198 (0.66x). dB at effort
+0's curve -0.12 to -0.33 mean, worst -0.81, from the sweep of the variance cut alone. So the
+prediction holds only at low quality. No steady x86 run and no matrix on this commit yet; `enc::`
+tests 53 passed, 3 ignored. Next: chroma, the largest stage left at effort 0.
+
 **2026-10-27, column cache, CDEF repeats, lazy partition snaps.** Three more exact steps,
 pinned on x86 (effort 4): `fdct_fast::Columns` keeps a residual's column pass between transform
 types with the same vertical transform (DCT_DCT/DCT_ADST, ADST_DCT/ADST_ADST share one); a
