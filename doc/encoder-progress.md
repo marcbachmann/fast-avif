@@ -39,6 +39,17 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, efforts 1-3: partitions settled by variance outside a band.** Chosen because the
+single threshold of effort 0 costs 0.26-0.39 dB at these efforts. Predicted: a band keeps most of
+its speed at a small part of its loss. A block under 1 squared quantizer step stays whole, one over 64
+splits, and the rest search as before with the CNN. Five photos, ten curves' worth of dB at equal
+bytes: mean -0.03 to -0.08, worst -0.28. Without the CNN the band loses nothing (+0.01 to +0.03 on efforts 1-2)
+but runs up to 1.58x at qidx 60, so the CNN stays. Paired timing on the laptop against an
+old-against-old control, new/old median: qidx 200 e1 0.54, e2 0.50, e3 0.46; 140 0.74, 0.80, 0.71;
+90 0.99, 0.86, 0.89; 60 1.02, 1.03, 0.90. Only qidx 200 and 140 clear the control's quartiles well, so
+this speeds low quality and leaves high quality about as it was. At effort 4 the same band loses up to 1.43 dB, so it stays off there. d2edcb76: bytes equal to the
+measured arm in 15 of 15 cells, `enc::` 54 passed. Not yet on the matrix.
+
 **2026-11-02, drawn pictures: their own search at efforts 0-2.** Chosen because the committed matrix
 has every effort from 4 up under libaom's time, photos at efforts 0-1 near it, and drawn pictures
 at efforts 0-1 at 1.7-2.3x with about 11 and 4.5 dB in hand at equal bytes. Predicted: 0.43x at
