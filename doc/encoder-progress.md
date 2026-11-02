@@ -39,6 +39,15 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, the writing pass reconstructs nothing.** Chosen because a profile of the encoder alone
+at effort 0 shows every block predicted and reconstructed again after the search left the same pixels in
+place. Predicted: about 6% at effort 0, the same bytes everywhere. `search_sb` now restores only the
+contexts, and `code_b` takes the search's transform blocks as they are, except where a palette needs its
+index map. Bytes and dB equal in 36 of 36 cells, efforts 0-6, photos and drawn. Instructions, qidx 200 to 60:
+e0 0.93-0.95, e1 0.95-0.97, e2 0.96-0.98, e3 0.97-0.98, e4 0.99, e6 0.998. Restoring the old pixels
+fails 12 tests by name. `enc::` 54 passed. `ENC_NO_DECODE=1` leaves the bench's decode out of a count;
+it had been 30% of the cycles and understated every ratio before it.
+
 **2026-11-02, efforts 0-3: a transform type's bits counted only where they could win.** Chosen because
 counted coefficients are a quarter of the encoding at effort 1, qidx 60. Predicted: a large share of
 the counts gone at no cost. A type is skipped where its distortion and 4 bits per nonzero coefficient
