@@ -280,6 +280,8 @@ pub struct Cuts {
     /// Above 0, a block splits where its luma variance is over this many squared quantizer steps,
     /// else stays whole, with neither tried.
     pub var_split: f32,
+    /// A block between `var_split` and this many squared steps tries both.
+    pub var_keep: f32,
     /// With one luma candidate at one depth there is nothing to compare, so its DCT-only code,
     /// which the transform type search repeats, is not made.
     pub one_pass: bool,
@@ -2169,8 +2171,9 @@ impl<D: Decide> Encoder<D> {
         };
         let decided = (self.cuts.var_split > 0.0 && halves == Halves::Both && none_allowed && split_allowed).then(|| {
             let step = self.dq[0][1] as f32 / 8.0;
-            self.block_variance(x, y, n4) as f32 > self.cuts.var_split * step * step
-        });
+            let variance = self.block_variance(x, y, n4) as f32 / (step * step);
+            (variance <= self.cuts.var_split).then_some(false).or((variance > self.cuts.var_split.max(self.cuts.var_keep)).then_some(true))
+        }).flatten();
         for &bp in cands {
             if let Some(split) = decided {
                 if bp != if split { Split } else { None } {
@@ -4138,6 +4141,7 @@ pub(crate) mod tests {
                             "no_uv_angles" => o.cuts.no_uv_angles = v == "1",
                             "no_cfl" => o.cuts.no_cfl = v == "1",
                             "var_split" => o.cuts.var_split = v.parse().unwrap(),
+                            "var_keep" => o.cuts.var_keep = v.parse().unwrap(),
                             "one_pass" => o.cuts.one_pass = v == "1",
                             "cfl_fit" => o.cuts.cfl_fit = v == "1",
                             "cfl_share" => o.cuts.cfl_share = v.parse().unwrap(),
