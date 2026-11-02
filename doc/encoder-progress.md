@@ -39,6 +39,18 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, efforts 0-3: a transform type's bits counted only where they could win.** Chosen because
+counted coefficients are a quarter of the encoding at effort 1, qidx 60. Predicted: a large share of
+the counts gone at no cost. A type is skipped where its distortion and 4 bits per nonzero coefficient
+already lose to the best so far. Five photos: 3 changes nothing in any cell, 4 skips 13-51% at
+under 0.1% bytes and 0.002 dB, 6 starts to cost bytes. The gain is smaller than the share of skipped
+counts suggested: instructions 0.96-0.99x, cycles 0.96-0.99x. Wall time could not see it, so this is
+the first step judged by `time -l` counters, where two runs of one binary agree to 0.1% and about
+1.3%. Cycles of the commit before today's chroma work against this one, at qidx 200, 140, 90, 60: e1 0.59, 0.71, 0.87,
+0.92; e2 0.58, 0.73, 0.80, 0.83; e3 0.54, 0.72, 0.81, 0.86. e0 reads 1.05, 0.93, 0.98, 0.90, with an
+old-against-old spread up to 1.32 at qidx 200, so e0 is not resolved. `enc::` 54 passed.
+Next: effort 0 and 1 at high quality, where they are furthest from libaom.
+
 **2026-11-02, efforts 1-3: partitions settled by variance outside a band.** Chosen because the
 single threshold of effort 0 costs 0.26-0.39 dB at these efforts. Predicted: a band keeps most of
 its speed at a small part of its loss. A block under 1 squared quantizer step stays whole, one over 64
