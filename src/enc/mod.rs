@@ -202,7 +202,7 @@ impl Options {
             _ => (1, 2, 0, 1..4, 4.0),
         };
         let levels = if effort <= 1 || effort <= 3 && qidx > 100 { levels.start..levels.end.min(3) } else { levels };
-        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false, var_split: match effort { 0 => 4.0, 1..=3 => 1.0, _ => 0.0 }, var_keep: if matches!(effort, 1..=3) { 64.0 } else { 0.0 }, one_pass: effort <= 1, cfl_fit: effort <= 3, cfl_share: if effort <= 3 { 0.6 } else { 0.0 } };
+        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false, var_split: match effort { 0 => 4.0, 1..=3 => 1.0, _ => 0.0 }, var_keep: if matches!(effort, 1..=3) { 64.0 } else { 0.0 }, one_pass: effort <= 1, rate_guess: if effort <= 3 { 4.0 } else { 0.0 }, cfl_fit: effort <= 3, cfl_share: if effort <= 3 { 0.6 } else { 0.0 } };
         // Text and graphics need the H or V partition along None's direction; photos gain 0.03 dB for 30% more time.
         let rect = if screen && rect == 2 { 3 } else { rect };
         let fine = effort >= 4 && (qidx <= 64 || pixels <= 512 * 512);

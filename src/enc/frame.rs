@@ -285,6 +285,9 @@ pub struct Cuts {
     /// With one luma candidate at one depth there is nothing to compare, so its DCT-only code,
     /// which the transform type search repeats, is not made.
     pub one_pass: bool,
+    /// A transform type is not counted where its distortion and this many bits per nonzero
+    /// coefficient already lose to the best so far. On photos 3 keeps every choice and 4 half the counts.
+    pub rate_guess: f32,
     /// CfL alphas from the least squares fit of the source on the luma AC, without predicting.
     pub cfl_fit: bool,
     /// Above 0, chroma tries CfL only where the fit explains this share of its variance. Photos
@@ -1874,6 +1877,13 @@ impl<D: Decide> Encoder<D> {
                 let (eob, err, last) = quant::quantize(&coefs[..n], &mut trial[..n], self.dq[plane], qm, shift, 48, scan_index(tx, DAV1D_TX_TYPE_CLASS[txtp as usize]));
                 if eob < 0 {
                     continue;
+                }
+                if let Some(w) = winner.filter(|_| self.cuts.rate_guess > 0.0) {
+                    let nonzero = trial[..n].iter().filter(|&&v| v != 0).count();
+                    let least = nonzero.saturating_sub(1) as f64 * self.cuts.rate_guess as f64;
+                    if err as f64 / 64.0 + self.lambda * least >= w.0 {
+                        continue;
+                    }
                 }
                 let bits = rate(self, txtp, &trial[..n], eob);
                 let cost = err as f64 / 64.0 + self.lambda * bits as f64 / 512.0;
@@ -4143,6 +4153,7 @@ pub(crate) mod tests {
                             "var_split" => o.cuts.var_split = v.parse().unwrap(),
                             "var_keep" => o.cuts.var_keep = v.parse().unwrap(),
                             "one_pass" => o.cuts.one_pass = v == "1",
+                            "rate_guess" => o.cuts.rate_guess = v.parse().unwrap(),
                             "cfl_fit" => o.cuts.cfl_fit = v == "1",
                             "cfl_share" => o.cuts.cfl_share = v.parse().unwrap(),
                             "cnn" => o.cnn_prune = v.parse().unwrap(),
