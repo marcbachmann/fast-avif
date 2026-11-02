@@ -3992,7 +3992,23 @@ pub(crate) mod tests {
                     if let Ok(t) = std::env::var("ENC_TILES") {
                         o.tile_cols_log2 = t.parse().unwrap();
                     }
-                    if std::env::var("ENC_FAST").is_ok_and(|v| v == "1") { o.fast() } else { o }
+                    let mut o = if std::env::var("ENC_FAST").is_ok_and(|v| v == "1") { o.fast() } else { o };
+                    for (k, v) in std::env::var("ENC_SET").unwrap_or_default().split(',').filter_map(|s| s.split_once('=')) {
+                        match k {
+                            "keep" => o.keep_modes = v.parse().unwrap(),
+                            "keep_uv" => o.keep_chroma = v.parse().unwrap(),
+                            "rect" => o.rect = v.parse().unwrap(),
+                            "levels" => {
+                                let (a, b) = v.split_once("..").unwrap();
+                                o.levels = a.parse().unwrap()..b.parse().unwrap();
+                            }
+                            "prune" => o.prune = v.parse().unwrap(),
+                            "rank_pre" => o.rank_pre = v.parse().unwrap(),
+                            "filter_search" => o.filter_search = v == "1",
+                            _ => panic!("ENC_SET {k}"),
+                        }
+                    }
+                    o
                 }
                 Err(_) => options.clone(),
             };
