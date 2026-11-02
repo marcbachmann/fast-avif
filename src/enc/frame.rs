@@ -546,15 +546,16 @@ pub struct Encoder<D: Decide> {
     pub rect_adaptive: bool,
     /// See `Options::split8_adaptive`.
     pub split8_adaptive: bool,
-    /// Per activity class of the block (`activity_bucket`): 16×16 blocks met, searched below
-    /// 16×16 (8×8 splits and the rect partitions after them), the cost that search gained over
-    /// None where a partition won, the cost of every decision tried, and the wins that gained
-    /// over 2% of their block's cost.
-    pub split_seen: [(u32, u32, f64, f64, u32); 4],
-    /// Per partition level and activity class of the block under `rect_ratio`: rect partitions
-    /// met and tried, the cost their wins saved over the best square partition, the cost of every
-    /// decision tried, and the wins that saved over 2% of the block's cost.
-    pub rect_seen: [[(u32, u32, f64, f64, u32); 4]; 5],
+    /// Per tile column and activity class of the block (`activity_bucket`): 16×16 blocks met,
+    /// searched below 16×16 (8×8 splits and the rect partitions after them), the cost that search
+    /// gained over None where a partition won, the cost of every decision tried, and the wins
+    /// that gained over 2% of their block's cost. Per tile column so that a column coded on its
+    /// own thread learns what it learns in one encoder coding every column.
+    pub split_seen: Vec<[(u32, u32, f64, f64, u32); 4]>,
+    /// Per tile column, partition level and activity class of the block under `rect_ratio`: rect
+    /// partitions met and tried, the cost their wins saved over the best square partition, the
+    /// cost of every decision tried, and the wins that saved over 2% of the block's cost.
+    pub rect_seen: Vec<[[(u32, u32, f64, f64, u32); 4]; 5]>,
     /// See `Options::fast_cdef`.
     pub fast_cdef: bool,
     /// See `Options::graphic_guard`.
@@ -631,6 +632,7 @@ pub fn ssim_reference(width: usize, height: usize, luma: &[u8]) -> f64 {
 impl<D: Decide> Encoder<D> {
     pub fn new(seq: Sequence, frame: Frame, decide: D) -> Self {
         let planes = if seq.mono { 1 } else { 3 };
+        let cols = frame.tiling.cols() as usize;
         let bw = ((seq.width as i32 + 7) >> 3) << 1;
         let bh = ((seq.height as i32 + 7) >> 3) << 1;
         let stride = (bw as usize * 4).next_multiple_of(SB) + SB;
@@ -713,8 +715,8 @@ impl<D: Decide> Encoder<D> {
             rect_ratio: 0.0,
             rect_adaptive: false,
             split8_adaptive: false,
-            split_seen: [(0, 0, 0.0, 0.0, 0); 4],
-            rect_seen: [[(0, 0, 0.0, 0.0, 0); 4]; 5],
+            split_seen: vec![[(0, 0, 0.0, 0.0, 0); 4]; cols],
+            rect_seen: vec![[[(0, 0, 0.0, 0.0, 0); 4]; 5]; cols],
             fast_cdef: false,
             graphic_guard: false,
             ssim: [1.0; 16],
@@ -2201,7 +2203,7 @@ impl<D: Decide> Encoder<D> {
         // nothing about the edges and textures beside it.
         let bucket = if split8 || (self.rect_adaptive || self.graphic_guard) && self.rect_ratio > 0.0 { self.activity_bucket(x, y, n4) } else { 0 };
         let prune8 = split8 && {
-            let seen = &mut self.split_seen[bucket];
+            let seen = &mut self.split_seen[ti][bucket];
             seen.0 += 1;
             let (met, tried, gained, total, big) = *seen;
             tried >= 32 && gained <= total * 0.05 && big * 4 <= tried && met % 16 != 0
@@ -2247,7 +2249,7 @@ impl<D: Decide> Encoder<D> {
                     if !adaptive {
                         continue;
                     }
-                    let seen = &mut self.rect_seen[level as usize][bucket];
+                    let seen = &mut self.rect_seen[ti][level as usize][bucket];
                     if !rect_under {
                         seen.0 += 1;
                     }
@@ -2325,7 +2327,7 @@ impl<D: Decide> Encoder<D> {
         }
         let (cost, bits, snap, nodes) = best.unwrap();
         if split8 && !prune8 && none_cost.is_finite() {
-            let seen = &mut self.split_seen[bucket];
+            let seen = &mut self.split_seen[ti][bucket];
             seen.1 += 1;
             seen.3 += cost;
             if !matches!(nodes[0], Node::Part(None)) {
@@ -2340,7 +2342,7 @@ impl<D: Decide> Encoder<D> {
             }
         }
         if rect_under {
-            let seen = &mut self.rect_seen[level as usize][bucket];
+            let seen = &mut self.rect_seen[ti][level as usize][bucket];
             seen.3 += cost;
             if matches!(nodes[0], Node::Part(H | V)) {
                 let gain = none_cost.min(split_cost) - cost;
@@ -3876,6 +3878,27 @@ pub(crate) mod tests {
         assert!(one.data != alone.data);
     }
 
+    /// A graphic in two tile columns at effort 4 and up: threads and one thread code the same
+    /// bytes.
+    #[test]
+    fn tile_threads_graphic() {
+        let threads: crate::Spawner = std::sync::Arc::new(|f| {
+            std::thread::spawn(f);
+            true
+        });
+        for (w, h) in [(520usize, 40usize), (700, 60)] {
+            let img = graphic(w, h);
+            let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
+            let shared = std::sync::Arc::new(img.clone());
+            let base = crate::enc::Options { tile_cols_log2: 1, ..crate::enc::Options::effort(120, 4, false, (w * h) as u64).tune_iq() };
+            for options in [base.clone(), base.fast()] {
+                let alone = crate::enc::still(w as u32, h as u32, &rows, &options);
+                let on = crate::enc::still_on(w as u32, h as u32, shared.clone(), &options, Some(&threads));
+                assert!(alone.data == on.data, "{w}x{h}: one thread {} B, threads {} B", alone.data.len(), on.data.len());
+            }
+        }
+    }
+
     #[test]
     fn random_two_tile_columns() {
         random(4200, 72, false, 3, |f| f.tx_select = true);
@@ -4232,8 +4255,21 @@ pub(crate) mod tests {
             let mut e = crate::enc::still_rows(w as u32, h as u32, &rows, &options, std::env::var("ENC_STATS").is_ok(), workers);
             let searched = t.elapsed().as_millis();
             let stats = e.stats;
-            let rect_seen = e.rect_seen;
-            let split_seen = e.split_seen;
+            let add = |a: &mut (u32, u32, f64, f64, u32), b: &(u32, u32, f64, f64, u32)| *a = (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4);
+            let mut rect_seen = [[(0, 0, 0.0, 0.0, 0); 4]; 5];
+            let mut split_seen = [(0, 0, 0.0, 0.0, 0); 4];
+            for col in &e.rect_seen {
+                for (l, row) in col.iter().enumerate() {
+                    for (b, s) in row.iter().enumerate() {
+                        add(&mut rect_seen[l][b], s);
+                    }
+                }
+            }
+            for col in &e.split_seen {
+                for (b, s) in col.iter().enumerate() {
+                    add(&mut split_seen[b], s);
+                }
+            }
             let ns = e.stage_ns.map(|n| n / 1_000_000);
             let sizes = e.size_ns.map(|n| n / 1_000_000);
             let estimated = e.estimated as f64 / 4096.0;
