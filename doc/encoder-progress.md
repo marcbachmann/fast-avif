@@ -39,6 +39,21 @@ An incremental build takes about 17 s.
 
 ## Log
 
+**2026-11-02, efforts 0-3: CfL by a closed-form fit, tried only where luma explains the chroma.**
+Chosen because chroma was the largest stage left at effort 0. Predicted: about 0.85x at effort 0
+at under 0.1 dB. The fit takes the alphas from the least squares of the source on the luma AC
+without predicting. Against the walk it replaces it is level on photos (within 0.05 dB) and gains
+up to 1.2 dB on hard-edged colour, where the outward walk stopped early, with one dip of 0.44 dB
+(plum, effort 2, qidx 140, on a near-flat curve). Choosing DC or CfL from the fit's gain alone
+lost up to 0.58 dB at about the same bytes, so CfL still has to win by RD. Dropping CfL is 0.80-0.88x at effort 0
+and costs photos 0.10 dB, but red-at-12-oclock 41-55% more bytes and plum 5-19%. Share 0.6 of the
+variance explained, with a floor of 2 squared steps, keeps both pictures at least level but for
+one 0.03-0.36 dB dip on plum. Chroma coefficients per pixel over five photos: e0 17 -> 12, e1 24-28 -> 17-19, e2 28-33 -> 18-23,
+e3 58-72 -> 49-62. dB at equal bytes on photos: mean -0.04 to -0.06, worst -0.20, mostly at qidx
+200. Time, ten paired rounds on a loaded laptop with an old-against-old control, qidx 140 and 90:
+e0 0.92, 0.94; e1 0.92, 0.92; e2 0.94, 0.98; e3 0.98, 0.99. Clear of the control only at e1; e3
+is inside it. Needs a steady x86 run. Next: the fit at effort 4 and up, with the gates.
+
 **2026-11-02, effort 0: partitions by variance, one luma code.** Chosen because effort 0 sat at
 about 2.5x libaom's effort 0 on photos. Predicted: 0.4x its old time, at no more than 0.3 dB.
 `pick_partition` takes None or Split from the block's variance against the quantizer step
