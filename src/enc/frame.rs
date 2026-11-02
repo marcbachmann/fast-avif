@@ -288,6 +288,9 @@ pub struct Cuts {
     /// A transform type is not counted where its distortion and this many bits per nonzero
     /// coefficient already lose to the best so far. On photos 3 keeps every choice and 4 half the counts.
     pub rate_guess: f32,
+    /// Above 0, a transform block with one type estimates its bits from its levels, this many per
+    /// nonzero one, to choose between coding it and not, where no other choice reads them.
+    pub est_rate: f32,
     /// CfL alphas from the least squares fit of the source on the luma AC, without predicting.
     pub cfl_fit: bool,
     /// Above 0, chroma tries CfL only where the fit explains this share of its variance. Photos
@@ -1937,7 +1940,11 @@ impl<D: Decide> Encoder<D> {
                 continue;
             }
             let mut eob = eob;
-            let mut bits = rate(self, txtp, &trial[..n], eob);
+            let mut bits = if self.cuts.est_rate > 0.0 && cands.len() == 1 && self.rdoq == 0 {
+                trial[..n].iter().filter(|&&v| v != 0).map(|&v| self.cuts.est_rate + 2.0 * (v.unsigned_abs() as f32).log2()).sum::<f32>() as u32 * 512
+            } else {
+                rate(self, txtp, &trial[..n], eob)
+            };
             let reconstruct = |e: &mut Self, lv: &[i32], eob: i32, cf: &mut Coef| -> u64 {
                 e.dequant(plane, tx, txtp, lv, &mut cf.0[..n], used);
                 e.scratch.write(0, 0, pw, ph, &pred[..pw * ph]);
@@ -4204,6 +4211,7 @@ pub(crate) mod tests {
                             "var_keep" => o.cuts.var_keep = v.parse().unwrap(),
                             "one_pass" => o.cuts.one_pass = v == "1",
                             "rate_guess" => o.cuts.rate_guess = v.parse().unwrap(),
+                            "est_rate" => o.cuts.est_rate = v.parse().unwrap(),
                             "cfl_fit" => o.cuts.cfl_fit = v == "1",
                             "cfl_share" => o.cuts.cfl_share = v.parse().unwrap(),
                             "cnn" => o.cnn_prune = v.parse().unwrap(),
