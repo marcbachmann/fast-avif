@@ -3735,6 +3735,37 @@ pub(crate) mod tests {
         }
     }
 
+    /// The cuts of efforts 0-3, for photos and for drawn pictures, decode as reconstructed.
+    #[test]
+    fn low_efforts_decode_as_reconstructed() {
+        let (w, h) = (300, 140);
+        for img in [graphic(w, h), photo(w, h, 3, 5)] {
+            let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
+            for effort in 0..=3 {
+                for qidx in [60, 200] {
+                    let photos = crate::enc::Options::effort(qidx, effort, false, (w * h) as u64).tune_iq().fast();
+                    let drawn = crate::enc::Options::effort(qidx, effort, true, (w * h) as u64).drawn(effort).tune_iq().fast();
+                    for (name, options) in [("photos", photos), ("drawn", drawn)] {
+                        let mut e = crate::enc::encoder(w as u32, h as u32, &rows, &options, false);
+                        e.recon = Some(vec![Vec::new(); 3]);
+                        for y in 0..h {
+                            let r: Vec<&[u8]> = img.iter().map(|p| &p[y * w..][..w]).collect();
+                            e.push(&r);
+                        }
+                        let c = e.finish();
+                        let decoded = decode(c.data.clone(), w, h, 3);
+                        let recon = c.recon.as_ref().unwrap();
+                        for p in 0..3 {
+                            if let Some(i) = (0..w * h).find(|&i| decoded[p][i] != recon[p][i]) {
+                                panic!("effort {effort} qidx {qidx} {name} plane {p}: first difference at ({}, {})", i % w, i / w);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Tile columns coded on other threads, or refused by them, give the bytes of one thread.
     #[test]
     fn tile_threads() {
@@ -4076,7 +4107,11 @@ pub(crate) mod tests {
             // `ENC_EFFORT` takes the product's options: effort, tune IQ and `ENC_FAST=1` for the fast search.
             let options = match std::env::var("ENC_EFFORT") {
                 Ok(effort) => {
-                    let mut o = crate::enc::Options::effort(qidx, effort.parse().unwrap(), options.screen, (w * h) as u64).tune_iq();
+                    let effort: u8 = effort.parse().unwrap();
+                    let mut o = crate::enc::Options::effort(qidx, effort, options.screen, (w * h) as u64).tune_iq();
+                    if std::env::var("ENC_DRAWN").is_ok_and(|v| v == "1") {
+                        o = o.drawn(effort);
+                    }
                     if let Ok(t) = std::env::var("ENC_TILES") {
                         o.tile_cols_log2 = t.parse().unwrap();
                     }

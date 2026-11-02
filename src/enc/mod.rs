@@ -213,10 +213,17 @@ impl Options {
 }
 
 impl Options {
-    /// The search of efforts 2-3 for drawn pictures at efforts 0-3: they lost 17-93% more bytes
-    /// to the cuts below it, where photos lost 1-13%.
-    pub fn drawn(self) -> Self {
-        Self { cuts: Default::default(), keep_modes: 3, levels: 0..self.levels.end, tx_depths: 1, ..self }
+    /// The search for drawn pictures at efforts 0-3: they lost 17-93% more bytes to the photo
+    /// cuts, and text 10 dB to partitions by variance. Each effort still leads libaom's at
+    /// equal bytes by dBs, which these cuts trade for its time.
+    pub fn drawn(self, effort: u8) -> Self {
+        let cuts = frame::Cuts { uv_few: effort <= 2, no_y_angles: effort <= 2, cfl_fit: effort <= 2, few_modes: effort <= 1, ..Default::default() };
+        let (keep_modes, levels, tx_depths, cuts) = match effort {
+            0 => (1, 1..3, 0, frame::Cuts { one_luma: true, one_pass: true, no_filter: true, no_uv_angles: true, cfl_share: 0.6, ..cuts }),
+            1 => (3, 0..3, 1, cuts),
+            _ => (3, 0..self.levels.end, 1, cuts),
+        };
+        Self { cuts, keep_modes, levels, tx_depths, ..self }
     }
 
     /// Everything libaom's tune IQ changes that the encoder has.
