@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{array, cmp, iter, mem};
-use parking_lot::{Condvar, Mutex};
+use rav1d_shared::sync::{Condvar, Mutex};
 use strum::EnumCount;
 
 use rav1d_shared::align::{Align16, AlignedVec64};

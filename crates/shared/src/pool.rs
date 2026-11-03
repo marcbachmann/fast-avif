@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use crate::sync::Mutex;
 
 pub struct MemPool<T> {
     bufs: Mutex<Vec<Vec<T>>>,

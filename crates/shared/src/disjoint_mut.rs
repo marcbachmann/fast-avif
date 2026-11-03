@@ -783,7 +783,7 @@ mod debug {
     use std::thread;
     use std::thread::ThreadId;
 
-    use parking_lot::Mutex;
+    use crate::sync::Mutex;
 
     use super::*;
 

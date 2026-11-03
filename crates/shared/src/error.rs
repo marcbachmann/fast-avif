@@ -8,7 +8,8 @@ use strum::FromRepr;
 #[repr(u8)]
 #[non_exhaustive]
 pub enum Rav1dError {
-    /// This represents a generic `rav1d` error.
+    /// This represents a generic `rav1d` error. The others carry the Linux errno values of their
+    /// names, which consumers print.
     ///
     /// This forces `0` to be the niche of [`Rav1dResult`].
     Other = 1,
@@ -16,7 +17,7 @@ pub enum Rav1dError {
     /// No entity.
     ///
     /// No Sequence Header OBUs were found in the buffer.
-    NoEntity,
+    NoEntity = 2,
 
     /// Try again.
     ///
@@ -26,27 +27,27 @@ pub enum Rav1dError {
     ///
     /// If this is returned by [`rav1d_get_picture`], then no decoded frames are pending
     /// currently and more data needs to be sent to the decoder.
-    TryAgain,
+    TryAgain = 11,
 
     /// Out of memory.
     ///
     /// Not enough memory is currently available for performing this operation.
-    OutOfMemory,
+    OutOfMemory = 12,
 
     /// Invalid argument.
     ///
     /// One of the arguments passed to the function, including the bitstream, is invalid.
-    InvalidArgument,
+    InvalidArgument = 22,
 
     /// Out of range.
     ///
     /// The frame size is larger than the limit.
-    OutOfRange,
+    OutOfRange = 34,
 
     /// Unsupported bitstream.
     ///
     /// The provided bitstream is not supported by `rav1d`.
-    UnsupportedBitstream,
+    UnsupportedBitstream = 92,
 }
 
 impl Rav1dError {

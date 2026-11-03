@@ -47,6 +47,7 @@ struct Open {
     apply_grain: bool,
     by_rows: bool,
     threads: u32,
+    max_frame_delay: u32,
     rows_spawner: Option<Spawner>,
     spawner: Option<Spawner>,
     allocator: Option<Arc<dyn PictureAllocator>>,
@@ -58,6 +59,7 @@ impl Open {
             apply_grain,
             by_rows,
             threads: 1,
+            max_frame_delay: 1,
             ..Default::default()
         }
     }
@@ -65,7 +67,7 @@ impl Open {
     fn decoder(&self) -> Decoder {
         let mut settings = Settings::new();
         settings.set_n_threads(self.threads);
-        settings.set_max_frame_delay(1);
+        settings.set_max_frame_delay(self.max_frame_delay);
         settings.set_apply_grain(self.apply_grain);
         if let Some(allocator) = &self.allocator {
             settings.set_allocator(allocator.clone());
@@ -752,8 +754,10 @@ fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
         let frames = ivf_frames(&data);
         let starts: Vec<usize> = (1..frames.len()).filter(|&i| parse_sequence_header(frames[i]).is_ok()).collect();
         let Some(&at) = starts.get(starts.len() / 2) else { continue };
-        for threads in [1, 4] {
-            let open = Open { threads, ..Open::new(true, false) };
+        // A frame delay other than 1 on threads gives frame threads, whose flush takes the delayed
+        // frames out.
+        for (threads, max_frame_delay) in [(1, 1), (4, 1), (4, 0), (4, 3)] {
+            let open = Open { threads, max_frame_delay, ..Open::new(true, false) };
             let mut new = Decoded::default();
             send_all(&mut open.decoder(), &frames[at..], &mut new);
             let mut flushed = open.decoder();
@@ -771,7 +775,7 @@ fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
             seeks += 1;
             pictures += new.out.iter().filter(|o| o.is_ok()).count();
             if new.out != resumed.out {
-                differ.push(format!("{} from frame {at} on {threads} threads", file.display()));
+                differ.push(format!("{} from frame {at} on {threads} threads, delay {max_frame_delay}", file.display()));
             }
         }
     }

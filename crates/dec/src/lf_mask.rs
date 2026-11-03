@@ -1,6 +1,6 @@
 use std::cmp;
 use std::mem::MaybeUninit;
-use parking_lot::RwLock;
+use rav1d_shared::sync::RwLock;
 use zerocopy::FromBytes;
 
 use rav1d_shared::align::{Align16, AlignedVec2, ArrayDefault};

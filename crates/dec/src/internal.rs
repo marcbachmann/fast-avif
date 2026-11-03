@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
 use atomig::{Atom, Atomic};
-use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
+use rav1d_shared::sync::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use strum::FromRepr;
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 

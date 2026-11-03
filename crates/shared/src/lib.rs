@@ -99,6 +99,7 @@ pub mod qm;
 pub mod relaxed_atomic;
 pub mod scan;
 pub mod shared_bytes;
+pub mod sync;
 pub mod simd128;
 pub mod strided;
 pub mod tables;

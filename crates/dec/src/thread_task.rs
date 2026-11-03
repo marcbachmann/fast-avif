@@ -7,7 +7,7 @@ use std::time::Duration;
 use std::{cmp, mem, thread};
 
 use atomig::{Atom, Atomic};
-use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use rav1d_shared::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 use rav1d_shared::cdf::rav1d_cdf_thread_update;
 use crate::decode::{
@@ -151,6 +151,21 @@ pub struct Rav1dTasks {
     pub cur_prev: RelaxedAtomic<Rav1dTaskIndex>,
 }
 
+/// One task, with the read lock on all of them.
+struct TaskRef<'a> {
+    tasks: RwLockReadGuard<'a, Vec<Rav1dTask>>,
+    index: usize,
+}
+
+impl Deref for TaskRef<'_> {
+    type Target = Rav1dTask;
+
+    #[inline]
+    fn deref(&self) -> &Rav1dTask {
+        &self.tasks[self.index]
+    }
+}
+
 impl Rav1dTasks {
     fn insert_tasks_between(
         &self,
@@ -283,9 +298,8 @@ impl Rav1dTasks {
     #[inline]
     fn index<'a>(&'a self, index: Rav1dTaskIndex) -> impl Deref<Target = Rav1dTask> + 'a {
         if let Some(index) = index.raw_index() {
-            RwLockReadGuard::map(self.tasks.try_read().unwrap(), |tasks| {
-                &tasks[index as usize]
-            })
+            let tasks = self.tasks.try_read().unwrap();
+            TaskRef { tasks, index: index as usize }
         } else {
             panic!("Cannot index with None");
         }

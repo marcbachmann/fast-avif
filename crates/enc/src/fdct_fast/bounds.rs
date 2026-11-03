@@ -1,4 +1,4 @@
-//! Bounds tests for `fdct_fast`: exact-size slices between guard pages, an affine bound
+//! Bounds tests for `fdct_fast`: exact-size slices amid padding, an affine bound
 //! on every scalar intermediate (overflow is the only way the lanes can disagree), heavier
 //! lane comparisons and a layout check against `fdct.rs`.
 
@@ -24,61 +24,12 @@ fn simd_available() -> bool {
     false
 }
 
-struct Guarded {
-    base: *mut u8,
-    total: usize,
-    page: usize,
-    pages: usize,
-}
-
-impl Guarded {
-    /// `[guard][data pages][guard]`.
-    fn new(bytes: usize) -> Self {
-        unsafe {
-            let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
-            let pages = bytes.div_ceil(page).max(1);
-            let total = (pages + 2) * page;
-            let base = libc::mmap(
-                std::ptr::null_mut(),
-                total,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            );
-            assert!(base != libc::MAP_FAILED);
-            let base = base as *mut u8;
-            assert_eq!(libc::mprotect(base as *mut _, page, libc::PROT_NONE), 0);
-            assert_eq!(libc::mprotect(base.add((pages + 1) * page) as *mut _, page, libc::PROT_NONE), 0);
-            Self { base, total, page, pages }
-        }
-    }
-
-    /// `n` values ending at the trailing guard page.
-    fn tail<T>(&mut self, n: usize) -> &mut [T] {
-        unsafe {
-            let end = self.base.add((self.pages + 1) * self.page);
-            std::slice::from_raw_parts_mut((end as *mut T).sub(n), n)
-        }
-    }
-
-    /// `n` values starting right after the leading guard page.
-    fn head<T>(&mut self, n: usize) -> &mut [T] {
-        unsafe { std::slice::from_raw_parts_mut(self.base.add(self.page) as *mut T, n) }
-    }
-}
-
-impl Drop for Guarded {
-    fn drop(&mut self) {
-        unsafe { libc::munmap(self.base as *mut _, self.total) };
-    }
-}
-
-/// Exactly `pw * ph` residuals and `cw * ch` coefficients, as `rd_residual` passes them, with
-/// an unmapped page right after (and, in the second layout, right before) each slice. A read
-/// or write outside them is a SIGSEGV/SIGBUS, not a silent pass.
+/// Exactly `pw * ph` residuals and `cw * ch` coefficients, as `rd_residual` passes them, amid
+/// padding: a write outside them moves the padding, and a read outside them changes the
+/// coefficients between the two fills.
 #[test]
-fn exact_slices_between_guard_pages() {
+fn exact_slices_amid_padding() {
+    const PAD: usize = 64;
     let lanes: Vec<Lane> = if simd_available() { vec![Lane::Scalar, Lane::Simd] } else { vec![Lane::Scalar] };
     let mut checked = 0;
     for (size, ty) in pairs() {
@@ -90,21 +41,20 @@ fn exact_slices_between_guard_pages() {
             let mut want = vec![0i32; cw * ch];
             forward_in(Lane::Scalar, &block, w, &mut want, size, ty);
             for &lane in &lanes {
-                for at_tail in [true, false] {
-                    let mut rg = Guarded::new(w * h * 2);
-                    let mut cg = Guarded::new(cw * ch * 4);
-                    let residual: &mut [i16] = if at_tail { rg.tail(w * h) } else { rg.head(w * h) };
-                    residual.copy_from_slice(&block);
-                    let coefs: &mut [i32] = if at_tail { cg.tail(cw * ch) } else { cg.head(cw * ch) };
-                    coefs.fill(0x5a5a_5a5a);
-                    forward_in(lane, residual, w, coefs, size, ty);
-                    assert!(coefs == &want[..], "{size:?} {ty} {lane:?} tail={at_tail} rep={rep}: differs");
+                for fill in [i16::MAX, i16::MIN] {
+                    let mut residual = vec![fill; PAD + w * h + PAD];
+                    residual[PAD..PAD + w * h].copy_from_slice(&block);
+                    let mut coefs = vec![0x5a5a_5a5a; PAD + cw * ch + PAD];
+                    forward_in(lane, &residual[PAD..PAD + w * h], w, &mut coefs[PAD..PAD + cw * ch], size, ty);
+                    assert!(coefs[PAD..PAD + cw * ch] == want[..], "{size:?} {ty} {lane:?} fill={fill} rep={rep}: differs");
+                    let untouched = coefs[..PAD].iter().chain(&coefs[PAD + cw * ch..]).all(|&c| c == 0x5a5a_5a5a);
+                    assert!(untouched, "{size:?} {ty} {lane:?} fill={fill} rep={rep}: wrote outside");
                     checked += 1;
                 }
             }
         }
     }
-    println!("guard-page runs: {checked}");
+    println!("padded runs: {checked}");
 }
 
 thread_local!(static PEAK: Cell<f64> = const { Cell::new(0.0) });

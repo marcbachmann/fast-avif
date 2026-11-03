@@ -13,7 +13,7 @@ use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
 
 #[macro_use]
 mod kernels;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod bounds;
 #[cfg(target_arch = "aarch64")]
 mod arm;

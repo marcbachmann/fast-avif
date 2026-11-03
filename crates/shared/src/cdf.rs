@@ -4,7 +4,7 @@ use std::cmp;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use parking_lot::{RwLock, RwLockWriteGuard};
+use crate::sync::{RwLock, RwLockWriteGuard};
 use strum::EnumCount;
 
 use crate::align::{Align16, Align32, Align4, Align8};

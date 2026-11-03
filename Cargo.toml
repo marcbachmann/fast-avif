@@ -4,7 +4,6 @@ default-members = [".", "tools"]
 
 [workspace.dependencies]
 cfg-if = "1.0.0"
-libc = "0.2"
 
 [package]
 name = "rav1d"

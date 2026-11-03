@@ -89,7 +89,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Once};
 use std::{cmp, mem, thread};
 
-use parking_lot::Mutex;
+use rav1d_shared::sync::Mutex;
 pub use rust_api::*;
 
 use rav1d_shared::cpu::{rav1d_init_cpu, rav1d_num_logical_processors};
