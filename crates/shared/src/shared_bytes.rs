@@ -1,4 +1,6 @@
+use std::mem::ManuallyDrop;
 use std::ops::Deref;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::Arc;
@@ -16,10 +18,21 @@ unsafe impl Send for SharedBytes {}
 // SAFETY: as for `Send`.
 unsafe impl Sync for SharedBytes {}
 
+/// The bytes drop on whichever thread holds them last, a frame thread too, so a panic in the
+/// owner's `Drop` stays here, as for picture memory.
+struct Owner<T>(ManuallyDrop<T>);
+
+impl<T> Drop for Owner<T> {
+    fn drop(&mut self) {
+        // SAFETY: dropped only here, once.
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe { ManuallyDrop::drop(&mut self.0) }));
+    }
+}
+
 impl SharedBytes {
     pub fn new<T: AsRef<[u8]> + Send + Sync + 'static>(owner: T) -> Self {
-        let owner = Arc::new(owner);
-        let view = NonNull::from((*owner).as_ref());
+        let owner = Arc::new(Owner(ManuallyDrop::new(owner)));
+        let view = NonNull::from((*owner.0).as_ref());
         Self { _owner: owner, view }
     }
 
@@ -52,5 +65,32 @@ impl Deref for SharedBytes {
     #[inline]
     fn deref(&self) -> &[u8] {
         self.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PanicsOnDrop;
+
+    impl AsRef<[u8]> for PanicsOnDrop {
+        fn as_ref(&self) -> &[u8] {
+            &[1, 2, 3]
+        }
+    }
+
+    impl Drop for PanicsOnDrop {
+        fn drop(&mut self) {
+            panic!("owner dropped");
+        }
+    }
+
+    #[test]
+    fn a_panicking_owner_drops_quietly() {
+        let (first, second) = SharedBytes::split_at(SharedBytes::new(PanicsOnDrop), 1);
+        assert_eq!((&*first, &*second), (&[1][..], &[2, 3][..]));
+        drop(first);
+        drop(second);
     }
 }
