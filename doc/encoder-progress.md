@@ -5,7 +5,7 @@ and one paragraph per step, newest first.
 
 ## State
 
-- Branch `crate-split` (four crates, no C API, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
+- Branch `crate-split` (four crates, no C boundary, no libc, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
   forward transforms, the RD search with RDOQ, tune IQ (Variance Boost, SSIM λ, quantizer
   matrices, chroma delta q), deblocking and CDEF strengths searched on the decoded picture.
 - Not yet: restoration, threads, alpha and lossless parity checks.
@@ -39,43 +39,64 @@ An incremental build takes about 17 s.
 
 ## Log
 
-**2026-11-02, the fork as four crates, no C API.** Branch `crate-split`: `crates/shared` (headers,
-tables, cdfs, the SIMD layer, intra prediction, the inverse transforms, msac, env, cpu, the
-filter-trial trait), `crates/dec` (the decoder, its build script with the sdot cfg), `crates/enc`
-(the encoder, on shared alone; its tests take dec as a dev-dependency) and the root `rav1d`, a facade
-with the old paths: `rav1d::enc::{Options, still, still_on}`, `parse_sequence_header`, `Decoder`,
-`include::dav1d::*`, `Spawner`. The filter search takes a `FilterTrials` (shared) implemented by
-`rav1d_dec::DecoderTrials`; the facade's `still` and `still_on` hand it over, so no build reaches a
-search without one. The C API, its `capi` feature and the transliterated CLI are gone; `tools/dav1d`
-is a conformance runner on the Rust API (IVF, Section 5, Annex B in; the planes' md5 out or
-verified) that the meson lists verify: 760 of 760. Same output: the corpus bench's streams at efforts
-0, 2, 4, 9, natural and drawn, 56 rows read, 56 identical to the base; the 760 conformance md5s
-identical. Tests: 148 passed, 16 ignored before and after (enc 55/3, dec 39/10, shared 54/3), the
-prep commit alone 148/16 and 93/13. A palette fault fails five named rav1d-enc tests (50+5+3), a
-deblocking fault two named rav1d-dec tests (37+2+10). A/B: encode level on worker pinned and on the
-laptop (111.9G against 111.8G instructions); decode level on worker, and on aarch64 the split read
-+1.6% instructions until the small helpers moved to shared got `#[inline]` (a65d93db): +0.1%, cycles
-level. Build times on worker (release, bitcode only, one codegen unit; the base crate spent 46 of
-52 s in LLVM on one thread): the library alone clean 62 s before, after shared 1.4 s then dec 57 s
-beside enc 19 s; an encoder edit 62 s before, 22 s after; a decoder edit 62 s before, 81 s after
-(dec carries its own and shared's generic instantiations, 16.5k mono items against the base's 20.4k;
-enc 8.3k, shared 1.3k). The matrix harness in the alpine image against a path dependency: clean
-390 s before, 407 s after; an encoder edit 408 s before, 335 s after; a decoder edit 454 s before,
-346 s after; its own thin-LTO links of image-processing and avif-matrix stay at about 180 s of
-each. Public surface by rustdoc JSON, base 2404 items: nothing removed; changed are the eleven
-encoder functions whose `ty: u8` became `TxfmType` on main between the two readings and
-`filters::search`, which takes the trials; added are `DecoderTrials`, `FilterTrials` and the
-widened items of shared, which are `#[doc(hidden)]`. The refuter found the CLI short of the options
-the svc and vq_suite lists pass (`--oppoint`, `--alllayers`, `--decodeframetype`, `--limit=`), CI's
-clippy failing on the items the split widened to pub, and the filter-search test measuring both
-arms through `dist::sse`; all three fixed (6a917360): the 32 explicit meson entries pass beside the
-760 md5s, clippy is clean as CI runs it and on the workspace with the encoder, the test sums its
-own squared error again. Negative strides were a feature of the C API's allocator, so that CI
-step is gone. On a warm consumer build cargo rebuilds every fork crate after one encoder edit:
-the shipped files carry fresh mtimes, so this is the harness's measurement setup, not the
-workspace; the touch-rebuild figures above are what a stale tree costs, a developer's tree
-rebuilds enc, the facade and the consumers only. The capi integration tests went with the C
-API; `rust_api_rows` (16 tests, release) and the ported `uninit` stay.
+**2026-11-03, no C boundary left.** On `crate-split`: the `Dav1d*` mirrors, the `include::dav1d`
+layout, the C allocator and logger callbacks, `CRef`/`CBox`/`CArc` and user data, `extern "C"` on
+the DSP function pointers, `FFISafe`, the raw pointers and strides the kernels were passed beside
+their safe arguments, the pointers rebuilt from offsets (`lpf_ptr`, `reconstruct_topleft`,
+`lvl_ptr`), `AsmRefMvsFrame`, the C integer names and `CStr` all went. `SharedBytes` holds data
+sent to the decoder; pictures come from `PictureAllocator` with a pooled default. The locks are
+std's in `rav1d_shared::sync`, recovering a poisoned lock as parking_lot never poisoned, so
+neither parking_lot nor libc is in the tree; the fdct bounds test checks padding instead of guard
+pages. Same output: encoder 56 of 56 rows identical to the base; meson 792 Ok, plain and `-f 2`;
+lib 148 passed 16 ignored, integration 17, uninit 117 pictures 0 differ. Faults: palette fails five
+named rav1d-enc tests, deblocking `loopfilter::tests::simd_matches_scalar{,_16bpc}`, a skipped
+frame-threaded flush hangs the flush test (bounded at 300 s). aarch64, against the base, fat LTO:
+encode -0.7% instructions, decode -0.5%; no LTO: -0.6% each; cycles level. x86 on worker, pinned,
+two clean rounds (base A/A within 0.4%), encode corpus at effort 4 and one-thread decode: no LTO
+-1.2% and -1.3%, thin -0.8% and -1.7%, fat -1.3% and -1.9%, fat with x86-64-v3 -1.4% and -1.1%,
+279,889 B everywhere. The SIMD paths run:
+`--cpumask none` 9.3 s against 2.3 s with AVX2 on x86, base and head alike. The refuter found the
+errors renumbered (image-processing prints the errno: values restored), the flush test blind to
+frame threads (now 4 threads at delays 0 and 3), and that a panic in the `Drop` of data passed to
+`send_data_owned`, which used to abort at the C boundary, now hangs a frame-threaded decoder (open;
+image-processing's owner cannot panic). Threaded decode through the new CLI was 17% slower in
+wall time: it asked for pictures until TryAgain after every unit, and a second `get_picture` in a
+row drains, waiting on the oldest frame thread. One call a unit, as dav1d's CLI, is as fast as the
+old CLI (4 threads 1.02 s against 1.04 s); the library through the same Rust API loop is as fast
+as the base. Public surface by rustdoc JSON: gone are `include::*` (now `headers` and friends),
+the mirrors, `send_sync_non_null`, `Dav1dResult` and the API version constants; `filters::search`
+takes the trials; `c_uint` became `u32`. Open: negative strides are unreachable
+(`PlaneLayout` strides are `usize`) but still handled in `Rav1dPictureDataComponentInner::new`;
+`Decoder::flush` keeps pending data, so the next `send_data` panics; `cargo fmt` reports drift that
+the base already had.
+
+**2026-11-02, the fork as four crates.** `crates/shared` (headers, tables, cdfs, the SIMD layer,
+intra prediction, the inverse transforms, msac, env, cpu, the filter-trial trait), `crates/dec`
+(the decoder), `crates/enc` (the encoder, on shared alone; its tests take dec as a
+dev-dependency) and the root `rav1d`, a facade with the old paths: `rav1d::enc::{Options, still,
+still_on}`, `parse_sequence_header`, `Decoder`, `Spawner`. The filter search takes a
+`FilterTrials` (shared) implemented by `rav1d_dec::DecoderTrials`; the facade's `still` and
+`still_on` hand it over, so no build reaches a search without one. The C API, its `capi` feature
+and the transliterated CLI went; `tools/dav1d` is a conformance runner on the Rust API. The
+small helpers the decoder calls across the crate boundary carry `#[inline]`: without them decode
+on aarch64 read +1.6% instructions. Build times on worker, release (fat LTO, one codegen unit),
+two interleaved rounds on private source copies, both identical:
+
+| step | base | split |
+| --- | --- | --- |
+| clean, library and CLI | 74 s | 71 s |
+| encoder edit, library | 50 s | 11 s |
+| decoder edit, library | 50 s | 46 s |
+| encoder edit, library and CLI | 73 s | 34 s |
+| decoder edit, library and CLI | 73 s | 69 s |
+
+A build uses 4 to 6% of worker's 24 CPUs: LLVM runs one unit on one thread. The matrix harness
+(alpine image, thin LTO, path dependency), one round: clean 361 s against 371 s, an encoder edit
+296 and 317 s against 195 and 224 s, a decoder edit 334 s against 342 s; there about half the CPUs
+are busy, in the harness's own crates. image-processing and avif-matrix build against it
+unchanged. An earlier table here was taken while my own jobs touched the shared sources and is
+withdrawn, with its claim that a decoder edit got slower; so is the claim that eleven encoder
+signatures changed on main (`TxfmType` is an alias of `u8`).
 
 **2026-11-02, threads code the bytes of one thread again.** At effort 4 and up with two tile
 columns, `still_on` on threads and `still` on one thread coded a graphic to different bytes, with

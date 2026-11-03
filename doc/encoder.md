@@ -239,7 +239,7 @@ and a change that raises the peak needs a reason.
 
 Two uniform tile columns for photos over 512×512, each coded by its own encoder: `still_on`
 hands the columns after the first to the caller's spawner (the `Spawner` of
-`dav1d_open_with_spawner`), so image-processing's thread pool stays in charge, and the caller
+`Decoder::with_spawner`), so image-processing's thread pool stays in charge, and the caller
 codes every column no worker started. The tiles are merged before the filter search, and the
 bytes do not depend on the threads. On the full-size corpus at qindex 140 two threads take
 3311 → 1947 ms, a second encoder about 2 MB; the second column costs photos +0.5% bytes at

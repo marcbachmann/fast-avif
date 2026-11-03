@@ -326,29 +326,26 @@ fn run(a: &Args) -> Result<ExitCode, String> {
     let mut decoder = Decoder::with_settings(&settings).map_err(|e| format!("{e:?}"))?;
     let mut md5 = Md5::new();
     let mut pictures = 0;
-    // Every picture the decoder has; true once the limit is reached.
-    let mut drain = |decoder: &mut Decoder| -> Result<bool, Rav1dError> {
-        loop {
-            match decoder.get_picture() {
-                Ok(p) => {
-                    if hashing {
-                        hash_picture(&mut md5, &p);
-                    }
-                    pictures += 1;
-                    if pictures == a.limit {
-                        return Ok(true);
-                    }
+    // One picture if the decoder has one; true once the limit is reached. As dav1d's CLI, one call
+    // a unit: a second call in a row drains, waiting on the oldest frame thread.
+    let mut take = |decoder: &mut Decoder| -> Result<Option<bool>, Rav1dError> {
+        match decoder.get_picture() {
+            Ok(p) => {
+                if hashing {
+                    hash_picture(&mut md5, &p);
                 }
-                Err(Rav1dError::TryAgain) => return Ok(false),
-                Err(e) => return Err(e),
+                pictures += 1;
+                Ok(Some(pictures == a.limit))
             }
+            Err(Rav1dError::TryAgain) => Ok(None),
+            Err(e) => Err(e),
         }
     };
     let decode = || -> Result<(), Rav1dError> {
         for unit in units {
             let mut sent = decoder.send_data(unit.into(), None, None, None);
             loop {
-                if drain(&mut decoder)? {
+                if take(&mut decoder)? == Some(true) {
                     return Ok(());
                 }
                 match sent {
@@ -358,7 +355,12 @@ fn run(a: &Args) -> Result<ExitCode, String> {
                 }
             }
         }
-        drain(&mut decoder).map(|_| ())
+        while let Some(done) = take(&mut decoder)? {
+            if done {
+                break;
+            }
+        }
+        Ok(())
     };
     if let Err(e) = decode() {
         if !a.quiet {

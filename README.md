@@ -139,7 +139,7 @@ the [`.github/workflows`](.github/workflows) folder.
 
 # Using rav1d
 
-The library's API is the safe Rust one in [`src/rust_api.rs`](src/rust_api.rs):
+The library's API is the safe Rust one in [`crates/dec/src/rust_api.rs`](crates/dec/src/rust_api.rs), re-exported by the `rav1d` crate:
 `Settings`, `Decoder` and `Picture`, with decoding by superblock rows
 (`Decoder::set_decode_by_rows`, `decode_rows`, `rows_picture`), workers on the
 caller's threads (`Decoder::with_spawner`), data read in place
