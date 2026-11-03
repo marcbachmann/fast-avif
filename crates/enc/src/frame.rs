@@ -1474,7 +1474,7 @@ impl<D: Decide> Encoder<D> {
         let t_dim = &DAV1D_TXFM_DIMENSIONS[tx as usize];
         let wy = (y as usize * 4) % SB;
         let luma = &self.rec[0];
-        let y_src = luma.comp.with_offset::<BD>() + (wy * luma.stride + x as usize * 4);
+        let y_src = luma.comp.with_offset() + (wy * luma.stride + x as usize * 4);
         let furthest_r = (w4 + t_dim.w as i32 - 1) & !(t_dim.w as i32 - 1);
         let furthest_b = (h4 + t_dim.h as i32 - 1) & !(t_dim.h as i32 - 1);
         let mut ac = Ac([0; SCRATCH_AC_TXTP_LEN]);
@@ -1496,7 +1496,7 @@ impl<D: Decide> Encoder<D> {
         let tile = &self.tiles[ti];
         let wy = (y as usize * 4) % SB;
         let rec = &self.rec[1 + pl];
-        let dst = rec.comp.with_offset::<BD>() + (wy * rec.stride + x as usize * 4);
+        let dst = rec.comp.with_offset() + (wy * rec.stride + x as usize * 4);
         let mut topleft = EdgePx([0; EDGE_LEN]);
         let mut angle = 0;
         let m = rav1d_prepare_intra_edges(
@@ -1587,7 +1587,7 @@ impl<D: Decide> Encoder<D> {
                 let wy = (py as usize * 4) % SB;
                 if predict {
                     let rec = &self.rec[plane];
-                    let dst = rec.comp.with_offset::<BD>() + (wy * rec.stride + px as usize * 4);
+                    let dst = rec.comp.with_offset() + (wy * rec.stride + px as usize * 4);
                     let edge = EdgeFlags::I444_TOP_HAS_RIGHT.select(!((y > 0 || !sb_has_tr) && x + tw >= w4))
                         | EdgeFlags::I444_LEFT_HAS_BOTTOM.select(!(x > 0 || (!sb_has_bl && y + th >= h4)));
                     let mut topleft = EdgePx([0; EDGE_LEN]);
@@ -1695,7 +1695,7 @@ impl<D: Decide> Encoder<D> {
                     let mut b = self.bufs.take().unwrap();
                     self.dequant(plane, tx, txtp, levels, &mut b.cf.0[..n], n);
                     let rec = &self.rec[plane];
-                    let dst = rec.comp.with_offset::<BD>() + (wy * rec.stride + px as usize * 4);
+                    let dst = rec.comp.with_offset() + (wy * rec.stride + px as usize * 4);
                     self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut b.cf.0[..n], eob, BD::new(()));
                     self.bufs = Some(b);
                 }
@@ -1914,7 +1914,7 @@ impl<D: Decide> Encoder<D> {
             if let Some((_, txtp, eob, bits, last)) = winner {
                 self.dequant(plane, tx, txtp, levels, &mut cf.0[..n], last);
                 self.scratch.write(0, 0, pw, ph, &pred[..pw * ph]);
-                let dst = self.scratch.comp.with_offset::<BD>();
+                let dst = self.scratch.comp.with_offset();
                 self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut cf.0[..n], eob, BD::new(()));
                 let dist = sse(&src[..], &self.scratch.comp.slice::<BD, _>((0.., ..SB * SB)), SB);
                 if dist as f64 + self.lambda * bits as f64 / 512.0 < zero {
@@ -1948,7 +1948,7 @@ impl<D: Decide> Encoder<D> {
             let reconstruct = |e: &mut Self, lv: &[i32], eob: i32, cf: &mut Coef| -> u64 {
                 e.dequant(plane, tx, txtp, lv, &mut cf.0[..n], used);
                 e.scratch.write(0, 0, pw, ph, &pred[..pw * ph]);
-                let dst = e.scratch.comp.with_offset::<BD>();
+                let dst = e.scratch.comp.with_offset();
                 e.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut cf.0[..n], eob, BD::new(()));
                 sse(&src[..], &e.scratch.comp.slice::<BD, _>((0.., ..SB * SB)), SB)
             };

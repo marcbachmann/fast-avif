@@ -3608,7 +3608,7 @@ mod tests {
                         let (sbuf, off) = src_plane::<BD>(&mut rng, w, h, max);
                         let mut sbuf = aligned(&sbuf);
                         let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
-                        let src = sp.with_offset::<BD>() + off;
+                        let src = sp.with_offset() + off;
                         let fill = pixels::<BD>(
                             &mut rng,
                             (S * h).next_multiple_of(RAV1D_PICTURE_GUARANTEED_MULTIPLE),
@@ -3617,7 +3617,7 @@ mod tests {
                         let mut want = aligned(&fill);
                         let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(want.as_mut_slice(), S);
                         scalar.mc[f].call::<BD>(
-                            dp.with_offset::<BD>() + 1usize,
+                            dp.with_offset() + 1usize,
                             src,
                             w as i32,
                             h as i32,
@@ -3633,7 +3633,7 @@ mod tests {
                             let dp =
                                 Rav1dPictureDataComponent::wrap_buf::<BD>(got.as_mut_slice(), S);
                             dsp.mc[f].call::<BD>(
-                                dp.with_offset::<BD>() + 1usize,
+                                dp.with_offset() + 1usize,
                                 src,
                                 w as i32,
                                 h as i32,
@@ -3703,7 +3703,7 @@ mod tests {
                 let run = |dsp: &Rav1dMCDSPContext, k: usize| {
                     let mut buf = aligned(&fill);
                     let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
-                    let dst = dp.with_offset::<BD>() + 3usize;
+                    let dst = dp.with_offset() + 3usize;
                     let (wi, hi) = (w as i32, h as i32);
                     match k {
                         0 => dsp.avg.call::<BD>(dst, &t1, &t2, wi, hi, bd),
@@ -3716,7 +3716,7 @@ mod tests {
                     let mut buf = aligned(&fill);
                     let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
                     let mut m = Box::new([9u8; SEG_MASK_LEN]);
-                    let dst = dp.with_offset::<BD>() + 3usize;
+                    let dst = dp.with_offset() + 3usize;
                     dsp.w_mask[l].call::<BD>(dst, &t1, &t2, w as i32, h as i32, &mut m, sign, bd);
                     (dp.bytes(), m)
                 };
@@ -3739,7 +3739,7 @@ mod tests {
                 let bl = |dsp: &Rav1dMCDSPContext, k: usize| {
                     let mut buf = aligned(&fill);
                     let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
-                    let dst = dp.with_offset::<BD>() + 3usize;
+                    let dst = dp.with_offset() + 3usize;
                     let (wi, hi) = (w as i32, h as i32);
                     match k {
                         0 => dsp
@@ -3800,11 +3800,11 @@ mod tests {
         let mut rng = Rng(77);
         let mut sbuf = aligned(&pixels::<BD>(&mut rng, S * 160, max));
         let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
-        let src = sp.with_offset::<BD>() + (4 * S + 8);
+        let src = sp.with_offset() + (4 * S + 8);
         // Aligned as the decoder's blocks and buffers are to their width.
         let mut dbuf = aligned(&pixels::<BD>(&mut rng, S * 160, max));
         let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(dbuf.as_mut_slice(), S);
-        let dst = dp.with_offset::<BD>();
+        let dst = dp.with_offset();
         let (t1, t2) = (
             Box::new(Align64(*tmp(&mut rng, max))),
             Box::new(Align64(*tmp(&mut rng, max))),
@@ -3899,7 +3899,7 @@ mod tests {
             let (sbuf, off) = src_plane::<BD>(&mut rng, 8, 8, max);
             let mut sbuf = aligned(&sbuf);
             let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
-            let src = sp.with_offset::<BD>() + off;
+            let src = sp.with_offset() + off;
             let abcd = [0; 4].map(|_| rng.range(-1000, 1000) as i16);
             let (mx, my) = (rng.range(-40000, 40000), rng.range(-40000, 40000));
             let fill = pixels::<BD>(
@@ -3911,7 +3911,7 @@ mod tests {
                 let mut buf = aligned(&fill);
                 let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
                 dsp.warp8x8
-                    .call::<BD>(dp.with_offset::<BD>() + 5usize, src, &abcd, mx, my, bd);
+                    .call::<BD>(dp.with_offset() + 5usize, src, &abcd, mx, my, bd);
                 let mut t = vec![3i16; 8 * 24];
                 dsp.warp8x8t.call::<BD>(&mut t, 24, src, &abcd, mx, my, bd);
                 (dp.bytes(), t)
@@ -4020,7 +4020,7 @@ mod tests {
             });
             let mut sbuf = aligned(&sbuf);
             let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
-            let src = sp.with_offset::<BD>() + off;
+            let src = sp.with_offset() + off;
             let fill = pixels::<BD>(
                 &mut rng,
                 (S * 8).next_multiple_of(RAV1D_PICTURE_GUARANTEED_MULTIPLE),
@@ -4030,7 +4030,7 @@ mod tests {
                 let mut buf = aligned(&fill);
                 let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
                 dsp.warp8x8
-                    .call::<BD>(dp.with_offset::<BD>() + 5usize, src, &abcd, mx, my, bd);
+                    .call::<BD>(dp.with_offset() + 5usize, src, &abcd, mx, my, bd);
                 let mut t = vec![3i16; 8 * 24];
                 dsp.warp8x8t.call::<BD>(&mut t, 24, src, &abcd, mx, my, bd);
                 (dp.bytes(), t)
@@ -4085,7 +4085,7 @@ mod tests {
                     });
                     let mut sbuf = aligned(&sbuf);
                     let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
-                    let src = sp.with_offset::<BD>() + off;
+                    let src = sp.with_offset() + off;
                     let fill = pixels::<BD>(
                         &mut rng,
                         (S * h).next_multiple_of(RAV1D_PICTURE_GUARANTEED_MULTIPLE),
@@ -4095,7 +4095,7 @@ mod tests {
                     let run = |dsp: &Rav1dMCDSPContext| {
                         let mut buf = aligned(&fill);
                         let dp = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
-                        dsp.mc[f].call::<BD>(dp.with_offset::<BD>(), src, wi, hi, mxi, myi, bd);
+                        dsp.mc[f].call::<BD>(dp.with_offset(), src, wi, hi, mxi, myi, bd);
                         let mut t = vec![7i16; w * h + 16];
                         dsp.mct[f].call::<BD>(&mut t, src, wi, hi, mxi, myi, bd);
                         (dp.bytes(), t)

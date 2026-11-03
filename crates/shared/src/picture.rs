@@ -54,8 +54,7 @@ const RAV1D_PICTURE_GUARANTEED_MULTIPLE: usize = 64;
 const RAV1D_PICTURE_MULTIPLE: usize = 64 * 64;
 
 pub struct Rav1dPictureDataComponentInner {
-    /// A ptr to the start of this slice of [`BitDepth::Pixel`]s*,
-    /// even if [`Self::stride`] is negative.
+    /// A ptr to the start of this slice of [`BitDepth::Pixel`]s*.
     ///
     /// It is aligned to [`RAV1D_PICTURE_ALIGNMENT`].
     ptr: NonNull<u8>,
@@ -91,16 +90,7 @@ impl Rav1dPictureDataComponentInner {
         assert!(len != 0); // If `len` was 0, `ptr` should've been `None`.
         assert!(ptr.cast::<AlignedPixelChunk>().is_aligned());
 
-        let ptr = if stride < 0 {
-            let ptr = ptr.as_ptr();
-            // SAFETY: If the `stride` is negative, this is how we get the start of the data.
-            // `.offset(-stride)` puts us at one element past the end of the slice,
-            // and `.sub(len)` puts us back at the start of the slice.
-            let ptr = unsafe { ptr.offset(-stride).sub(len) };
-            NonNull::new(ptr).unwrap()
-        } else {
-            ptr
-        };
+        assert!(stride >= 0);
         // Guaranteed by `place`.
         assert!(len % RAV1D_PICTURE_MULTIPLE == 0);
         Self { ptr, len, stride }
@@ -183,35 +173,16 @@ impl Rav1dPictureDataComponent {
         ))
     }
 
-    pub fn pixel_offset<BD: BitDepth>(&self) -> usize {
-        let stride = self.stride();
-        if stride >= 0 {
-            return 0;
-        }
-        BD::pxstride(self.byte_len() - (-stride) as usize)
-    }
-
-    pub fn with_offset<BD: BitDepth>(&self) -> Rav1dPictureDataComponentOffset<'_> {
+    pub fn with_offset(&self) -> Rav1dPictureDataComponentOffset<'_> {
         Rav1dPictureDataComponentOffset {
             data: self,
-            offset: self.pixel_offset::<BD>(),
+            offset: 0,
         }
     }
 
-    /// Strided ptr to [`u8`] bytes.
     #[inline]
     fn as_strided_byte_mut_ptr(&self) -> *mut u8 {
-        let ptr = self.0.as_mut_ptr();
-        let stride = self.stride();
-        if stride < 0 {
-            // SAFETY: This puts `ptr` one element past the end of the slice of pixels.
-            let ptr = unsafe { ptr.add(self.byte_len()) };
-            // SAFETY: `stride` is negative and `-stride < len`, so this should stay in bounds.
-            let ptr = unsafe { ptr.offset(stride) };
-            ptr
-        } else {
-            ptr
-        }
+        self.0.as_mut_ptr()
     }
 
     /// Strided ptr to [`BitDepth::Pixel`]s.
@@ -591,7 +562,7 @@ impl Rav1dPicture {
         array::from_fn(|i| {
             let data = &data[has_chroma as usize * i];
             let ss_ver = layout == Rav1dPixelLayout::I420 && i != 0;
-            data.with_offset::<BD>() + (y as isize * data.pixel_stride::<BD>() >> ss_ver as u8)
+            data.with_offset() + (y as isize * data.pixel_stride::<BD>() >> ss_ver as u8)
         })
     }
 }
@@ -635,11 +606,11 @@ mod tests {
         let pic = Rav1dPictureDataComponent::wrap_buf::<BD>(buf.as_mut_slice(), S);
         let at = 3 * S + 3;
         let all = (-3..H as isize - 3, -3..S as isize - 3);
-        let b = (pic.with_offset::<BD>() + at).block::<BD>(all.0.clone(), all.1.clone());
+        let b = (pic.with_offset() + at).block::<BD>(all.0.clone(), all.1.clone());
         rows_match(&b, &want, at, all.0, all.1);
-        let last = (pic.with_offset::<BD>() + (S * H - 1)).block::<BD>(-1..1, -1..1);
+        let last = (pic.with_offset() + (S * H - 1)).block::<BD>(-1..1, -1..1);
         assert!(last.row(0, 0, 1)[0] == want[S * H - 1]);
-        let first = pic.with_offset::<BD>().block::<BD>(0..1, 0..1);
+        let first = pic.with_offset().block::<BD>(0..1, 0..1);
         assert!(first.row(0, 0, 1)[0] == want[0]);
     }
 
@@ -653,14 +624,14 @@ mod tests {
     fn block_empty() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        pic.with_offset::<BitDepth8>()
+        pic.with_offset()
             .block::<BitDepth8>(-9..-9, 0..4);
     }
 
     fn refused(rows: Range<isize>, cols: Range<isize>) {
         let mut buf = plane::<BitDepth16>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth16>(buf.as_mut_slice(), S);
-        (pic.with_offset::<BitDepth16>() + (3 * S + 3)).block::<BitDepth16>(rows, cols);
+        (pic.with_offset() + (3 * S + 3)).block::<BitDepth16>(rows, cols);
     }
 
     #[test]
@@ -687,56 +658,16 @@ mod tests {
         refused(-4..0, 0..1);
     }
 
-    /// The component with its rows bottom up, as an allocator with a negative stride hands out.
-    fn bottom_up(buf: &mut [u8]) -> Rav1dPictureDataComponent {
-        Rav1dPictureDataComponent(DisjointMut::new(Rav1dPictureDataComponentInner {
-            ptr: NonNull::new(buf.as_mut_ptr()).unwrap(),
-            len: buf.len(),
-            stride: -(S as isize),
-        }))
-    }
-
-    #[test]
-    fn block_negative_stride() {
-        let mut buf = plane::<BitDepth8>();
-        let want = buf.as_slice().to_vec();
-        let pic = bottom_up(buf.as_mut_slice());
-        let b = pic
-            .with_offset::<BitDepth8>()
-            .block::<BitDepth8>(0..H as isize, 0..S as isize);
-        for y in 0..H {
-            assert_eq!(&*b.row(y as isize, 0, S), &want[(H - 1 - y) * S..][..S]);
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "out of range")]
-    fn block_negative_stride_one_row_below() {
-        let mut buf = plane::<BitDepth8>();
-        let pic = bottom_up(buf.as_mut_slice());
-        pic.with_offset::<BitDepth8>()
-            .block::<BitDepth8>(0..H as isize + 1, 0..1);
-    }
-
-    #[test]
-    #[should_panic(expected = "out of range")]
-    fn block_negative_stride_one_row_above() {
-        let mut buf = plane::<BitDepth8>();
-        let pic = bottom_up(buf.as_mut_slice());
-        pic.with_offset::<BitDepth8>()
-            .block::<BitDepth8>(-1..1, 0..1);
-    }
-
     /// Rows are borrowed one at a time: another borrow may hold the row between them.
     #[test]
     fn block_rows_borrowed_alone() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
         let b = pic
-            .with_offset::<BitDepth8>()
+            .with_offset()
             .block::<BitDepth8>(0..3, 0..8);
         let _middle = pic
-            .with_offset::<BitDepth8>()
+            .with_offset()
             .block::<BitDepth8>(1..2, 0..8)
             .row_mut(1, 0, 8);
         let (_a, _c) = (b.row(0, 0, 8), b.row_mut(2, 0, 8));
@@ -749,7 +680,7 @@ mod tests {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
         let b = pic
-            .with_offset::<BitDepth8>()
+            .with_offset()
             .block::<BitDepth8>(0..2, 0..8);
         let _w = b.row_mut(1, 0, 8);
         let _r = b.row(1, 4, 4);
@@ -762,7 +693,7 @@ mod tests {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
         let b = pic
-            .with_offset::<BitDepth8>()
+            .with_offset()
             .block::<BitDepth8>(0..2, 0..8);
         let _ = b.row(0, 1, 8);
     }
@@ -774,7 +705,7 @@ mod tests {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
         let b = pic
-            .with_offset::<BitDepth8>()
+            .with_offset()
             .block::<BitDepth8>(0..1, 0..8);
         let _ = b.row(H as isize, 0, 8);
     }
@@ -785,7 +716,7 @@ mod tests {
     fn block_row_before_its_pixels_refused_in_release() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        let b = (pic.with_offset::<BitDepth8>() + S).block::<BitDepth8>(0..1, 0..8);
+        let b = (pic.with_offset() + S).block::<BitDepth8>(0..1, 0..8);
         let _ = b.row(-1, 0, 8);
     }
 }
@@ -976,8 +907,8 @@ impl Rav1dPictureParameters {
     pub fn pic_len(&self, [y_stride, uv_stride]: [isize; 2]) -> [usize; 2] {
         let ss_ver = (self.layout == Rav1dPixelLayout::I420) as u8;
         let aligned_h = self.h as usize + 127 & !127;
-        let y_sz = y_stride.unsigned_abs() * aligned_h;
-        let uv_sz = uv_stride.unsigned_abs() * (aligned_h >> ss_ver);
+        let y_sz = y_stride as usize * aligned_h;
+        let uv_sz = uv_stride as usize * (aligned_h >> ss_ver);
         [y_sz, uv_sz]
     }
 }

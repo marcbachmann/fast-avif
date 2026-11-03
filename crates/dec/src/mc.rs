@@ -924,7 +924,7 @@ fn emu_edge_rust<BD: BitDepth>(
 
     // find offset in reference of visible block to copy
     let mut r#ref =
-        r#ref.with_offset::<BD>() + (clip(y, 0, ih - 1) * ref_stride + clip(x, 0, iw - 1));
+        r#ref.with_offset() + (clip(y, 0, ih - 1) * ref_stride + clip(x, 0, iw - 1));
 
     // number of pixels to extend (left, right, top, bottom)
     let left_ext = clip(-x, 0, bw - 1) as usize;

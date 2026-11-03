@@ -1814,7 +1814,7 @@ pub(super) mod tests {
         {
             let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(&mut px.0, w);
             itx.itxfm_add[size as usize][ty as usize].call::<BitDepth8>(
-                pic.with_offset::<BitDepth8>(),
+                pic.with_offset(),
                 &mut cf.0[..cw * ch],
                 eob,
                 BitDepth8::new(()),

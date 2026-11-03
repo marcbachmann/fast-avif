@@ -102,8 +102,8 @@ impl fgy_32x32xn::Fn {
         bd: BD,
     ) {
         let row_strides = (row_num * FG_BLOCK_SIZE) as isize;
-        let dst_row = dst.with_offset::<BD>() + row_strides * dst.pixel_stride::<BD>();
-        let src_row = src.with_offset::<BD>() + row_strides * src.pixel_stride::<BD>();
+        let dst_row = dst.with_offset() + row_strides * dst.pixel_stride::<BD>();
+        let src_row = src.with_offset() + row_strides * src.pixel_stride::<BD>();
         let data = &data.clone().into();
         let scaling = ptr::from_ref(scaling).cast();
         let grain_lut = ptr::from_ref(grain_lut).cast();
@@ -161,14 +161,14 @@ impl fguv_32x32xn::Fn {
     ) {
         let ss_y = (layout == Rav1dPixelLayoutSubSampled::I420) as usize;
         let row_strides = (row_num * FG_BLOCK_SIZE) as isize;
-        let dst_row = dst.with_offset::<BD>() + (row_strides * dst.pixel_stride::<BD>() >> ss_y);
-        let src_row = src.with_offset::<BD>() + (row_strides * src.pixel_stride::<BD>() >> ss_y);
+        let dst_row = dst.with_offset() + (row_strides * dst.pixel_stride::<BD>() >> ss_y);
+        let src_row = src.with_offset() + (row_strides * src.pixel_stride::<BD>() >> ss_y);
         let data = &data.clone().into();
         let scaling = (scaling as *const BD::Scaling).cast();
         let grain_lut = (grain_lut as *const GrainLut<BD::Entry>).cast();
         let bh = bh as i32;
         let row_num = row_num as i32;
-        let luma_row = luma.with_offset::<BD>() + (row_strides * luma.pixel_stride::<BD>());
+        let luma_row = luma.with_offset() + (row_strides * luma.pixel_stride::<BD>());
         let uv_pl = is_uv as i32;
         let is_id = is_id as i32;
         let bd = bd.into_max();
