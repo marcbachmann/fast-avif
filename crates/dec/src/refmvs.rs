@@ -3,21 +3,21 @@
 use std::mem::MaybeUninit;
 use std::{cmp, mem, ptr, slice};
 
-use zerocopy::{AsBytes, FromZeroes};
-
-use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::align::{Align16, AlignedVec64};
-use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutArcSlice, DisjointMutGuard, DisjointMutSlice};
+use rav1d_shared::cpu::CpuFlags;
+use rav1d_shared::disjoint_mut::{
+    DisjointMut, DisjointMutArcSlice, DisjointMutGuard, DisjointMutSlice,
+};
 use rav1d_shared::env::{fix_mv_precision, get_gmv_2d, get_poc_diff};
 use rav1d_shared::error::Rav1dResult;
+use rav1d_shared::headers::{Rav1dFrameHeader, Rav1dSequenceHeader, Rav1dWarpedMotionType};
 use rav1d_shared::intops::{apply_sign, iclip};
-use rav1d_shared::headers::{
-    Rav1dFrameHeader, Rav1dSequenceHeader, Rav1dWarpedMotionType,
-};
-use crate::internal::Bxy;
 use rav1d_shared::intra_edge::EdgeFlags;
 use rav1d_shared::levels::{BlockSize, Mv, UnalignedMv};
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use zerocopy::{AsBytes, FromZeroes};
+
+use crate::internal::Bxy;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C, packed)]
@@ -231,7 +231,9 @@ impl save_tmvs::Fn {
         let r = &rf.r;
         // SAFETY: The only implementation is safe.
         unsafe {
-            self.get()(stride, ref_sign, col_end8, row_end8, col_start8, row_start8, r, ri, rp)
+            self.get()(
+                stride, ref_sign, col_end8, row_end8, col_start8, row_start8, r, ri, rp,
+            )
         };
     }
 }
@@ -1602,8 +1604,9 @@ fn splat_mv_rust<'a>(rr: impl Iterator<Item = &'a mut [RefMvsBlock]>, rmv: &Alig
 /// [`splat_mv_rust`] with the width chosen once per call: four 12-byte blocks as three 16-byte
 /// stores, eight as three 32-byte ones with AVX2.
 mod rust_simd {
-    use super::*;
     use rav1d_shared::simd128::U8x16;
+
+    use super::*;
 
     /// Runs `$e` with `$d`, the first byte of each row's blocks.
     macro_rules! rows {
@@ -1636,7 +1639,9 @@ mod rust_simd {
         // SAFETY (each store): within the row's first `bw4` blocks.
         match bw4 {
             1 => rows!(rr, bx4, |d| unsafe { ptr::write_unaligned(d.cast(), p[0]) }),
-            2 => rows!(rr, bx4, |d| unsafe { ptr::write_unaligned(d.cast(), [p[0], p[1]]) }),
+            2 => rows!(rr, bx4, |d| unsafe {
+                ptr::write_unaligned(d.cast(), [p[0], p[1]])
+            }),
             4 => rows!(rr, bx4, |d| store::<1>(d, &v)),
             8 => rows!(rr, bx4, |d| store::<2>(d, &v)),
             16 => rows!(rr, bx4, |d| store::<4>(d, &v)),
@@ -1675,17 +1680,35 @@ mod rust_simd {
         bh4: i32,
     ) {
         // SAFETY: Length sliced in `splat_mv::Fn::call`; AVX2 checked by the caller.
-        unsafe { splat_avx2(slice::from_raw_parts(rr, bh4 as usize), rmv, bx4 as usize, bw4 as usize) }
+        unsafe {
+            splat_avx2(
+                slice::from_raw_parts(rr, bh4 as usize),
+                rmv,
+                bx4 as usize,
+                bw4 as usize,
+            )
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn splat_avx2(rr: &[*mut RefMvsBlock], rmv: &Align16<RefMvsBlock>, bx4: usize, bw4: usize) {
+    unsafe fn splat_avx2(
+        rr: &[*mut RefMvsBlock],
+        rmv: &Align16<RefMvsBlock>,
+        bx4: usize,
+        bw4: usize,
+    ) {
         use std::arch::x86_64::*;
         let p = [rmv.0; 8];
         let b = p.as_ptr().cast::<u8>();
         // SAFETY: `p` is 96 initialized bytes.
-        let [v0, v1, v2] = unsafe { [_mm256_loadu_si256(b.cast()), _mm256_loadu_si256(b.add(32).cast()), _mm256_loadu_si256(b.add(64).cast())] };
+        let [v0, v1, v2] = unsafe {
+            [
+                _mm256_loadu_si256(b.cast()),
+                _mm256_loadu_si256(b.add(32).cast()),
+                _mm256_loadu_si256(b.add(64).cast()),
+            ]
+        };
         // SAFETY (each store): within the row's first `bw4` blocks, as in `splat_mv_simd`.
         macro_rules! eights {
             ($n:literal) => {
@@ -1702,7 +1725,9 @@ mod rust_simd {
         }
         match bw4 {
             1 => rows!(rr, bx4, |d| unsafe { ptr::write_unaligned(d.cast(), p[0]) }),
-            2 => rows!(rr, bx4, |d| unsafe { ptr::write_unaligned(d.cast(), [p[0], p[1]]) }),
+            2 => rows!(rr, bx4, |d| unsafe {
+                ptr::write_unaligned(d.cast(), [p[0], p[1]])
+            }),
             4 => rows!(rr, bx4, |d| unsafe {
                 _mm256_storeu_si256(d.cast(), v0);
                 _mm_storeu_si128(d.add(32).cast(), _mm256_castsi256_si128(v1));
@@ -1776,7 +1801,10 @@ mod tests {
         rav1d_shared::cpu::rav1d_init_cpu();
         vec![
             ("scalar", Rav1dRefmvsDSPContext::default()),
-            ("rust simd", Rav1dRefmvsDSPContext::new(rav1d_shared::cpu::rav1d_get_cpu_flags())),
+            (
+                "rust simd",
+                Rav1dRefmvsDSPContext::new(rav1d_shared::cpu::rav1d_get_cpu_flags()),
+            ),
         ]
     }
 
@@ -1809,13 +1837,27 @@ mod tests {
     }
 
     /// `rr` from [`rows`].
-    fn splat_rows(dsp: &Rav1dRefmvsDSPContext, rr: &mut [*mut RefMvsBlock], rmv: &Align16<RefMvsBlock>, bx4: usize, bw4: usize, bh4: usize) {
+    fn splat_rows(
+        dsp: &Rav1dRefmvsDSPContext,
+        rr: &mut [*mut RefMvsBlock],
+        rmv: &Align16<RefMvsBlock>,
+        bx4: usize,
+        bw4: usize,
+        bh4: usize,
+    ) {
         assert!(bh4 <= rr.len() && bx4 + bw4 <= W4);
         // SAFETY: Each row pointer holds `W4 >= bx4 + bw4` blocks.
         unsafe { dsp.splat_mv.get()(rr.as_mut_ptr(), rmv, bx4 as i32, bw4 as i32, bh4 as i32) };
     }
 
-    fn splat(dsp: &Rav1dRefmvsDSPContext, buf: &mut [RefMvsBlock], rmv: RefMvsBlock, bx4: usize, bw4: usize, bh4: usize) {
+    fn splat(
+        dsp: &Rav1dRefmvsDSPContext,
+        buf: &mut [RefMvsBlock],
+        rmv: RefMvsBlock,
+        bx4: usize,
+        bw4: usize,
+        bh4: usize,
+    ) {
         splat_rows(dsp, &mut rows(buf), &Align16(rmv), bx4, bw4, bh4);
     }
 
@@ -1879,10 +1921,16 @@ mod tests {
     }
 
     fn new_rp() -> DisjointMutArcSlice<RefMvsTemporalBlock> {
-        (0..32 * RP_STRIDE).map(|_| RefMvsTemporalBlock::default()).collect()
+        (0..32 * RP_STRIDE)
+            .map(|_| RefMvsTemporalBlock::default())
+            .collect()
     }
 
-    fn save_into(dsp: &Rav1dRefmvsDSPContext, t: &Tmvs, rp: &DisjointMutArcSlice<RefMvsTemporalBlock>) {
+    fn save_into(
+        dsp: &Rav1dRefmvsDSPContext,
+        t: &Tmvs,
+        rp: &DisjointMutArcSlice<RefMvsTemporalBlock>,
+    ) {
         let (col_start8, col_end8) = t.cols;
         let (row_start8, row_end8) = t.rows;
         // SAFETY: The arguments are as `save_tmvs::Fn::call` makes them.
@@ -1956,7 +2004,10 @@ mod tests {
                 }
                 best[1] = best[1].min(start.elapsed().as_secs_f64() * 1e9 / 1000.);
             }
-            println!("{name:10} splat_mv {:7.1} ns  save_tmvs {:8.1} ns", best[0], best[1]);
+            println!(
+                "{name:10} splat_mv {:7.1} ns  save_tmvs {:8.1} ns",
+                best[0], best[1]
+            );
         }
     }
 }

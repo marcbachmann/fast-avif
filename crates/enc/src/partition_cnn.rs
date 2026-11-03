@@ -5,11 +5,11 @@
 //! model of av1/encoder/partition_cnn_weights.h. Every sum runs in f32 in libaom's C order, so
 //! the outputs are bit-identical to its C code (`scripts/cnn-partition-compare.sh`).
 
+#[rustfmt::skip]
 mod weights;
 
-use weights::*;
-
 use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
+use weights::*;
 
 const SIDE: usize = 65;
 
@@ -41,7 +41,15 @@ fn relu(x: f32) -> f32 {
 
 /// `av1_cnn_convolve_no_maxpool_padding_valid_c` with ReLU, a square input of `side` channel by
 /// channel; the output channels run side by side, each summed in libaom's order.
-fn conv<const OUT: usize>(input: &[f32], side: usize, k: usize, stride: usize, kernel: &[f32], bias: &[f32; OUT], out: &mut [f32]) {
+fn conv<const OUT: usize>(
+    input: &[f32],
+    side: usize,
+    k: usize,
+    stride: usize,
+    kernel: &[f32],
+    bias: &[f32; OUT],
+    out: &mut [f32],
+) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if crate::fdct_fast::Lane::detect() == crate::fdct_fast::Lane::Simd {
         // SAFETY: AVX2 was detected.
@@ -53,12 +61,28 @@ fn conv<const OUT: usize>(input: &[f32], side: usize, k: usize, stride: usize, k
 /// `conv_in` compiled for AVX2: the same products and sums per output channel, eight at a time.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
-unsafe fn conv_avx2<const OUT: usize>(input: &[f32], side: usize, k: usize, stride: usize, kernel: &[f32], bias: &[f32; OUT], out: &mut [f32]) {
+unsafe fn conv_avx2<const OUT: usize>(
+    input: &[f32],
+    side: usize,
+    k: usize,
+    stride: usize,
+    kernel: &[f32],
+    bias: &[f32; OUT],
+    out: &mut [f32],
+) {
     conv_in::<OUT>(input, side, k, stride, kernel, bias, out)
 }
 
 #[inline(always)]
-fn conv_in<const OUT: usize>(input: &[f32], side: usize, k: usize, stride: usize, kernel: &[f32], bias: &[f32; OUT], out: &mut [f32]) {
+fn conv_in<const OUT: usize>(
+    input: &[f32],
+    side: usize,
+    k: usize,
+    stride: usize,
+    kernel: &[f32],
+    bias: &[f32; OUT],
+    out: &mut [f32],
+) {
     let in_ch = input.len() / (side * side);
     let out_side = (side - k + stride) / stride;
     for u in 0..out_side {
@@ -66,7 +90,8 @@ fn conv_in<const OUT: usize>(input: &[f32], side: usize, k: usize, stride: usize
             let mut acc = *bias;
             for c in 0..in_ch {
                 for ii in 0..k {
-                    let row = &input[c * side * side + (u * stride + ii) * side + v * stride..][..k];
+                    let row =
+                        &input[c * side * side + (u * stride + ii) * side + v * stride..][..k];
                     for (jj, &x) in row.iter().enumerate() {
                         let w = &kernel[((ii * k + jj) * in_ch + c) * OUT..][..OUT];
                         for (a, &w) in acc.iter_mut().zip(w) {
@@ -113,12 +138,58 @@ impl Cnn {
     pub fn new(pixels: &[u8; SIDE * SIDE], qidx: u8) -> Self {
         let input: Vec<f32> = pixels.iter().map(|&p| p as f32 / 255.0).collect();
         let mut l0 = [0f32; 20 * 16 * 16];
-        let mut s = Self { b0: [0.0; 20], b1: [0.0; 16], b2: [0.0; 320], b3: [0.0; 1280], log_q: 0.0 };
-        conv::<20>(&input, SIDE, 5, 4, &CNN_LAYER_0_KERNEL, &CNN_LAYER_0_BIAS, &mut l0);
-        conv::<20>(&l0, 16, 2, 2, &CNN_LAYER_1_KERNEL, &CNN_LAYER_1_BIAS, &mut s.b3);
-        conv::<20>(&s.b3, 8, 2, 2, &CNN_LAYER_2_KERNEL, &CNN_LAYER_2_BIAS, &mut s.b2);
-        conv::<4>(&s.b2, 4, 2, 2, &CNN_LAYER_3_KERNEL, &CNN_LAYER_3_BIAS, &mut s.b1);
-        conv::<20>(&s.b1, 2, 2, 2, &CNN_LAYER_4_KERNEL, &CNN_LAYER_4_BIAS, &mut s.b0);
+        let mut s = Self {
+            b0: [0.0; 20],
+            b1: [0.0; 16],
+            b2: [0.0; 320],
+            b3: [0.0; 1280],
+            log_q: 0.0,
+        };
+        conv::<20>(
+            &input,
+            SIDE,
+            5,
+            4,
+            &CNN_LAYER_0_KERNEL,
+            &CNN_LAYER_0_BIAS,
+            &mut l0,
+        );
+        conv::<20>(
+            &l0,
+            16,
+            2,
+            2,
+            &CNN_LAYER_1_KERNEL,
+            &CNN_LAYER_1_BIAS,
+            &mut s.b3,
+        );
+        conv::<20>(
+            &s.b3,
+            8,
+            2,
+            2,
+            &CNN_LAYER_2_KERNEL,
+            &CNN_LAYER_2_BIAS,
+            &mut s.b2,
+        );
+        conv::<4>(
+            &s.b2,
+            4,
+            2,
+            2,
+            &CNN_LAYER_3_KERNEL,
+            &CNN_LAYER_3_BIAS,
+            &mut s.b1,
+        );
+        conv::<20>(
+            &s.b1,
+            2,
+            2,
+            2,
+            &CNN_LAYER_4_KERNEL,
+            &CNN_LAYER_4_BIAS,
+            &mut s.b0,
+        );
         let dc_q = DAV1D_DQ_TBL[0][qidx as usize][0] as i32;
         s.log_q = (((dc_q * dc_q) as f32 / 256.0).ln_1p() - MEAN[0]) / STD[0];
         s
@@ -126,7 +197,10 @@ impl Cnn {
 
     /// The outputs in libaom's `cnn_buffer` order, and the normalised log of the quantizer.
     pub fn outputs(&self) -> (Vec<f32>, f32) {
-        ([&self.b0[..], &self.b1, &self.b2, &self.b3].concat(), self.log_q)
+        (
+            [&self.b0[..], &self.b1, &self.b2, &self.b3].concat(),
+            self.log_q,
+        )
     }
 
     /// The model's logit for the block at `level` (0 is 64×64, 3 is 8×8) and position `bx`, `by`
@@ -158,10 +232,26 @@ impl Cnn {
         }
         put(self.log_q);
         let layers: [(&[f32], &[f32]); 3] = match level {
-            0 => [(&BRANCH_0_DNN_LAYER_0_KERNEL, &BRANCH_0_DNN_LAYER_0_BIAS), (&BRANCH_0_DNN_LAYER_1_KERNEL, &BRANCH_0_DNN_LAYER_1_BIAS), (&BRANCH_0_LOGITS_KERNEL, &BRANCH_0_LOGITS_BIAS)],
-            1 => [(&BRANCH_1_DNN_LAYER_0_KERNEL, &BRANCH_1_DNN_LAYER_0_BIAS), (&BRANCH_1_DNN_LAYER_1_KERNEL, &BRANCH_1_DNN_LAYER_1_BIAS), (&BRANCH_1_LOGITS_KERNEL, &BRANCH_1_LOGITS_BIAS)],
-            2 => [(&BRANCH_2_DNN_LAYER_0_KERNEL, &BRANCH_2_DNN_LAYER_0_BIAS), (&BRANCH_2_DNN_LAYER_1_KERNEL, &BRANCH_2_DNN_LAYER_1_BIAS), (&BRANCH_2_LOGITS_KERNEL, &BRANCH_2_LOGITS_BIAS)],
-            _ => [(&BRANCH_3_DNN_LAYER_0_KERNEL, &BRANCH_3_DNN_LAYER_0_BIAS), (&BRANCH_3_DNN_LAYER_1_KERNEL, &BRANCH_3_DNN_LAYER_1_BIAS), (&BRANCH_3_LOGITS_KERNEL, &BRANCH_3_LOGITS_BIAS)],
+            0 => [
+                (&BRANCH_0_DNN_LAYER_0_KERNEL, &BRANCH_0_DNN_LAYER_0_BIAS),
+                (&BRANCH_0_DNN_LAYER_1_KERNEL, &BRANCH_0_DNN_LAYER_1_BIAS),
+                (&BRANCH_0_LOGITS_KERNEL, &BRANCH_0_LOGITS_BIAS),
+            ],
+            1 => [
+                (&BRANCH_1_DNN_LAYER_0_KERNEL, &BRANCH_1_DNN_LAYER_0_BIAS),
+                (&BRANCH_1_DNN_LAYER_1_KERNEL, &BRANCH_1_DNN_LAYER_1_BIAS),
+                (&BRANCH_1_LOGITS_KERNEL, &BRANCH_1_LOGITS_BIAS),
+            ],
+            2 => [
+                (&BRANCH_2_DNN_LAYER_0_KERNEL, &BRANCH_2_DNN_LAYER_0_BIAS),
+                (&BRANCH_2_DNN_LAYER_1_KERNEL, &BRANCH_2_DNN_LAYER_1_BIAS),
+                (&BRANCH_2_LOGITS_KERNEL, &BRANCH_2_LOGITS_BIAS),
+            ],
+            _ => [
+                (&BRANCH_3_DNN_LAYER_0_KERNEL, &BRANCH_3_DNN_LAYER_0_BIAS),
+                (&BRANCH_3_DNN_LAYER_1_KERNEL, &BRANCH_3_DNN_LAYER_1_BIAS),
+                (&BRANCH_3_LOGITS_KERNEL, &BRANCH_3_LOGITS_BIAS),
+            ],
         };
         dense(&f[..n], layers)
     }
@@ -169,7 +259,15 @@ impl Cnn {
     /// libaom's decision for the block from its logit, for a frame of `width`×`height`: above the
     /// split threshold only Split is searched (None still is at prune level 1, for screen
     /// content), below the no-split threshold Split is not.
-    pub fn prune(&self, level: usize, bx: usize, by: usize, prune_level: u8, width: u32, height: u32) -> Prune {
+    pub fn prune(
+        &self,
+        level: usize,
+        bx: usize,
+        by: usize,
+        prune_level: u8,
+        width: u32,
+        height: u32,
+    ) -> Prune {
         decide(self.logit(level, bx, by), level, prune_level, width, height)
     }
 }
@@ -181,14 +279,19 @@ pub fn decide(logit: f32, level: usize, prune_level: u8, width: u32, height: u32
         _ => (&SPLIT_THRESH_LOWRES, &NO_SPLIT_THRESH_LOWRES),
     };
     let split_only = logit > split[level + 1];
-    Prune { none: split_only && prune_level != 1, split: logit < no_split[level + 1], rect: split_only }
+    Prune {
+        none: split_only && prune_level != 1,
+        split: logit < no_split[level + 1],
+        rect: split_only,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use super::*;
     use crate::frame::tests::{ppm, Rng};
-    use std::io::{Read, Write};
 
     const OUTPUTS: usize = 20 + 16 + 320 + 1280;
 
@@ -207,13 +310,25 @@ mod tests {
         let mut out = Vec::new();
         for i in 0..2400 {
             let mut px = [0u8; SIDE * SIDE];
-            let (gx, gy, base, noise) = (r.below(9) as i32 - 4, r.below(9) as i32 - 4, r.below(256) as i32, 1 + r.below([256, 64, 8, 1][i % 4]) as i32);
+            let (gx, gy, base, noise) = (
+                r.below(9) as i32 - 4,
+                r.below(9) as i32 - 4,
+                r.below(256) as i32,
+                1 + r.below([256, 64, 8, 1][i % 4]) as i32,
+            );
             for (j, p) in px.iter_mut().enumerate() {
                 let (x, y) = ((j % SIDE) as i32, (j / SIDE) as i32);
-                *p = (base + (gx * x + gy * y) / 4 + r.below(noise as u32) as i32 - noise / 2).clamp(0, 255) as u8;
+                *p = (base + (gx * x + gy * y) / 4 + r.below(noise as u32) as i32 - noise / 2)
+                    .clamp(0, 255) as u8;
             }
             for _ in 0..r.below(6) {
-                let (x0, y0, w, h, v) = (r.below(65) as usize, r.below(65) as usize, 1 + r.below(40) as usize, 1 + r.below(40) as usize, r.below(256) as u8);
+                let (x0, y0, w, h, v) = (
+                    r.below(65) as usize,
+                    r.below(65) as usize,
+                    1 + r.below(40) as usize,
+                    1 + r.below(40) as usize,
+                    r.below(256) as u8,
+                );
                 for y in y0..(y0 + h).min(SIDE) {
                     px[y * SIDE + x0..y * SIDE + (x0 + w).min(SIDE)].fill(v);
                 }
@@ -224,22 +339,34 @@ mod tests {
             out.push((q, out[0].1));
         }
         if let Ok(dir) = std::env::var("ENC_CORPUS") {
-            let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+            let mut files: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
             files.sort();
             for path in files {
                 let (w, h, rgb) = ppm(&path);
                 let luma: Vec<u8> = rgb
                     .chunks_exact(3)
-                    .map(|p| ((19595 * p[0] as i32 + 38470 * p[1] as i32 + 7471 * p[2] as i32 + 32768) >> 16) as u8)
+                    .map(|p| {
+                        ((19595 * p[0] as i32 + 38470 * p[1] as i32 + 7471 * p[2] as i32 + 32768)
+                            >> 16) as u8
+                    })
                     .collect();
                 for y0 in (0..h.saturating_sub(63)).step_by(32) {
                     for x0 in (0..w.saturating_sub(63)).step_by(32) {
                         let mut px = [0u8; SIDE * SIDE];
                         for (j, p) in px.iter_mut().enumerate() {
-                            let (x, y) = ((x0 + j % SIDE).saturating_sub(1), (y0 + j / SIDE).saturating_sub(1));
+                            let (x, y) = (
+                                (x0 + j % SIDE).saturating_sub(1),
+                                (y0 + j / SIDE).saturating_sub(1),
+                            );
                             *p = luma[y.min(h - 1) * w + x.min(w - 1)];
                         }
-                        out.push(([32, 140, 255, r.below(256) as u8][(x0 / 32 + y0 / 32) % 4], px));
+                        out.push((
+                            [32, 140, 255, r.below(256) as u8][(x0 / 32 + y0 / 32) % 4],
+                            px,
+                        ));
                     }
                 }
             }
@@ -259,7 +386,10 @@ mod tests {
             .spawn()
             .unwrap();
         let mut stdin = child.stdin.take().unwrap();
-        let input: Vec<u8> = blocks.iter().flat_map(|(q, px)| std::iter::once(*q).chain(px.iter().copied())).collect();
+        let input: Vec<u8> = blocks
+            .iter()
+            .flat_map(|(q, px)| std::iter::once(*q).chain(px.iter().copied()))
+            .collect();
         let writer = std::thread::spawn(move || stdin.write_all(&input).unwrap());
         let mut data = Vec::new();
         child.stdout.take().unwrap().read_to_end(&mut data).unwrap();
@@ -269,7 +399,10 @@ mod tests {
         assert_eq!(data.len(), blocks.len() * record);
         let (mut differ, mut max, mut decisions, mut pruned) = (0, 0f32, 0, [0; 3]);
         for ((qidx, px), rec) in blocks.iter().zip(data.chunks_exact(record)) {
-            let reference: Vec<f32> = rec[..(OUTPUTS + 86) * 4].chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+            let reference: Vec<f32> = rec[..(OUTPUTS + 86) * 4]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
             let cnn = Cnn::new(px, *qidx);
             let (outputs, log_q) = cnn.outputs();
             let mut ours: Vec<f32> = outputs;

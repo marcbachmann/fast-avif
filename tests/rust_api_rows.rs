@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use rav1d::{
     parse_sequence_header, Decoder, Picture, PictureAllocator, PictureBuffer, PictureParameters,
-    PixelLayout, PlanarImageComponent, PlaneLayout, Rav1dError, Settings, Spawner, PICTURE_ALIGNMENT,
+    PixelLayout, PlanarImageComponent, PlaneLayout, Rav1dError, Settings, Spawner,
+    PICTURE_ALIGNMENT,
 };
 
 fn ivf_frames(data: &[u8]) -> Vec<&[u8]> {
@@ -209,7 +210,11 @@ fn by_rows(decoder: &mut Decoder, decoded: &mut Decoded) -> bool {
                 break;
             }
         };
-        assert!(n >= rows.done && n <= height, "rows {n} after {}", rows.done);
+        assert!(
+            n >= rows.done && n <= height,
+            "rows {n} after {}",
+            rows.done
+        );
         rows.copy_to(n);
         if decoded.poison {
             unsafe { rows.poison() };
@@ -221,12 +226,19 @@ fn by_rows(decoder: &mut Decoder, decoded: &mut Decoded) -> bool {
             continue;
         }
         if n == height {
-            assert_eq!(decoder.decode_rows(), Err(Rav1dError::TryAgain), "rows past the frame's end");
+            assert_eq!(
+                decoder.decode_rows(),
+                Err(Rav1dError::TryAgain),
+                "rows past the frame's end"
+            );
             for i in 0..3 {
                 if let Some(pl) = plane(&rows.picture, i) {
                     assert_eq!(rows.copied[i].len(), pl.1);
                     for (y, copy) in rows.copied[i].iter().enumerate() {
-                        assert!(row(pl, y) == copy.as_slice(), "plane {i} row {y} changed after it was final");
+                        assert!(
+                            row(pl, y) == copy.as_slice(),
+                            "plane {i} row {y} changed after it was final"
+                        );
                     }
                 }
             }
@@ -291,7 +303,9 @@ fn decode_data(data: &[u8], open: &Open, poison: bool) -> Decoded {
 
 fn streams() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -303,7 +317,12 @@ fn streams() -> Vec<PathBuf> {
     }
     let mut out = Vec::new();
     for bits in ["8-bit", "10-bit", "12-bit", "multi-bit", "oss-fuzz"] {
-        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dav1d-test-data").join(bits), &mut out);
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/dav1d-test-data")
+                .join(bits),
+            &mut out,
+        );
     }
     out.sort();
     out
@@ -314,12 +333,17 @@ fn filter() -> String {
 }
 
 fn intra() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dav1d-test-data/8-bit/intra/av1-1-b8-02-allintra.ivf")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/dav1d-test-data/8-bit/intra/av1-1-b8-02-allintra.ivf")
 }
 
 /// Up to and with the first error: what a decoder does with data after one is its own.
 fn upto(d: &Decoded) -> &[Result<u64, Rav1dError>] {
-    &d.out[..d.out.iter().position(|o| o.is_err()).map_or(d.out.len(), |i| i + 1)]
+    &d.out[..d
+        .out
+        .iter()
+        .position(|o| o.is_err())
+        .map_or(d.out.len(), |i| i + 1)]
 }
 
 #[test]
@@ -328,19 +352,30 @@ fn decodes_by_rows_as_whole() {
     assert!(files.len() > 700, "{} streams", files.len());
     let filter = filter();
     let (mut pictures, mut frames_by_rows, mut errors) = (0, 0, 0);
-    for file in files.iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+    for file in files
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
         for apply_grain in [true, false] {
             let whole = decode(file, &Open::new(apply_grain, false), false);
             let rows = decode(file, &Open::new(apply_grain, true), false);
             assert_eq!(whole.by_rows, 0);
-            assert_eq!(upto(&whole), upto(&rows), "{} (grain applied: {apply_grain})", file.display());
+            assert_eq!(
+                upto(&whole),
+                upto(&rows),
+                "{} (grain applied: {apply_grain})",
+                file.display()
+            );
             pictures += whole.out.iter().filter(|o| o.is_ok()).count();
             errors += whole.out.iter().filter(|o| o.is_err()).count();
             frames_by_rows += rows.by_rows;
         }
     }
     eprintln!("{pictures} pictures, {errors} errors, {frames_by_rows} frames by rows");
-    assert!(frames_by_rows * 10 > pictures * 8, "{frames_by_rows} of {pictures} by rows");
+    assert!(
+        frames_by_rows * 10 > pictures * 8,
+        "{frames_by_rows} of {pictures} by rows"
+    );
 }
 
 /// Bytes read in place that count, through a shared [`Arc`], how many hold them.
@@ -358,13 +393,25 @@ fn closes_with_a_frame_part_decoded() {
     let data = std::fs::read(intra()).unwrap();
     let frame = Arc::new(ivf_frames(&data)[0].to_vec());
     let mut decoder = Open::new(true, true).decoder();
-    decoder.send_data_owned(Shared(frame.clone()), None, None, None).unwrap();
+    decoder
+        .send_data_owned(Shared(frame.clone()), None, None, None)
+        .unwrap();
     let n = decoder.decode_rows().unwrap();
     assert!(n > 0, "{n} rows final after the first superblock row");
-    assert_eq!(decoder.get_picture().err(), Some(Rav1dError::TryAgain), "a picture before its rows are");
-    assert!(Arc::strong_count(&frame) > 1, "the data went before the decoder");
+    assert_eq!(
+        decoder.get_picture().err(),
+        Some(Rav1dError::TryAgain),
+        "a picture before its rows are"
+    );
+    assert!(
+        Arc::strong_count(&frame) > 1,
+        "the data went before the decoder"
+    );
     drop(decoder);
-    assert!(Arc::try_unwrap(frame).is_ok(), "the data outlived the decoder");
+    assert!(
+        Arc::try_unwrap(frame).is_ok(),
+        "the data outlived the decoder"
+    );
 }
 
 /// Data read in place is the decoder's until it is dropped, whether it decoded it whole, kept some
@@ -392,7 +439,10 @@ fn drops_data_read_in_place_with_the_decoder() {
     assert_eq!(copied.out, out.into_iter().map(Ok).collect::<Vec<_>>());
     drop(decoder);
     for frame in shared {
-        assert!(Arc::try_unwrap(frame).is_ok(), "the data outlived the decoder");
+        assert!(
+            Arc::try_unwrap(frame).is_ok(),
+            "the data outlived the decoder"
+        );
     }
 
     // Frames sent while the first one's picture is not taken: the decoder holds the next, and
@@ -408,14 +458,22 @@ fn drops_data_read_in_place_with_the_decoder() {
     assert!(shared.iter().skip(1).all(|f| Arc::strong_count(f) > 1));
     drop(decoder);
     for frame in shared {
-        assert!(Arc::try_unwrap(frame).is_ok(), "the held or pending data outlived the decoder");
+        assert!(
+            Arc::try_unwrap(frame).is_ok(),
+            "the held or pending data outlived the decoder"
+        );
     }
 
     let broken = Arc::new(vec![0x12, 0x00, 0x0a, 0x0a, 0xff, 0xff, 0xff, 0xff]);
     let mut decoder = Open::new(true, false).decoder();
-    assert!(decoder.send_data_owned(Shared(broken.clone()), None, None, None).is_err());
+    assert!(decoder
+        .send_data_owned(Shared(broken.clone()), None, None, None)
+        .is_err());
     drop(decoder);
-    assert!(Arc::try_unwrap(broken).is_ok(), "the failed data outlived the decoder");
+    assert!(
+        Arc::try_unwrap(broken).is_ok(),
+        "the failed data outlived the decoder"
+    );
 }
 
 /// A flush drops the data still pending, so the decoder takes data again and decodes it as a new
@@ -426,14 +484,25 @@ fn flush_drops_pending_data() {
     let frames = ivf_frames(&data);
     let shared: Vec<_> = frames[..3].iter().map(|f| Arc::new(f.to_vec())).collect();
     let mut decoder = Open::new(true, false).decoder();
-    let sent: Vec<_> = shared.iter().map(|f| decoder.send_data_owned(Shared(f.clone()), None, None, None)).collect();
+    let sent: Vec<_> = shared
+        .iter()
+        .map(|f| decoder.send_data_owned(Shared(f.clone()), None, None, None))
+        .collect();
     assert_eq!(sent[2], Err(Rav1dError::TryAgain), "{sent:?}");
     decoder.flush();
-    assert_eq!(Arc::strong_count(&shared[2]), 1, "pending data held past the flush");
+    assert_eq!(
+        Arc::strong_count(&shared[2]),
+        1,
+        "pending data held past the flush"
+    );
     let (mut new, mut resumed) = (Decoded::default(), Decoded::default());
     send_all(&mut Open::new(true, false).decoder(), &frames, &mut new);
     send_all(&mut decoder, &frames, &mut resumed);
-    assert!(new.out.len() >= 3 && new.out.iter().all(|o| o.is_ok()), "{:?}", new.out);
+    assert!(
+        new.out.len() >= 3 && new.out.iter().all(|o| o.is_ok()),
+        "{:?}",
+        new.out
+    );
     assert_eq!(new.out, resumed.out);
 }
 
@@ -458,7 +527,10 @@ fn fails_a_tile_group_after_the_frame_as_whole() {
     };
     let (whole, _) = calls(false);
     assert!(
-        whole[0].is_ok() && whole[1].is_ok() && whole[2].is_err() && whole[2] != Err(Rav1dError::TryAgain),
+        whole[0].is_ok()
+            && whole[1].is_ok()
+            && whole[2].is_err()
+            && whole[2] != Err(Rav1dError::TryAgain),
         "{whole:?}"
     );
     let (by_rows, rows) = calls(true);
@@ -471,7 +543,10 @@ fn fails_a_tile_group_after_the_frame_as_whole() {
 fn decodes_on_one_thread_as_on_four() {
     let filter = filter();
     let (mut pictures, mut differ) = (0, Vec::new());
-    for file in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
         let one = decode(file, &Open::new(true, false), false);
         let four = decode(
             file,
@@ -494,7 +569,10 @@ fn decodes_on_one_thread_as_on_four() {
     }
     eprintln!("{pictures} pictures, {} streams differ", differ.len());
     assert!(differ.is_empty(), "{differ:#?}");
-    assert!(!filter.is_empty() || pictures > 10_000, "{pictures} pictures");
+    assert!(
+        !filter.is_empty() || pictures > 10_000,
+        "{pictures} pictures"
+    );
 }
 
 /// A spawner that counts what it is offered and takes, running the work on threads of its own
@@ -525,7 +603,11 @@ fn decodes_tile_columns_on_spawned_threads_as_whole() {
     let filter = filter();
     let (asked, taken) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (mut pictures, mut differ, mut damaged_errors) = (0, Vec::new(), 0);
-    for (i, file) in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)).enumerate() {
+    for (i, file) in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+        .enumerate()
+    {
         let offered = asked.load(Ordering::Relaxed);
         let rows = Open {
             rows_spawner: Some(spawning(&asked, &taken, i % 2 == 0)),
@@ -555,7 +637,10 @@ fn decodes_tile_columns_on_spawned_threads_as_whole() {
         differ.len()
     );
     assert!(differ.is_empty(), "{differ:#?}");
-    assert!(filter.len() > 0 || damaged_errors > 0, "no damaged stream failed");
+    assert!(
+        filter.len() > 0 || damaged_errors > 0,
+        "no damaged stream failed"
+    );
     assert!(taken > 0 && asked > taken, "{asked} offered, {taken} taken");
 }
 
@@ -566,7 +651,11 @@ fn decodes_with_workers_on_spawned_threads_as_on_its_own() {
     let (asked, taken) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (mut pictures, mut differ) = (0, Vec::new());
     let files = streams();
-    for file in files.iter().filter(|f| f.to_string_lossy().contains(&filter)).step_by(8) {
+    for file in files
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+        .step_by(8)
+    {
         let own = decode(file, &Open::new(true, false), false);
         let spawned = Open {
             threads: 4,
@@ -581,7 +670,10 @@ fn decodes_with_workers_on_spawned_threads_as_on_its_own() {
         pictures += own.out.iter().filter(|o| o.is_ok()).count();
     }
     let (asked, taken) = (asked.load(Ordering::Relaxed), taken.load(Ordering::Relaxed));
-    eprintln!("{pictures} pictures, {asked} workers offered, {taken} taken, {} streams differ", differ.len());
+    eprintln!(
+        "{pictures} pictures, {asked} workers offered, {taken} taken, {} streams differ",
+        differ.len()
+    );
     assert!(differ.is_empty(), "{differ:#?}");
     assert!(taken > 0 && asked > taken, "{asked} offered, {taken} taken");
 }
@@ -591,10 +683,15 @@ fn decodes_with_workers_on_spawned_threads_as_on_its_own() {
 fn reads_no_row_once_final() {
     let filter = filter();
     let (mut firsts, mut by_rows, mut differ) = (0, 0, Vec::new());
-    for file in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
         let whole = decode(file, &Open::new(false, false), false);
         let poisoned = decode(file, &Open::new(false, true), true);
-        let Some(first) = whole.out.first() else { continue };
+        let Some(first) = whole.out.first() else {
+            continue;
+        };
         if poisoned.out.first().is_some_and(|o| o.is_err()) || first.is_err() {
             continue;
         }
@@ -604,7 +701,10 @@ fn reads_no_row_once_final() {
         firsts += 1;
         by_rows += poisoned.by_rows;
     }
-    eprintln!("{firsts} first pictures, {by_rows} by rows, {} differ", differ.len());
+    eprintln!(
+        "{firsts} first pictures, {by_rows} by rows, {} differ",
+        differ.len()
+    );
     assert!(differ.is_empty(), "{differ:#?}");
     assert!(by_rows * 10 > firsts * 8, "{by_rows} of {firsts} by rows");
 }
@@ -614,7 +714,9 @@ fn reads_no_row_once_final() {
 fn refuses_a_slice_of_a_picture_decoded_by_rows() {
     let data = std::fs::read(intra()).unwrap();
     let mut decoder = Open::new(true, true).decoder();
-    decoder.send_data(ivf_frames(&data)[0].into(), None, None, None).unwrap();
+    decoder
+        .send_data(ivf_frames(&data)[0].into(), None, None, None)
+        .unwrap();
     let picture = decoder.rows_picture().unwrap();
     picture.plane(PlanarImageComponent::Y);
 }
@@ -687,7 +789,11 @@ fn decodes_into_pictures_of_its_allocator() {
     let counting = Counting::new(None);
     let (mut pictures, mut differ) = (0, Vec::new());
     let files = streams();
-    for file in files.iter().filter(|f| f.to_string_lossy().contains(&filter)).step_by(4) {
+    for file in files
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+        .step_by(4)
+    {
         let own = decode(file, &Open::new(true, false), false);
         for by_rows in [false, true] {
             let theirs = Open {
@@ -700,8 +806,14 @@ fn decodes_into_pictures_of_its_allocator() {
         }
         pictures += own.out.iter().filter(|o| o.is_ok()).count();
     }
-    let (allocated, released) = (counting.allocated.load(Ordering::Relaxed), counting.released.load(Ordering::Relaxed));
-    eprintln!("{pictures} pictures, {allocated} allocated, {} streams differ", differ.len());
+    let (allocated, released) = (
+        counting.allocated.load(Ordering::Relaxed),
+        counting.released.load(Ordering::Relaxed),
+    );
+    eprintln!(
+        "{pictures} pictures, {allocated} allocated, {} streams differ",
+        differ.len()
+    );
     assert!(differ.is_empty(), "{differ:#?}");
     assert!(allocated > 0);
     assert_eq!(allocated, released);
@@ -713,7 +825,9 @@ fn fails_a_frame_its_allocator_breaks() {
     let data = std::fs::read(intra()).unwrap();
     let breaks: [(&str, fn(&PictureParameters, &mut PlaneLayout)); 6] = [
         ("misaligned", |_, l| l.offsets[0] += 1),
-        ("narrow", |p, l| l.strides[0] = p.min_stride(0) - PICTURE_ALIGNMENT),
+        ("narrow", |p, l| {
+            l.strides[0] = p.min_stride(0) - PICTURE_ALIGNMENT
+        }),
         ("odd stride", |_, l| l.strides[1] += 1),
         ("overlapping", |_, l| l.offsets[2] = l.offsets[1]),
         ("short", |_, l| l.len -= 1),
@@ -727,10 +841,18 @@ fn fails_a_frame_its_allocator_breaks() {
                 ..Open::new(true, by_rows)
             };
             let decoded = decode_data(&data, &open, false);
-            assert_eq!(decoded.out.first(), Some(&Err(Rav1dError::InvalidArgument)), "{what}");
+            assert_eq!(
+                decoded.out.first(),
+                Some(&Err(Rav1dError::InvalidArgument)),
+                "{what}"
+            );
         }
         let released = counting.released.load(Ordering::Relaxed);
-        assert_eq!(counting.allocated.load(Ordering::Relaxed), released, "{what}");
+        assert_eq!(
+            counting.allocated.load(Ordering::Relaxed),
+            released,
+            "{what}"
+        );
         assert!(released > 0);
     }
 
@@ -740,8 +862,19 @@ fn fails_a_frame_its_allocator_breaks() {
             panic!("no memory for a picture");
         }
     }
-    let decoded = decode_data(&data, &Open { allocator: Some(Arc::new(Panicking)), ..Open::new(true, false) }, false);
-    assert!(decoded.out.first().is_some_and(|o| o.is_err()), "{:?}", decoded.out);
+    let decoded = decode_data(
+        &data,
+        &Open {
+            allocator: Some(Arc::new(Panicking)),
+            ..Open::new(true, false)
+        },
+        false,
+    );
+    assert!(
+        decoded.out.first().is_some_and(|o| o.is_err()),
+        "{:?}",
+        decoded.out
+    );
 }
 
 fn send_all(decoder: &mut Decoder, frames: &[&[u8]], decoded: &mut Decoded) {
@@ -768,15 +901,26 @@ fn send_all(decoder: &mut Decoder, frames: &[&[u8]], decoded: &mut Decoded) {
 fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
     let filter = filter();
     let (mut seeks, mut pictures, mut differ) = (0, 0, Vec::new());
-    for file in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
         let data = std::fs::read(file).unwrap();
         let frames = ivf_frames(&data);
-        let starts: Vec<usize> = (1..frames.len()).filter(|&i| parse_sequence_header(frames[i]).is_ok()).collect();
-        let Some(&at) = starts.get(starts.len() / 2) else { continue };
+        let starts: Vec<usize> = (1..frames.len())
+            .filter(|&i| parse_sequence_header(frames[i]).is_ok())
+            .collect();
+        let Some(&at) = starts.get(starts.len() / 2) else {
+            continue;
+        };
         // A frame delay other than 1 on threads gives frame threads, whose flush takes the delayed
         // frames out.
         for (threads, max_frame_delay) in [(1, 1), (4, 1), (4, 0), (4, 3)] {
-            let open = Open { threads, max_frame_delay, ..Open::new(true, false) };
+            let open = Open {
+                threads,
+                max_frame_delay,
+                ..Open::new(true, false)
+            };
             let mut new = Decoded::default();
             send_all(&mut open.decoder(), &frames[at..], &mut new);
             let mut flushed = open.decoder();
@@ -794,13 +938,22 @@ fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
             seeks += 1;
             pictures += new.out.iter().filter(|o| o.is_ok()).count();
             if new.out != resumed.out {
-                differ.push(format!("{} from frame {at} on {threads} threads, delay {max_frame_delay}", file.display()));
+                differ.push(format!(
+                    "{} from frame {at} on {threads} threads, delay {max_frame_delay}",
+                    file.display()
+                ));
             }
         }
     }
-    eprintln!("{seeks} seeks, {pictures} pictures, {} differ: {differ:#?}", differ.len());
+    eprintln!(
+        "{seeks} seeks, {pictures} pictures, {} differ: {differ:#?}",
+        differ.len()
+    );
     assert!(differ.is_empty());
-    assert!(filter != "" || (seeks > 0 && pictures > 0), "no stream had a later sequence header");
+    assert!(
+        filter != "" || (seeks > 0 && pictures > 0),
+        "no stream had a later sequence header"
+    );
 }
 
 /// The sequence header parsed alone is the one the decoder decodes the first frame under.
@@ -810,12 +963,19 @@ fn parses_a_sequence_header_alone() {
     for file in streams().iter().step_by(16) {
         let data = std::fs::read(file).unwrap();
         let frames = ivf_frames(&data);
-        let Some(&frame) = frames.first() else { continue };
-        let Ok(seq) = parse_sequence_header(frame) else { continue };
+        let Some(&frame) = frames.first() else {
+            continue;
+        };
+        let Ok(seq) = parse_sequence_header(frame) else {
+            continue;
+        };
         let mut decoder = Open::new(true, false).decoder();
         let mut first = None;
         for frame in frames.iter().take(8) {
-            if decoder.send_data((*frame).into(), None, None, None).is_err() {
+            if decoder
+                .send_data((*frame).into(), None, None, None)
+                .is_err()
+            {
                 break;
             }
             if let Ok(picture) = decoder.get_picture() {
@@ -826,20 +986,42 @@ fn parses_a_sequence_header_alone() {
         let Some(picture) = first else { continue };
         let decoded = picture.sequence_header().unwrap();
         let f = file.display();
-        assert_eq!((seq.max_width, seq.max_height), (decoded.max_width, decoded.max_height), "{f}");
+        assert_eq!(
+            (seq.max_width, seq.max_height),
+            (decoded.max_width, decoded.max_height),
+            "{f}"
+        );
         assert_eq!(seq.layout as u32, decoded.layout as u32, "{f}");
         assert_eq!(seq.hbd, decoded.hbd, "{f}");
         assert_eq!(seq.film_grain_present, decoded.film_grain_present, "{f}");
-        assert_eq!(seq.reduced_still_picture_header, decoded.reduced_still_picture_header, "{f}");
-        assert_eq!(seq.num_operating_points, decoded.num_operating_points, "{f}");
-        assert_eq!(seq.operating_points[0].idc, decoded.operating_points[0].idc, "{f}");
-        assert_eq!(seq.screen_content_tools as u32, decoded.screen_content_tools as u32, "{f}");
+        assert_eq!(
+            seq.reduced_still_picture_header, decoded.reduced_still_picture_header,
+            "{f}"
+        );
+        assert_eq!(
+            seq.num_operating_points, decoded.num_operating_points,
+            "{f}"
+        );
+        assert_eq!(
+            seq.operating_points[0].idc, decoded.operating_points[0].idc,
+            "{f}"
+        );
+        assert_eq!(
+            seq.screen_content_tools as u32, decoded.screen_content_tools as u32,
+            "{f}"
+        );
         assert_eq!(seq.order_hint_n_bits, decoded.order_hint_n_bits, "{f}");
         checked += 1;
     }
     assert!(checked > 20, "{checked} sequence headers");
-    assert_eq!(parse_sequence_header(&[]).err(), Some(Rav1dError::InvalidArgument));
-    assert_eq!(parse_sequence_header(&[0x32, 0x00]).err(), Some(Rav1dError::NoEntity));
+    assert_eq!(
+        parse_sequence_header(&[]).err(),
+        Some(Rav1dError::InvalidArgument)
+    );
+    assert_eq!(
+        parse_sequence_header(&[0x32, 0x00]).err(),
+        Some(Rav1dError::NoEntity)
+    );
 }
 
 #[test]
@@ -871,14 +1053,37 @@ fn gives_each_picture_the_sequence_header_it_was_decoded_under() {
     assert!(checked > 100, "{checked} pictures");
 }
 
-fn check_sequence_header(p: &Picture, parsed: Option<&rav1d::SequenceHeader>, file: &Path, checked: &mut usize) {
-    let seq = p.sequence_header().expect("a decoded picture has a sequence header");
+fn check_sequence_header(
+    p: &Picture,
+    parsed: Option<&rav1d::SequenceHeader>,
+    file: &Path,
+    checked: &mut usize,
+) {
+    let seq = p
+        .sequence_header()
+        .expect("a decoded picture has a sequence header");
     let parsed = parsed.expect("a picture before any sequence header");
     let f = file.display();
-    assert_eq!((seq.max_width, seq.max_height, seq.hbd), (parsed.max_width, parsed.max_height, parsed.hbd), "{f}");
     assert_eq!(
-        (seq.pri as u32, seq.trc as u32, seq.mtrx as u32, seq.color_range as u32, seq.layout as u32),
-        (parsed.pri as u32, parsed.trc as u32, parsed.mtrx as u32, parsed.color_range as u32, parsed.layout as u32),
+        (seq.max_width, seq.max_height, seq.hbd),
+        (parsed.max_width, parsed.max_height, parsed.hbd),
+        "{f}"
+    );
+    assert_eq!(
+        (
+            seq.pri as u32,
+            seq.trc as u32,
+            seq.mtrx as u32,
+            seq.color_range as u32,
+            seq.layout as u32
+        ),
+        (
+            parsed.pri as u32,
+            parsed.trc as u32,
+            parsed.mtrx as u32,
+            parsed.color_range as u32,
+            parsed.layout as u32
+        ),
         "{f}"
     );
     assert_eq!(p.matrix_coefficients(), seq.mtrx.into(), "{f}");
@@ -893,7 +1098,11 @@ fn drops_data_read_in_place_with_a_decoder_of_threads() {
     let frames = ivf_frames(&data);
     for threads in [2, 4, 8] {
         for run in 0..50 {
-            let mut decoder = Open { threads, ..Open::new(true, false) }.decoder();
+            let mut decoder = Open {
+                threads,
+                ..Open::new(true, false)
+            }
+            .decoder();
             let mut sent = Vec::new();
             for (i, frame) in frames.iter().take(3).enumerate() {
                 let bytes = match i == 2 && run % 2 == 1 {
@@ -902,7 +1111,10 @@ fn drops_data_read_in_place_with_a_decoder_of_threads() {
                 };
                 let owner = Arc::new(bytes);
                 sent.push(Arc::clone(&owner));
-                if decoder.send_data_owned(Shared(owner), None, None, None).is_err() {
+                if decoder
+                    .send_data_owned(Shared(owner), None, None, None)
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -929,14 +1141,22 @@ fn waits_for_a_column_its_spawner_took_before_it_unwound() {
     });
     let mut unwound = 0;
     for file in streams() {
-        let mut decoder = Open { rows_spawner: Some(spawner.clone()), ..Open::new(true, true) }.decoder();
+        let mut decoder = Open {
+            rows_spawner: Some(spawner.clone()),
+            ..Open::new(true, true)
+        }
+        .decoder();
         let data = std::fs::read(&file).unwrap();
         'frames: for frame in ivf_frames(&data) {
-            if decoder.send_data(frame.into(), None, None, None).is_err() || decoder.rows_picture().is_err() {
+            if decoder.send_data(frame.into(), None, None, None).is_err()
+                || decoder.rows_picture().is_err()
+            {
                 break;
             }
             loop {
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode_rows())) {
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    decoder.decode_rows()
+                })) {
                     Err(_) => {
                         unwound += 1;
                         break 'frames;
@@ -948,7 +1168,11 @@ fn waits_for_a_column_its_spawner_took_before_it_unwound() {
         }
         drop(decoder);
         for thread in threads.lock().unwrap().drain(..) {
-            assert!(thread.join().is_ok(), "a column ran on a decoder that is gone: {}", file.display());
+            assert!(
+                thread.join().is_ok(),
+                "a column ran on a decoder that is gone: {}",
+                file.display()
+            );
         }
         if unwound >= 3 {
             break;
@@ -982,12 +1206,33 @@ fn survives_picture_memory_that_panics() {
             let skip = memory.as_ptr().align_offset(PICTURE_ALIGNMENT);
             layout.offsets = layout.offsets.map(|o| o + skip);
             layout.len += skip;
-            Ok(PictureBuffer { memory: Box::new(Memory(Aligned(memory), self.0)), layout })
+            Ok(PictureBuffer {
+                memory: Box::new(Memory(Aligned(memory), self.0)),
+                layout,
+            })
         }
     }
     let data = std::fs::read(intra()).unwrap();
-    let in_as_mut = decode_data(&data, &Open { allocator: Some(Arc::new(Allocator(true))), ..Open::new(true, false) }, false);
+    let in_as_mut = decode_data(
+        &data,
+        &Open {
+            allocator: Some(Arc::new(Allocator(true))),
+            ..Open::new(true, false)
+        },
+        false,
+    );
     assert_eq!(in_as_mut.out.first(), Some(&Err(Rav1dError::OutOfMemory)));
-    let in_drop = decode_data(&data, &Open { allocator: Some(Arc::new(Allocator(false))), ..Open::new(true, false) }, false);
-    assert!(in_drop.out.iter().filter(|o| o.is_ok()).count() > 0, "{:?}", in_drop.out);
+    let in_drop = decode_data(
+        &data,
+        &Open {
+            allocator: Some(Arc::new(Allocator(false))),
+            ..Open::new(true, false)
+        },
+        false,
+    );
+    assert!(
+        in_drop.out.iter().filter(|o| o.is_ok()).count() > 0,
+        "{:?}",
+        in_drop.out
+    );
 }

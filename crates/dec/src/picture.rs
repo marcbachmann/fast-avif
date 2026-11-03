@@ -3,17 +3,17 @@ use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
 use bitflags::bitflags;
-
 use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::props::Rav1dDataProps;
-use crate::settings::Rav1dEventFlags;
 use rav1d_shared::headers::{
-    Rav1dContentLightLevel,
-    Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay, Rav1dSequenceHeader,
+    Rav1dContentLightLevel, Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay,
+    Rav1dSequenceHeader,
 };
 use rav1d_shared::picture::{alloc_picture_data, Rav1dPicAllocator, Rav1dPicture};
+use rav1d_shared::props::Rav1dDataProps;
+
 use crate::internal::{Rav1dFrameContext, Rav1dFrameData};
 use crate::log::{Rav1dLog as _, Rav1dLogger};
+use crate::settings::Rav1dEventFlags;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PictureFlags(u8);

@@ -4,12 +4,12 @@ use std::ops::BitOr;
 
 use crate::align::Align8;
 use crate::disjoint_mut::DisjointMut;
-use crate::intops::apply_sign;
-use crate::in_range::InRange;
 use crate::headers::{
     Rav1dFilterMode, Rav1dFrameHeader, Rav1dPixelLayout, Rav1dWarpedMotionParams,
     Rav1dWarpedMotionType,
 };
+use crate::in_range::InRange;
+use crate::intops::apply_sign;
 use crate::levels::{
     BlockLevel, BlockPartition, BlockSize, CompInterType, Mv, TxfmSize, TxfmType, DCT_DCT, H_ADST,
     H_FLIPADST, IDTX, V_ADST, V_FLIPADST,
@@ -67,13 +67,7 @@ pub fn get_intra_ctx(
 }
 
 #[inline]
-pub fn get_tx_ctx(
-    a: &BlockContext,
-    l: &BlockContext,
-    max_tx: &TxfmInfo,
-    yb4: i32,
-    xb4: i32,
-) -> u8 {
+pub fn get_tx_ctx(a: &BlockContext, l: &BlockContext, max_tx: &TxfmInfo, yb4: i32, xb4: i32) -> u8 {
     (*l.tx_intra.index(yb4 as usize) as i32 >= max_tx.lh as i32) as u8
         + (*a.tx_intra.index(xb4 as usize) as i32 >= max_tx.lw as i32) as u8
 }

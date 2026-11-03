@@ -4,14 +4,19 @@
 
 use std::cell::Cell;
 
-use super::{dimensions, forward_in, Config, Lane, Txfm1d};
-use crate::fdct::{self, coded_dimensions};
-use crate::fdct::tests::{decodable, sizes, Rng};
 use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
+
+use super::{dimensions, forward_in, Config, Lane, Txfm1d};
+use crate::fdct::tests::{decodable, sizes, Rng};
+use crate::fdct::{self, coded_dimensions};
 
 fn pairs() -> Vec<(TxfmSize, TxfmType)> {
     sizes()
-        .flat_map(|size| (0..WHT_WHT).filter(move |&ty| decodable(size, ty)).map(move |ty| (size, ty)))
+        .flat_map(|size| {
+            (0..WHT_WHT)
+                .filter(move |&ty| decodable(size, ty))
+                .map(move |ty| (size, ty))
+        })
         .collect()
 }
 
@@ -30,7 +35,11 @@ fn simd_available() -> bool {
 #[test]
 fn exact_slices_amid_padding() {
     const PAD: usize = 64;
-    let lanes: Vec<Lane> = if simd_available() { vec![Lane::Scalar, Lane::Simd] } else { vec![Lane::Scalar] };
+    let lanes: Vec<Lane> = if simd_available() {
+        vec![Lane::Scalar, Lane::Simd]
+    } else {
+        vec![Lane::Scalar]
+    };
     let mut checked = 0;
     for (size, ty) in pairs() {
         let (w, h) = dimensions(size);
@@ -45,10 +54,26 @@ fn exact_slices_amid_padding() {
                     let mut residual = vec![fill; PAD + w * h + PAD];
                     residual[PAD..PAD + w * h].copy_from_slice(&block);
                     let mut coefs = vec![0x5a5a_5a5a; PAD + cw * ch + PAD];
-                    forward_in(lane, &residual[PAD..PAD + w * h], w, &mut coefs[PAD..PAD + cw * ch], size, ty);
-                    assert!(coefs[PAD..PAD + cw * ch] == want[..], "{size:?} {ty} {lane:?} fill={fill} rep={rep}: differs");
-                    let untouched = coefs[..PAD].iter().chain(&coefs[PAD + cw * ch..]).all(|&c| c == 0x5a5a_5a5a);
-                    assert!(untouched, "{size:?} {ty} {lane:?} fill={fill} rep={rep}: wrote outside");
+                    forward_in(
+                        lane,
+                        &residual[PAD..PAD + w * h],
+                        w,
+                        &mut coefs[PAD..PAD + cw * ch],
+                        size,
+                        ty,
+                    );
+                    assert!(
+                        coefs[PAD..PAD + cw * ch] == want[..],
+                        "{size:?} {ty} {lane:?} fill={fill} rep={rep}: differs"
+                    );
+                    let untouched = coefs[..PAD]
+                        .iter()
+                        .chain(&coefs[PAD + cw * ch..])
+                        .all(|&c| c == 0x5a5a_5a5a);
+                    assert!(
+                        untouched,
+                        "{size:?} {ty} {lane:?} fill={fill} rep={rep}: wrote outside"
+                    );
                     checked += 1;
                 }
             }
@@ -80,7 +105,10 @@ impl Af {
         for i in 0..64 {
             c[i] = f(self.c[i], b.c[i]);
         }
-        Af { c, err: self.err + b.err }
+        Af {
+            c,
+            err: self.err + b.err,
+        }
     }
 
     fn scale(mut self, k: f64, round_err: f64) -> Self {
@@ -101,7 +129,10 @@ mod affine {
 
     impl TxOperations for Af {
         fn zero() -> Self {
-            Af { c: [0.0; 64], err: 0.0 }
+            Af {
+                c: [0.0; 64],
+                err: 0.0,
+            }
         }
 
         fn tx_mul<const SHIFT: i32>(self, mul: i32) -> Self {
@@ -198,8 +229,16 @@ fn intermediates_fit_i32() {
         }
         report += &format!("{size:?} {ty}: {p:.0} ({:.2} bits)\n", p.log2());
     }
-    println!("{report}worst {:?}: {:.0} = 2^{:.3}", worst.1, worst.0, worst.0.log2());
-    assert!(worst.0 < i32::MAX as f64, "an intermediate can overflow i32");
+    println!(
+        "{report}worst {:?}: {:.0} = 2^{:.3}",
+        worst.1,
+        worst.0,
+        worst.0.log2()
+    );
+    assert!(
+        worst.0 < i32::MAX as f64,
+        "an intermediate can overflow i32"
+    );
 }
 
 fn assert_lanes_agree(size: TxfmSize, ty: TxfmType, block: &[i16], pad: usize, junk: i16) {
@@ -220,7 +259,10 @@ fn assert_lanes_agree(size: TxfmSize, ty: TxfmType, block: &[i16], pad: usize, j
     forward_in(Lane::Simd, &wide, stride, &mut simd, size, ty);
     if scalar != simd {
         let i = scalar.iter().zip(&simd).position(|(a, b)| a != b).unwrap();
-        panic!("{size:?} {ty} pad {pad}: lanes differ at {i}: {} vs {}", scalar[i], simd[i]);
+        panic!(
+            "{size:?} {ty} pad {pad}: lanes differ at {i}: {} vs {}",
+            scalar[i], simd[i]
+        );
     }
 }
 
@@ -240,14 +282,28 @@ fn simd_matches_scalar_heavy() {
         for k in 0..reps {
             let block: Vec<i16> = match k % 5 {
                 0 => (0..w * h).map(|_| rng.residual(255)).collect(),
-                1 => (0..w * h).map(|_| if rng.next() & 1 == 0 { 255 } else { -255 }).collect(),
-                2 => (0..w * h).map(|_| if rng.next() % 16 == 0 { rng.residual(255) } else { 0 }).collect(),
+                1 => (0..w * h)
+                    .map(|_| if rng.next() & 1 == 0 { 255 } else { -255 })
+                    .collect(),
+                2 => (0..w * h)
+                    .map(|_| {
+                        if rng.next() % 16 == 0 {
+                            rng.residual(255)
+                        } else {
+                            0
+                        }
+                    })
+                    .collect(),
                 3 => {
-                    let line: Vec<i16> = (0..w).map(|_| if rng.next() & 1 == 0 { 255 } else { -255 }).collect();
+                    let line: Vec<i16> = (0..w)
+                        .map(|_| if rng.next() & 1 == 0 { 255 } else { -255 })
+                        .collect();
                     (0..w * h).map(|i| line[i % w]).collect()
                 }
                 _ => {
-                    let line: Vec<i16> = (0..h).map(|_| if rng.next() & 1 == 0 { 255 } else { -255 }).collect();
+                    let line: Vec<i16> = (0..h)
+                        .map(|_| if rng.next() & 1 == 0 { 255 } else { -255 })
+                        .collect();
                     (0..w * h).map(|i| line[i / w]).collect()
                 }
             };

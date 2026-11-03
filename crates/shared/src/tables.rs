@@ -1,13 +1,10 @@
-
 use strum::EnumCount;
 
 use crate::align::{Align16, Align4, Align64, Align8};
 use crate::const_fn::const_for;
 use crate::enum_map::DefaultValue;
+use crate::headers::{Rav1dFilterMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType};
 use crate::in_range::InRange;
-use crate::headers::{
-    Rav1dFilterMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType,
-};
 use crate::levels::{
     BlockLevel, BlockPartition, BlockSize, Filter2d, InterPredMode, TxClass, TxfmSize, TxfmType,
     ADST_ADST, ADST_DCT, ADST_FLIPADST, DCT_ADST, DCT_DCT, DCT_FLIPADST, DC_PRED,

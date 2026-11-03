@@ -3,25 +3,15 @@ use std::hint::assert_unchecked;
 use std::{array, cmp, ptr};
 
 use assert_matches::debug_assert_matches;
-use to_method::To as _;
-
-use crate::cdef_apply::rav1d_cdef_brow;
-use rav1d_shared::cdf::CdfCoefContext;
-use crate::ctx::CaseSet;
-use rav1d_shared::env::{get_dc_sign_ctx, get_skip_ctx, get_uv_inter_txtp};
-use rav1d_shared::in_range::InRange;
 use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, ToPrimitive, BPC};
+use rav1d_shared::cdf::CdfCoefContext;
 use rav1d_shared::dump::{ac_dump, coef_dump, hex_dump, hex_dump_pic};
-use rav1d_shared::intops::{apply_sign64, clip, ulog2};
-use crate::settings::Rav1dInloopFilterType;
+use rav1d_shared::env::{get_dc_sign_ctx, get_skip_ctx, get_uv_inter_txtp};
 use rav1d_shared::headers::{
     Rav1dPixelLayout, Rav1dPixelLayoutSubSampled, Rav1dWarpedMotionParams, Rav1dWarpedMotionType,
 };
-use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
-use crate::internal::{
-    Bxy, Cf, CodedBlockInfo, Rav1dContext, Rav1dFrameData, Rav1dTaskContext, Rav1dTileStateContext,
-    ScratchEmuEdge, TaskContextScratch, TileStateRef,
-};
+use rav1d_shared::in_range::InRange;
+use rav1d_shared::intops::{apply_sign64, clip, ulog2};
 use rav1d_shared::intra_edge::EdgeFlags;
 use rav1d_shared::ipred_prepare::{rav1d_prepare_intra_edges, sm_flag, sm_uv_flag};
 use rav1d_shared::levels::{
@@ -30,23 +20,32 @@ use rav1d_shared::levels::{
     CFL_PRED, DCT_DCT, DC_PRED, FILTER_PRED, GLOBALMV, GLOBALMV_GLOBALMV, IDTX, SMOOTH_PRED,
     WHT_WHT,
 };
-use crate::lf_apply::{rav1d_copy_lpf, rav1d_loopfilter_sbrow_cols, rav1d_loopfilter_sbrow_rows};
-use crate::lr_apply::rav1d_lr_sbrow;
 use rav1d_shared::msac::{
     rav1d_msac_decode_bool_equi, rav1d_msac_decode_bools, rav1d_msac_decode_symbol_adapt8,
     MsacLocal,
 };
-use crate::picture::Rav1dThreadPicture;
+use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
 use rav1d_shared::pixels::Pixels as _;
 use rav1d_shared::scan::DAV1D_SCANS;
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::tables::{
     LoCtxOffset, TxfmInfo, DAV1D_FILTER_2D, DAV1D_FILTER_MODE_TO_Y_MODE, DAV1D_LO_CTX_OFFSETS,
-    DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE, DAV1D_TX_TYPES_PER_SET,
-    DAV1D_TX_TYPE_CLASS,
+    DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE, DAV1D_TX_TYPES_PER_SET, DAV1D_TX_TYPE_CLASS,
 };
-use crate::wedge::{DAV1D_II_MASKS, DAV1D_WEDGE_MASKS};
 use rav1d_shared::with_offset::WithOffset;
+use to_method::To as _;
+
+use crate::cdef_apply::rav1d_cdef_brow;
+use crate::ctx::CaseSet;
+use crate::internal::{
+    Bxy, Cf, CodedBlockInfo, Rav1dContext, Rav1dFrameData, Rav1dTaskContext, Rav1dTileStateContext,
+    ScratchEmuEdge, TaskContextScratch, TileStateRef,
+};
+use crate::lf_apply::{rav1d_copy_lpf, rav1d_loopfilter_sbrow_cols, rav1d_loopfilter_sbrow_rows};
+use crate::lr_apply::rav1d_lr_sbrow;
+use crate::picture::Rav1dThreadPicture;
+use crate::settings::Rav1dInloopFilterType;
+use crate::wedge::{DAV1D_II_MASKS, DAV1D_WEDGE_MASKS};
 
 impl Bxy {
     pub fn debug_block_info(&self) -> bool {
@@ -969,8 +968,7 @@ fn decode_coefs<BD: BitDepth>(
                 }
 
                 dc_tok &= 0xfffff;
-                dc_dq = (((dc_dq as u32).wrapping_mul(dc_tok as u32)
-                    & 0xffffff as i32 as u32)
+                dc_dq = (((dc_dq as u32).wrapping_mul(dc_tok as u32) & 0xffffff as i32 as u32)
                     >> dq_shift) as i32;
                 dc_dq = cmp::min(dc_dq, cf_max + dc_sign);
             } else {
@@ -1502,14 +1500,10 @@ pub(crate) fn rav1d_read_coef_blocks<BD: BitDepth>(
                         CaseSet::<16, true>::many(
                             [l_ccoef, a_ccoef],
                             [
-                                cmp::min(
-                                    uv_t_dim.h as i32,
-                                    f.bh - t.b.y + ss_ver as i32 >> ss_ver,
-                                ) as usize,
-                                cmp::min(
-                                    uv_t_dim.w as i32,
-                                    f.bw - t.b.x + ss_hor as i32 >> ss_hor,
-                                ) as usize,
+                                cmp::min(uv_t_dim.h as i32, f.bh - t.b.y + ss_ver as i32 >> ss_ver)
+                                    as usize,
+                                cmp::min(uv_t_dim.w as i32, f.bw - t.b.x + ss_hor as i32 >> ss_hor)
+                                    as usize,
                             ],
                             [cby4 + y as usize, cbx4 as usize + x as usize],
                             |case, dir| {
@@ -2633,8 +2627,8 @@ pub(crate) fn rav1d_recon_b_inter<BD: BitDepth>(
     let cbh4 = bh4 + ss_ver >> ss_ver;
     let cbw4 = bw4 + ss_hor >> ss_hor;
     let y_dst = &cur_data[0];
-    let mut y_dst = y_dst.with_offset()
-        + 4 * (t.b.y as isize * y_dst.pixel_stride::<BD>() + t.b.x as isize);
+    let mut y_dst =
+        y_dst.with_offset() + 4 * (t.b.y as isize * y_dst.pixel_stride::<BD>() + t.b.x as isize);
     let uvdstoff = 4
         * ((t.b.x >> ss_hor) as isize + (t.b.y >> ss_ver) as isize * BD::pxstride(f.cur.stride[1]));
     let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
@@ -2737,8 +2731,7 @@ pub(crate) fn rav1d_recon_b_inter<BD: BitDepth>(
                     .call::<BD>(y_dst, &tmp[0], &tmp[1], bw4 * 4, bh4 * 4, bd);
             }
             CompInterType::WeightedAvg => {
-                jnt_weight =
-                    f.jnt_weights[inter.r#ref[0] as usize][inter.r#ref[1] as usize] as i32;
+                jnt_weight = f.jnt_weights[inter.r#ref[0] as usize][inter.r#ref[1] as usize] as i32;
                 f.dsp.mc.w_avg.call::<BD>(
                     y_dst,
                     &tmp[0],

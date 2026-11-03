@@ -2,23 +2,19 @@
 use std::hint::assert_unchecked;
 use std::ops::{Add, Shl, Shr};
 use std::{cmp, mem, ptr};
-use to_method::To;
 
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynEntry, DynScaling};
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynEntry, DynScaling};
+use rav1d_shared::headers::{Rav1dFilmGrainData, Rav1dPixelLayoutSubSampled};
 use rav1d_shared::intops::iclip;
-use rav1d_shared::headers::{
-    Rav1dFilmGrainData, Rav1dPixelLayoutSubSampled,
-};
-use rav1d_shared::picture::{
-    Rav1dPictureDataComponent,
-    Rav1dPictureDataComponentOffset,
-};
-use crate::internal::GrainLut;
+use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::tables::DAV1D_GAUSSIAN_SEQUENCE;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use to_method::To;
+
+use crate::internal::GrainLut;
 
 pub const GRAIN_WIDTH: usize = 82;
 pub const GRAIN_HEIGHT: usize = 73;
@@ -113,15 +109,7 @@ impl fgy_32x32xn::Fn {
         // SAFETY: Fallback `fn fgy_32x32xn_rust` is safe; the SIMD kernels read and write the same memory.
         unsafe {
             self.get()(
-                data,
-                pw,
-                scaling,
-                grain_lut,
-                bh,
-                row_num,
-                bd,
-                dst_row,
-                src_row,
+                data, pw, scaling, grain_lut, bh, row_num, bd, dst_row, src_row,
             )
         }
     }
@@ -175,17 +163,7 @@ impl fguv_32x32xn::Fn {
         // SAFETY: Fallback `fn fguv_32x32xn_rust` is safe; the SIMD kernels read and write the same memory.
         unsafe {
             self.get()(
-                data,
-                pw,
-                scaling,
-                grain_lut,
-                bh,
-                row_num,
-                uv_pl,
-                is_id,
-                bd,
-                dst_row,
-                src_row,
+                data, pw, scaling, grain_lut, bh, row_num, uv_pl, is_id, bd, dst_row, src_row,
                 luma_row,
             )
         }
@@ -727,8 +705,8 @@ fn fguv_32x32xn_rust<BD: BitDepth>(
             }
             let mut val = avg.as_::<i32>();
             if !data.chroma_scaling_from_luma {
-                let combined = avg.as_::<i32>() * data.uv_luma_mult[uv]
-                    + src.as_::<i32>() * data.uv_mult[uv];
+                let combined =
+                    avg.as_::<i32>() * data.uv_luma_mult[uv] + src.as_::<i32>() * data.uv_mult[uv];
                 val = bd
                     .iclip_pixel((combined >> 6) + data.uv_offset[uv] * (1 << bitdepth_min_8))
                     .as_::<i32>();
@@ -823,9 +801,7 @@ unsafe fn fguv_32x32xn_c_erased<
     src_row: Rav1dPictureDataComponentOffset,
     luma_row: Rav1dPictureDataComponentOffset,
 ) {
-    let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| {
-        row
-    });
+    let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| row);
     let data = &data.clone().into();
     // SAFETY: Casting back to the original type from the `fn` ptr call.
     let scaling = unsafe { &*scaling.cast() };
@@ -860,14 +836,14 @@ unsafe fn fguv_32x32xn_c_erased<
 /// the grain by `scaling << (15 - shift)`. The scaling bytes come one load per lane, from
 /// sixteen-lane `tbl`s on NEON at 8 bpc, and from `vpgatherdd` with AVX2.
 mod rust_simd {
-    use zerocopy::{AsBytes, FromBytes};
-
-    use super::*;
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::I16x16;
     use rav1d_shared::simd128::{I16x8, I32x4};
     #[cfg(target_arch = "aarch64")]
     use rav1d_shared::simd128::{Lut256, U8x16};
+    use zerocopy::{AsBytes, FromBytes};
+
+    use super::*;
 
     pub trait Px: AsBytes + FromBytes + Copy + Default {
         type E: Copy;
@@ -1042,7 +1018,10 @@ mod rust_simd {
     impl Lookup for Gather<'_> {
         #[inline(always)]
         fn get(&self, i: [I16x8; 2]) -> [I16x8; 2] {
-            [i[0].gather_u8(self.0, self.1), i[1].gather_u8(self.0, self.1)]
+            [
+                i[0].gather_u8(self.0, self.1),
+                i[1].gather_u8(self.0, self.1),
+            ]
         }
 
         #[cfg(target_arch = "x86_64")]
@@ -1088,13 +1067,7 @@ mod rust_simd {
 
     /// Where the grain of block `(bx, by)` (0 current, 1 left or above) starts in the LUT.
     #[inline(always)]
-    fn lut_at(
-        offsets: &[[i32; 2]; 2],
-        sx: bool,
-        sy: bool,
-        bx: usize,
-        by: usize,
-    ) -> (usize, usize) {
+    fn lut_at(offsets: &[[i32; 2]; 2], sx: bool, sy: bool, bx: usize, by: usize) -> (usize, usize) {
         let r = offsets[bx][by] as usize;
         let offx = 3 + (2 >> sx as usize) * (3 + (r >> 4));
         let offy = 3 + (2 >> sy as usize) * (3 + (r & 15));
@@ -1108,7 +1081,11 @@ mod rust_simd {
     /// left block's, the top's and the top left's, as `(row, column)`. The columns are clamped
     /// to where `NV` vectors fit in a row, which they already are, so that loads need no checks.
     #[inline(always)]
-    fn lut_pos<const NV: usize>(offsets: &[[i32; 2]; 2], sx: bool, sy: bool) -> [(usize, usize); 4] {
+    fn lut_pos<const NV: usize>(
+        offsets: &[[i32; 2]; 2],
+        sx: bool,
+        sy: bool,
+    ) -> [(usize, usize); 4] {
         [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(bx, by)| {
             let (oy, ox) = lut_at(offsets, sx, sy, bx, by);
             // The left blocks give one vector.
@@ -1290,10 +1267,25 @@ mod rust_simd {
             for i in 0..rows {
                 offsets[0][i] = get_random_number(8, &mut seed[i]);
             }
-            let ystart = if data.overlap_flag && row_num != 0 { cmp::min(2, bh) } else { 0 };
+            let ystart = if data.overlap_flag && row_num != 0 {
+                cmp::min(2, bh)
+            } else {
+                0
+            };
             let xover = data.overlap_flag && bx != 0;
             let pos = lut_pos::<4>(&offsets, false, false);
-            let k = Fgy { src_row, dst_row, bx, bw, lut, pos, hw, lim, lookup, a };
+            let k = Fgy {
+                src_row,
+                dst_row,
+                bx,
+                bw,
+                lut,
+                pos,
+                hw,
+                lim,
+                lookup,
+                a,
+            };
             for y in 0..ystart {
                 const W: [[i16; 2]; 2] = [[27, 17], [17, 27]];
                 let vw = (I16x8::splat(W[y][0]), I16x8::splat(W[y][1]));
@@ -1461,7 +1453,20 @@ mod rust_simd {
             };
             let xover = data.overlap_flag && bx != 0;
             let pos = lut_pos::<NV>(&offsets, SX, SY);
-            let k = Fguv { src_row, dst_row, luma_row, bx, bw, lut, pos, hw, lim, lookup, a, uv };
+            let k = Fguv {
+                src_row,
+                dst_row,
+                luma_row,
+                bx,
+                bw,
+                lut,
+                pos,
+                hw,
+                lim,
+                lookup,
+                a,
+                uv,
+            };
             for y in 0..ystart {
                 const W: [[[i16; 2]; 2]; 2] = [[[27, 17], [17, 27]], [[23, 22], [0; 2]]];
                 let vw = (I16x8::splat(W[sy][y][0]), I16x8::splat(W[sy][y][1]));
@@ -1525,9 +1530,13 @@ mod rust_simd {
         let (luma, src) = (px::<P>(luma.as_bytes()), px::<P>(src.as_bytes()));
         let dst = px_mut::<P>(dst.as_bytes_mut());
         let (lookup, a, uv) = (k.lookup, k.a, k.uv);
-        with_row!(src, luma, dst, (bw, bw << sx, FG_BLOCK_SIZE >> sx), |s, l, d| {
-            apply_uv::<P, L, SX, NV>(s, l, d, &g, lookup, a, uv)
-        });
+        with_row!(
+            src,
+            luma,
+            dst,
+            (bw, bw << sx, FG_BLOCK_SIZE >> sx),
+            |s, l, d| apply_uv::<P, L, SX, NV>(s, l, d, &g, lookup, a, uv)
+        );
     }
 
     /// The 8 bpc AVX2 kernels in the asm's layout: 32 pixels in one register (two rows of
@@ -1539,8 +1548,9 @@ mod rust_simd {
     pub mod avx2_8 {
         use std::arch::x86_64::*;
 
-        use super::*;
         use rav1d_shared::bitdepth::BitDepth8;
+
+        use super::*;
 
         /// The scaling table with four bytes either side, for the gathers, aligned so that no
         /// gathered dword spans two cache lines: clipped pixels gather the last entry in
@@ -1568,7 +1578,11 @@ mod rust_simd {
         impl K {
             #[inline(always)]
             fn new(data: &Rav1dFilmGrainData, max_restricted: u8) -> Self {
-                let (min, max) = if data.clip_to_restricted_range { (16, max_restricted) } else { (0, 255) };
+                let (min, max) = if data.clip_to_restricted_range {
+                    (16, max_restricted)
+                } else {
+                    (0, 255)
+                };
                 unsafe {
                     Self {
                         mul: _mm256_set1_epi16(1 << (15 - data.scaling_shift)),
@@ -1639,8 +1653,14 @@ mod rust_simd {
         fn add_noise(lo: __m256i, hi: __m256i, sc: [__m256i; 2], g: __m256i, k: K) -> __m256i {
             unsafe {
                 let z = _mm256_setzero_si256();
-                let n0 = _mm256_mulhrs_epi16(_mm256_maddubs_epi16(sc[0], _mm256_unpacklo_epi8(g, z)), k.mul);
-                let n1 = _mm256_mulhrs_epi16(_mm256_maddubs_epi16(sc[1], _mm256_unpackhi_epi8(g, z)), k.mul);
+                let n0 = _mm256_mulhrs_epi16(
+                    _mm256_maddubs_epi16(sc[0], _mm256_unpacklo_epi8(g, z)),
+                    k.mul,
+                );
+                let n1 = _mm256_mulhrs_epi16(
+                    _mm256_maddubs_epi16(sc[1], _mm256_unpackhi_epi8(g, z)),
+                    k.mul,
+                );
                 let p = _mm256_packus_epi16(_mm256_add_epi16(lo, n0), _mm256_add_epi16(hi, n1));
                 _mm256_min_epu8(_mm256_max_epu8(p, k.min), k.max)
             }
@@ -1655,7 +1675,13 @@ mod rust_simd {
                     scaling(t, _mm256_unpacklo_epi8(idx, z)),
                     scaling(t, _mm256_unpackhi_epi8(idx, z)),
                 ];
-                add_noise(_mm256_unpacklo_epi8(s, z), _mm256_unpackhi_epi8(s, z), sc, g, k)
+                add_noise(
+                    _mm256_unpacklo_epi8(s, z),
+                    _mm256_unpackhi_epi8(s, z),
+                    sc,
+                    g,
+                    k,
+                )
             }
         }
 
@@ -1676,8 +1702,14 @@ mod rust_simd {
         #[inline(always)]
         fn blend(a: __m256i, b: __m256i, w: __m256i, k: K) -> __m256i {
             unsafe {
-                let lo = _mm256_mulhrs_epi16(_mm256_maddubs_epi16(w, _mm256_unpacklo_epi8(a, b)), k.round5);
-                let hi = _mm256_mulhrs_epi16(_mm256_maddubs_epi16(w, _mm256_unpackhi_epi8(a, b)), k.round5);
+                let lo = _mm256_mulhrs_epi16(
+                    _mm256_maddubs_epi16(w, _mm256_unpacklo_epi8(a, b)),
+                    k.round5,
+                );
+                let hi = _mm256_mulhrs_epi16(
+                    _mm256_maddubs_epi16(w, _mm256_unpackhi_epi8(a, b)),
+                    k.round5,
+                );
                 _mm256_packs_epi16(lo, hi)
             }
         }
@@ -1721,13 +1753,21 @@ mod rust_simd {
             #[inline(always)]
             pub(super) fn new(data: &Rav1dFilmGrainData, row_num: usize) -> Self {
                 let rows = 1 + (data.overlap_flag && row_num > 0) as usize;
-                Self { seed: row_seed(rows, row_num, data), rows, cur: [[0; 2]; 2], overlap: data.overlap_flag }
+                Self {
+                    seed: row_seed(rows, row_num, data),
+                    rows,
+                    cur: [[0; 2]; 2],
+                    overlap: data.overlap_flag,
+                }
             }
 
             /// The positions of the `n` blocks from block `b0` on.
             #[inline(always)]
             pub(super) fn chunk(&mut self, b0: usize, n: usize, sx: bool, sy: bool) -> Chunk {
-                let mut c = Chunk { pos: [[0; 4]; CHUNK], xover0: self.overlap && b0 != 0 };
+                let mut c = Chunk {
+                    pos: [[0; 4]; CHUNK],
+                    xover0: self.overlap && b0 != 0,
+                };
                 let w = FG_BLOCK_SIZE >> sx as usize;
                 for i in 0..n {
                     if self.overlap && b0 + i != 0 {
@@ -1739,7 +1779,8 @@ mod rust_simd {
                     for (k, (bx, by)) in [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().enumerate() {
                         let (oy, ox) = lut_at(&self.cur, sx, sy, bx, by);
                         // Already within the row.
-                        c.pos[i][k] = oy * GRAIN_WIDTH + ox.min(GRAIN_WIDTH - if bx == 0 { w } else { 4 });
+                        c.pos[i][k] =
+                            oy * GRAIN_WIDTH + ox.min(GRAIN_WIDTH - if bx == 0 { w } else { 4 });
                     }
                 }
                 c
@@ -1804,7 +1845,9 @@ mod rust_simd {
             /// The scaling indices of the chroma `s` over the luma `l`.
             #[inline(always)]
             fn uv_idx(&self, l: __m256i, s: __m256i) -> __m256i {
-                let Some((mults, offset)) = self.uv else { return l };
+                let Some((mults, offset)) = self.uv else {
+                    return l;
+                };
                 unsafe {
                     let lo = _mm256_maddubs_epi16(_mm256_unpacklo_epi8(l, s), mults);
                     let hi = _mm256_maddubs_epi16(_mm256_unpackhi_epi8(l, s), mults);
@@ -1859,7 +1902,11 @@ mod rust_simd {
             y: usize,
             wv: __m256i,
         ) {
-            let (mut sc, mut lc, mut dc) = (src.chunks_exact(32), luma.chunks_exact(32), dst.chunks_exact_mut(32));
+            let (mut sc, mut lc, mut dc) = (
+                src.chunks_exact(32),
+                luma.chunks_exact(32),
+                dst.chunks_exact_mut(32),
+            );
             let mut i = 0;
             for ((s32, l32), d32) in (&mut sc).zip(&mut lc).zip(&mut dc) {
                 let xover = if i == 0 { c.xover0 } else { XOVER };
@@ -1892,12 +1939,20 @@ mod rust_simd {
             let [la, lb] = luma;
             let [da, db] = dst;
             let n = sa.len();
-            let it = sa.chunks_exact(16).zip(sb.chunks_exact(16)).zip(la.chunks_exact(32).zip(lb.chunks_exact(32)));
+            let it = sa
+                .chunks_exact(16)
+                .zip(sb.chunks_exact(16))
+                .zip(la.chunks_exact(32).zip(lb.chunks_exact(32)));
             let mut i = 0;
-            for (((sa, sb), (la, lb)), (da, db)) in it.zip(da.chunks_exact_mut(16).zip(db.chunks_exact_mut(16))) {
+            for (((sa, sb), (la, lb)), (da, db)) in
+                it.zip(da.chunks_exact_mut(16).zip(db.chunks_exact_mut(16)))
+            {
                 let xover = if i == 0 { c.xover0 } else { XOVER };
                 let g = s.grain::<16, TOP>(&c.pos[i % CHUNK], xover, y, wv);
-                let l = avg_pairs(load16x2(&la[..16], &lb[..16]), load16x2(&la[16..], &lb[16..]));
+                let l = avg_pairs(
+                    load16x2(&la[..16], &lb[..16]),
+                    load16x2(&la[16..], &lb[16..]),
+                );
                 let sv = load16x2(sa, sb);
                 store16x2(noise_px(sv, s.uv_idx(l, sv), g, s.t, s.k), da, db);
                 i += 1;
@@ -1912,7 +1967,10 @@ mod rust_simd {
                 l[1][..2 * w].copy_from_slice(&lb[2 * x..][..2 * w]);
                 let xover = if i == 0 { c.xover0 } else { XOVER };
                 let g = s.grain::<16, TOP>(&c.pos[i % CHUNK], xover, y, wv);
-                let lv = avg_pairs(load16x2(&l[0][..16], &l[1][..16]), load16x2(&l[0][16..], &l[1][16..]));
+                let lv = avg_pairs(
+                    load16x2(&l[0][..16], &l[1][..16]),
+                    load16x2(&l[0][16..], &l[1][16..]),
+                );
                 let v = load32(&sv);
                 store32(noise_px(v, s.uv_idx(lv, v), g, s.t, s.k), &mut sv);
                 da[x..].copy_from_slice(&sv[..w]);
@@ -1948,7 +2006,11 @@ mod rust_simd {
                 let w = cmp::min(CHUNK * FG_BLOCK_SIZE, pw - x0);
                 for y in 0..bh {
                     let src = at(src_row, y, x0).slice::<BitDepth8>(w);
-                    let luma = if UV { Some(at(luma_row, y, x0).slice::<BitDepth8>(w)) } else { None };
+                    let luma = if UV {
+                        Some(at(luma_row, y, x0).slice::<BitDepth8>(w))
+                    } else {
+                        None
+                    };
                     let luma = luma.as_deref().unwrap_or(&src);
                     let mut dst = at(dst_row, y, x0).slice_mut::<BitDepth8>(w);
                     // SAFETY: AVX2 is checked before the callers are chosen.
@@ -1976,13 +2038,19 @@ mod rust_simd {
         ) {
             let s = Strip {
                 lut,
-                wh: _mm256_broadcastq_epi64(_mm_setr_epi8(27, 17, 17, 27, 0, 32, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0)),
+                wh: _mm256_broadcastq_epi64(_mm_setr_epi8(
+                    27, 17, 17, 27, 0, 32, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0,
+                )),
                 t,
                 k: K::new(data, 235),
                 uv: None,
             };
             let wv = [pairs(27, 17), pairs(17, 27)];
-            let ystart = if data.overlap_flag && row_num != 0 { cmp::min(2, bh) } else { 0 };
+            let ystart = if data.overlap_flag && row_num != 0 {
+                cmp::min(2, bh)
+            } else {
+                0
+            };
             let mut o = Offsets::new(data, row_num);
             if data.overlap_flag {
                 strip32::<false, true>(&s, dst_row, src_row, src_row, pw, bh, ystart, wv, &mut o);
@@ -2020,20 +2088,38 @@ mod rust_simd {
             } else {
                 _mm_setr_epi8(27, 17, 17, 27, 0, 32, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0)
             });
-            let s = Strip { lut, wh, t, k: K::new(data, if is_id { 235 } else { 240 }), uv };
-            let ystart = if data.overlap_flag && row_num != 0 { cmp::min(2 >> sy, bh) } else { 0 };
+            let s = Strip {
+                lut,
+                wh,
+                t,
+                k: K::new(data, if is_id { 235 } else { 240 }),
+                uv,
+            };
+            let ystart = if data.overlap_flag && row_num != 0 {
+                cmp::min(2 >> sy, bh)
+            } else {
+                0
+            };
             let mut o = Offsets::new(data, row_num);
             if !SX {
                 let wv = [pairs(27, 17), pairs(17, 27)];
                 if data.overlap_flag {
-                    strip32::<true, true>(&s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o);
+                    strip32::<true, true>(
+                        &s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o,
+                    );
                 } else {
-                    strip32::<true, false>(&s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o);
+                    strip32::<true, false>(
+                        &s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o,
+                    );
                 }
                 return;
             }
             // The top weights of the first two rows, as a pair in one register.
-            let (a, b) = if SY { (pairs(23, 22), pairs(0, 32)) } else { (pairs(27, 17), pairs(17, 27)) };
+            let (a, b) = if SY {
+                (pairs(23, 22), pairs(0, 32))
+            } else {
+                (pairs(27, 17), pairs(17, 27))
+            };
             let wv = _mm256_blend_epi32::<0xf0>(a, b);
             let nb = pw.div_ceil(16);
             for b0 in (0..nb).step_by(CHUNK) {
@@ -2075,9 +2161,10 @@ mod rust_simd {
     pub mod avx2_16 {
         use std::arch::x86_64::*;
 
+        use rav1d_shared::bitdepth::BitDepth16;
+
         use super::avx2_8::{Chunk, Offsets, CHUNK, LUT_LEN};
         use super::*;
-        use rav1d_shared::bitdepth::BitDepth16;
 
         #[derive(Clone, Copy)]
         struct K {
@@ -2180,7 +2267,10 @@ mod rust_simd {
                 let x = _mm_madd_epi16(_mm_unpacklo_epi16(_mm_cvtsi32_si128(l), g0), w);
                 let x = _mm_srai_epi32::<5>(_mm_add_epi32(x, _mm256_castsi256_si128(k.round5)));
                 let x = _mm_packs_epi32(x, x);
-                let x = _mm_min_epi16(_mm_max_epi16(x, _mm256_castsi256_si128(k.gmin)), _mm256_castsi256_si128(k.gmax));
+                let x = _mm_min_epi16(
+                    _mm_max_epi16(x, _mm256_castsi256_si128(k.gmin)),
+                    _mm256_castsi256_si128(k.gmax),
+                );
                 _mm256_blend_epi32::<0x01>(g, _mm256_castsi128_si256(x))
             }
         }
@@ -2221,7 +2311,11 @@ mod rust_simd {
                 let y = y * GRAIN_WIDTH;
                 let d = if rows { GRAIN_WIDTH } else { 16 };
                 let mut g = [self.lut_get(p[0] + y), self.lut_get(p[0] + y + d)];
-                let mut t = if TOP { [self.lut_get(p[2] + y), self.lut_get(p[2] + y + d)] } else { g };
+                let mut t = if TOP {
+                    [self.lut_get(p[2] + y), self.lut_get(p[2] + y + d)]
+                } else {
+                    g
+                };
                 if xover {
                     g[0] = hblend(self.lut_left(p[1] + y), g[0], self.wh, self.k);
                     if TOP {
@@ -2244,12 +2338,23 @@ mod rust_simd {
             /// The scaling indices of the chroma `s` over the luma `l`.
             #[inline(always)]
             fn uv_idx(&self, l: __m256i, s: __m256i) -> __m256i {
-                let Some((mults, offset)) = self.uv else { return l };
+                let Some((mults, offset)) = self.uv else {
+                    return l;
+                };
                 unsafe {
-                    let lo = _mm256_srai_epi32::<6>(_mm256_madd_epi16(_mm256_unpacklo_epi16(l, s), mults));
-                    let hi = _mm256_srai_epi32::<6>(_mm256_madd_epi16(_mm256_unpackhi_epi16(l, s), mults));
+                    let lo = _mm256_srai_epi32::<6>(_mm256_madd_epi16(
+                        _mm256_unpacklo_epi16(l, s),
+                        mults,
+                    ));
+                    let hi = _mm256_srai_epi32::<6>(_mm256_madd_epi16(
+                        _mm256_unpackhi_epi16(l, s),
+                        mults,
+                    ));
                     let v = _mm256_add_epi16(_mm256_packs_epi32(lo, hi), offset);
-                    _mm256_min_epi16(_mm256_max_epi16(v, _mm256_setzero_si256()), self.k.pixel_max)
+                    _mm256_min_epi16(
+                        _mm256_max_epi16(v, _mm256_setzero_si256()),
+                        self.k.pixel_max,
+                    )
                 }
             }
 
@@ -2261,7 +2366,13 @@ mod rust_simd {
 
             /// One block row of 32 pixels in `s`, `l` and `d`.
             #[inline(always)]
-            fn block32<const UV: bool>(&self, s: &[u16], l: &[u16], d: &mut [u16], g: [__m256i; 2]) {
+            fn block32<const UV: bool>(
+                &self,
+                s: &[u16],
+                l: &[u16],
+                d: &mut [u16],
+                g: [__m256i; 2],
+            ) {
                 for h in 0..2 {
                     let sv = load(&s[16 * h..]);
                     let lv = if UV { load(&l[16 * h..]) } else { sv };
@@ -2282,7 +2393,11 @@ mod rust_simd {
             y: usize,
             wv: __m256i,
         ) {
-            let (mut sc, mut lc, mut dc) = (src.chunks_exact(32), luma.chunks_exact(32), dst.chunks_exact_mut(32));
+            let (mut sc, mut lc, mut dc) = (
+                src.chunks_exact(32),
+                luma.chunks_exact(32),
+                dst.chunks_exact_mut(32),
+            );
             let mut i = 0;
             for ((s32, l32), d32) in (&mut sc).zip(&mut lc).zip(&mut dc) {
                 let xover = if i == 0 { c.xover0 } else { XOVER };
@@ -2334,9 +2449,14 @@ mod rust_simd {
             let [la, lb] = luma;
             let [da, db] = dst;
             let n = sa.len();
-            let it = sa.chunks_exact(16).zip(sb.chunks_exact(16)).zip(la.chunks_exact(32).zip(lb.chunks_exact(32)));
+            let it = sa
+                .chunks_exact(16)
+                .zip(sb.chunks_exact(16))
+                .zip(la.chunks_exact(32).zip(lb.chunks_exact(32)));
             let mut i = 0;
-            for (((sa, sb), (la, lb)), (da, db)) in it.zip(da.chunks_exact_mut(16).zip(db.chunks_exact_mut(16))) {
+            for (((sa, sb), (la, lb)), (da, db)) in
+                it.zip(da.chunks_exact_mut(16).zip(db.chunks_exact_mut(16)))
+            {
                 let xover = if i == 0 { c.xover0 } else { XOVER };
                 let g = s.grain::<16, TOP>(&c.pos[i % CHUNK], xover, y, wv);
                 let (va, vb) = (load(sa), load(sb));
@@ -2390,7 +2510,11 @@ mod rust_simd {
                 let w = cmp::min(CHUNK * FG_BLOCK_SIZE, pw - x0);
                 for y in 0..bh {
                     let src = at(src_row, y, x0).slice::<BitDepth16>(w);
-                    let luma = if UV { Some(at(luma_row, y, x0).slice::<BitDepth16>(w)) } else { None };
+                    let luma = if UV {
+                        Some(at(luma_row, y, x0).slice::<BitDepth16>(w))
+                    } else {
+                        None
+                    };
                     let luma = luma.as_deref().unwrap_or(&src);
                     let mut dst = at(dst_row, y, x0).slice_mut::<BitDepth16>(w);
                     // SAFETY: AVX2 is checked before the callers are chosen.
@@ -2446,12 +2570,20 @@ mod rust_simd {
                     uv: None,
                 };
                 let wv = [dword_pairs(27, 17), dword_pairs(17, 27)];
-                let ystart = if data.overlap_flag && row_num != 0 { cmp::min(2, bh) } else { 0 };
+                let ystart = if data.overlap_flag && row_num != 0 {
+                    cmp::min(2, bh)
+                } else {
+                    0
+                };
                 let mut o = Offsets::new(data, row_num);
                 if data.overlap_flag {
-                    strip32::<false, true>(&s, dst_row, src_row, src_row, pw, bh, ystart, wv, &mut o);
+                    strip32::<false, true>(
+                        &s, dst_row, src_row, src_row, pw, bh, ystart, wv, &mut o,
+                    );
                 } else {
-                    strip32::<false, false>(&s, dst_row, src_row, src_row, pw, bh, ystart, wv, &mut o);
+                    strip32::<false, false>(
+                        &s, dst_row, src_row, src_row, pw, bh, ystart, wv, &mut o,
+                    );
                 }
             })
         }
@@ -2488,15 +2620,29 @@ mod rust_simd {
                 _mm_setr_epi16(27, 17, 17, 27, 0, 32, 0, 32)
             };
             with_table!(scaling, bitdepth_max, |t| {
-                let s = Strip { lut, wh, t, k: K::new(data, if is_id { 235 } else { 240 }, bitdepth_max), uv };
-                let ystart = if data.overlap_flag && row_num != 0 { cmp::min(2 >> sy, bh) } else { 0 };
+                let s = Strip {
+                    lut,
+                    wh,
+                    t,
+                    k: K::new(data, if is_id { 235 } else { 240 }, bitdepth_max),
+                    uv,
+                };
+                let ystart = if data.overlap_flag && row_num != 0 {
+                    cmp::min(2 >> sy, bh)
+                } else {
+                    0
+                };
                 let mut o = Offsets::new(data, row_num);
                 if !SX {
                     let wv = [dword_pairs(27, 17), dword_pairs(17, 27)];
                     if data.overlap_flag {
-                        strip32::<true, true>(&s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o);
+                        strip32::<true, true>(
+                            &s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o,
+                        );
                     } else {
-                        strip32::<true, false>(&s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o);
+                        strip32::<true, false>(
+                            &s, dst_row, src_row, luma_row, pw, bh, ystart, wv, &mut o,
+                        );
                     }
                     return;
                 }
@@ -2655,7 +2801,7 @@ mod rust_simd {
         bitdepth_max: i32,
         dst_row: Rav1dPictureDataComponentOffset,
         src_row: Rav1dPictureDataComponentOffset,
-) {
+    ) {
         let data = &data.clone().into();
         // SAFETY: Casting back to the original type from the `fn` ptr call.
         let scaling: &BD::Scaling = unsafe { &*scaling.cast() };
@@ -2674,7 +2820,17 @@ mod rust_simd {
             let lut = unsafe { &*grain_lut.cast::<GrainLut<i16>>() };
             // SAFETY: AVX2 is checked before `AVX2` is chosen.
             return unsafe {
-                avx2_16::fgy(dst_row, src_row, data, pw, scaling.as_ref(), lut, bh, row_num, bitdepth_max)
+                avx2_16::fgy(
+                    dst_row,
+                    src_row,
+                    data,
+                    pw,
+                    scaling.as_ref(),
+                    lut,
+                    bh,
+                    row_num,
+                    bitdepth_max,
+                )
             };
         }
         with_px!(BD, |P| {
@@ -2785,10 +2941,8 @@ mod rust_simd {
         dst_row: Rav1dPictureDataComponentOffset,
         src_row: Rav1dPictureDataComponentOffset,
         luma_row: Rav1dPictureDataComponentOffset,
-) {
-        let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| {
-            row
-        });
+    ) {
+        let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| row);
         let data = &data.clone().into();
         // SAFETY: Casting back to the original type from the `fn` ptr call.
         let scaling: &BD::Scaling = unsafe { &*scaling.cast() };
@@ -2813,8 +2967,18 @@ mod rust_simd {
             // SAFETY: AVX2 is checked before `AVX2` is chosen.
             return unsafe {
                 avx2_16::fguv::<IS_SX, IS_SY>(
-                    dst_row, src_row, data, pw, scaling.as_ref(), lut, bh, row_num, luma_row,
-                    is_uv, is_id, bitdepth_max,
+                    dst_row,
+                    src_row,
+                    data,
+                    pw,
+                    scaling.as_ref(),
+                    lut,
+                    bh,
+                    row_num,
+                    luma_row,
+                    is_uv,
+                    is_id,
+                    bitdepth_max,
                 )
             };
         }
@@ -2980,7 +3144,11 @@ mod rust_simd {
         let shift = 4 - bitdepth_min_8 + data.grain_scale_shift;
         let ctr = 128 << bitdepth_min_8;
         let (seed, coeffs, dims) = match luma {
-            None => (data.seed, &data.ar_coeffs_y[..], (GRAIN_HEIGHT, GRAIN_WIDTH)),
+            None => (
+                data.seed,
+                &data.ar_coeffs_y[..],
+                (GRAIN_HEIGHT, GRAIN_WIDTH),
+            ),
             Some((_, sx, sy)) => (
                 data.seed ^ if is_uv { 0x49d8 } else { 0xb524 },
                 &data.ar_coeffs_uv[is_uv as usize][..],
@@ -3048,7 +3216,6 @@ mod rust_simd {
         })
     }
 }
-
 
 impl Rav1dFilmGrainDSPContext {
     pub const fn default<BD: BitDepth>() -> Self {
@@ -3120,10 +3287,11 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use super::*;
     use rav1d_shared::align::{Align64, AlignedVec64, ArrayDefault};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+
+    use super::*;
 
     struct Rng(u64);
 
@@ -3152,10 +3320,7 @@ mod tests {
         let flags = rav1d_get_cpu_flags();
         let new = || Rav1dFilmGrainDSPContext::default::<BD>();
         #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
-        let mut c = vec![
-            ("scalar", new()),
-            ("rust simd", new().init::<BD>(flags)),
-        ];
+        let mut c = vec![("scalar", new()), ("rust simd", new().init::<BD>(flags))];
         #[cfg(target_arch = "x86_64")]
         if flags.contains(CpuFlags::AVX2) {
             c.push((
@@ -3329,7 +3494,9 @@ mod tests {
         let dsps = contexts::<BD>();
         // The asm takes aligned LUTs.
         let zero = || -> Box<Align64<GrainLut<BD::Entry>>> {
-            Box::new(Align64(std::array::from_fn(|_| std::array::from_fn(|_| 0.as_::<BD::Entry>()))))
+            Box::new(Align64(std::array::from_fn(|_| {
+                std::array::from_fn(|_| 0.as_::<BD::Entry>())
+            })))
         };
         let dump = |g: &GrainLut<BD::Entry>| -> Vec<i32> {
             g.iter().flatten().map(|&e| e.as_::<i32>()).collect()
@@ -3342,8 +3509,13 @@ mod tests {
             data.ar_coeff_lag = (i % 4) as i32;
             data.grain_scale_shift = (i / 4 % 4) as u8;
             data.ar_coeff_shift = rng.range(6, 9) as u8;
-            data.ar_coeffs_y.iter_mut().for_each(|c| *c = rng.next() as i8);
-            data.ar_coeffs_uv.iter_mut().flatten().for_each(|c| *c = rng.next() as i8);
+            data.ar_coeffs_y
+                .iter_mut()
+                .for_each(|c| *c = rng.next() as i8);
+            data.ar_coeffs_uv
+                .iter_mut()
+                .flatten()
+                .for_each(|c| *c = rng.next() as i8);
             let mut want_y = zero();
             dsps[0].1.generate_grain_y.call(&mut want_y.0, &data, bd);
             let layout = [
@@ -3411,8 +3583,14 @@ mod tests {
             // `FG_BENCH=<context>,<layout index>,<calls>`: only these calls, for perf.
             if let Ok(only) = std::env::var("FG_BENCH") {
                 let f: Vec<&str> = only.split(',').collect();
-                if f[1].parse::<usize>().unwrap() == LAYOUTS.iter().position(|l| l.0 == layout).unwrap() {
-                    let dsp = contexts::<BD>().into_iter().find(|c| c.0 == f[0]).unwrap().1;
+                if f[1].parse::<usize>().unwrap()
+                    == LAYOUTS.iter().position(|l| l.0 == layout).unwrap()
+                {
+                    let dsp = contexts::<BD>()
+                        .into_iter()
+                        .find(|c| c.0 == f[0])
+                        .unwrap()
+                        .1;
                     for _ in 0..f[2].parse::<usize>().unwrap() {
                         call(black_box(&dsp), layout, &c, &dst, &src, &luma, bd);
                     }
@@ -3441,19 +3619,32 @@ mod tests {
         };
         data.ar_coeff_lag = 3;
         data.ar_coeff_shift = 7;
-        data.ar_coeffs_y.iter_mut().for_each(|c| *c = rng.range(-20, 20) as i8);
-        data.ar_coeffs_uv.iter_mut().flatten().for_each(|c| *c = rng.range(-20, 20) as i8);
+        data.ar_coeffs_y
+            .iter_mut()
+            .for_each(|c| *c = rng.range(-20, 20) as i8);
+        data.ar_coeffs_uv
+            .iter_mut()
+            .flatten()
+            .for_each(|c| *c = rng.range(-20, 20) as i8);
         let mut line = format!("{bits:2}-bit grain y + uv420, lag 3:");
         for (name, dsp) in contexts::<BD>() {
             let mut y: Box<Align64<GrainLut<BD::Entry>>> =
-                Box::new(Align64(std::array::from_fn(|_| std::array::from_fn(|_| 0.as_::<BD::Entry>()))));
+                Box::new(Align64(std::array::from_fn(|_| {
+                    std::array::from_fn(|_| 0.as_::<BD::Entry>())
+                })));
             let mut uv = Box::new(Align64(y.0));
             let mut best = f64::MAX;
             for _ in 0..7 {
                 let start = Instant::now();
                 for _ in 0..20 {
                     dsp.generate_grain_y.call(black_box(&mut y.0), &data, bd);
-                    dsp.generate_grain_uv[Rav1dPixelLayoutSubSampled::I420].call(black_box(&mut uv.0), &y.0, &data, false, bd);
+                    dsp.generate_grain_uv[Rav1dPixelLayoutSubSampled::I420].call(
+                        black_box(&mut uv.0),
+                        &y.0,
+                        &data,
+                        false,
+                        bd,
+                    );
                 }
                 best = best.min(start.elapsed().as_secs_f64() * 1e9 / 20.);
             }

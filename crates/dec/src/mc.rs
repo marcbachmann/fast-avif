@@ -1,23 +1,15 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 use std::{cmp, iter, mem, ptr};
 
-use to_method::To;
-
 use rav1d_shared::align::AlignedVec64;
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel};
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel};
-use rav1d_shared::intops::{clip, iclip};
 use rav1d_shared::headers::{Rav1dFilterMode, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::picture::{
-    Rav1dPictureDataComponent,
-    Rav1dPictureDataComponentOffset,
-};
-use crate::internal::{
-    COMPINTER_LEN, EMU_EDGE_LEN, SCRATCH_INTER_INTRA_BUF_LEN, SCRATCH_LAP_LEN, SEG_MASK_LEN,
-};
+use rav1d_shared::intops::{clip, iclip};
 use rav1d_shared::levels::Filter2d;
 use rav1d_shared::pic_or_buf::PicOrBuf;
+use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::tables::{
     DAV1D_MC_SUBPEL_FILTERS, DAV1D_MC_WARP_FILTER, DAV1D_OBMC_MASKS, DAV1D_RESIZE_FILTER,
@@ -25,6 +17,11 @@ use rav1d_shared::tables::{
 };
 use rav1d_shared::with_offset::WithOffset;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use to_method::To;
+
+use crate::internal::{
+    COMPINTER_LEN, EMU_EDGE_LEN, SCRATCH_INTER_INTRA_BUF_LEN, SCRATCH_LAP_LEN, SEG_MASK_LEN,
+};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
 mod rust_simd;
@@ -923,8 +920,7 @@ fn emu_edge_rust<BD: BitDepth>(
     let ref_stride = r#ref.pixel_stride::<BD>();
 
     // find offset in reference of visible block to copy
-    let mut r#ref =
-        r#ref.with_offset() + (clip(y, 0, ih - 1) * ref_stride + clip(x, 0, iw - 1));
+    let mut r#ref = r#ref.with_offset() + (clip(y, 0, ih - 1) * ref_stride + clip(x, 0, iw - 1));
 
     // number of pixels to extend (left, right, top, bottom)
     let left_ext = clip(-x, 0, bw - 1) as usize;
@@ -1041,9 +1037,7 @@ impl mc::Fn {
     ) {
         let bd = bd.into_max();
         // SAFETY: Fallbacks `fn put_{8tpap,bilin}_rust` are safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(w, h, mx, my, bd, dst, src)
-        }
+        unsafe { self.get()(w, h, mx, my, bd, dst, src) }
     }
 }
 
@@ -1074,9 +1068,7 @@ impl mc_scaled::Fn {
     ) {
         let bd = bd.into_max();
         // SAFETY: Fallbacks `fn put_{8tpap,bilin}_scaled_rust` are safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(w, h, mx, my, dx, dy, bd, dst, src)
-        }
+        unsafe { self.get()(w, h, mx, my, dx, dy, bd, dst, src) }
     }
 }
 
@@ -1101,9 +1093,7 @@ impl warp8x8::Fn {
     ) {
         let bd = bd.into_max();
         // SAFETY: Fallback `fn prep_c_rust` is safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(abcd, mx, my, bd, dst, src)
-        }
+        unsafe { self.get()(abcd, mx, my, bd, dst, src) }
     }
 }
 
@@ -1190,9 +1180,7 @@ impl warp8x8t::Fn {
     ) {
         let bd = bd.into_max();
         // SAFETY: Fallback `fn warp_affine_8x8t_rust` is safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(tmp, tmp_stride, abcd, mx, my, bd, src)
-        }
+        unsafe { self.get()(tmp, tmp_stride, abcd, mx, my, bd, src) }
     }
 }
 
@@ -1378,9 +1366,7 @@ impl emu_edge::Fn {
         let dst = dst.as_mut_ptr().cast();
         let dst_stride = (dst_pxstride * mem::size_of::<BD::Pixel>()) as isize;
         // SAFETY: Fallback `fn emu_edge_rust` is safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(bw, bh, iw, ih, x, y, dst, dst_stride, src)
-        }
+        unsafe { self.get()(bw, bh, iw, ih, x, y, dst, dst_stride, src) }
     }
 }
 
@@ -1413,9 +1399,7 @@ impl resize::Fn {
         let bd = bd.into_max();
         let dst = dst.as_ref();
         // SAFETY: Fallback `fn resize_rust` is safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(dst_w, h, src_w, dx, mx, bd, src, dst)
-        }
+        unsafe { self.get()(dst_w, h, src_w, dx, mx, bd, src, dst) }
     }
 }
 

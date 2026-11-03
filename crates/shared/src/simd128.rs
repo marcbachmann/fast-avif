@@ -457,7 +457,10 @@ pub fn sum_u8<const N: usize>(b: &[u8]) -> u32 {
         };
         let mut s = _mm_sad_epu8(s, z);
         for i in 1..N / 16 {
-            s = _mm_add_epi32(s, _mm_sad_epu8(_mm_loadu_si128(b[16 * i..].as_ptr().cast()), z));
+            s = _mm_add_epi32(
+                s,
+                _mm_sad_epu8(_mm_loadu_si128(b[16 * i..].as_ptr().cast()), z),
+            );
         }
         if N >= 16 {
             s = _mm_add_epi32(s, _mm_unpackhi_epi64(s, s));
@@ -2653,7 +2656,9 @@ mod imp {
         /// `(b[2 * i] + b[2 * i + 1] + 1) >> 1` of `b[..16]`.
         #[inline(always)]
         pub fn avg_pairs_u8(b: &[u8]) -> Self {
-            Self(s(unsafe { vrshrq_n_u16::<1>(vpaddlq_u8(vld1q_u8(b[..16].as_ptr()))) }))
+            Self(s(unsafe {
+                vrshrq_n_u16::<1>(vpaddlq_u8(vld1q_u8(b[..16].as_ptr())))
+            }))
         }
 
         /// Little-endian lanes from `b[..16]`.
@@ -3646,8 +3651,8 @@ mod imp {
         #[inline(always)]
         pub fn avg_pairs_u8(b: &[u8]) -> Self {
             let v = u8x16(
-                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
-                b[14], b[15],
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12],
+                b[13], b[14], b[15],
             );
             Self(u16x8_avgr(u16x8_extadd_pairwise_u8x16(v), u16x8_splat(0)))
         }

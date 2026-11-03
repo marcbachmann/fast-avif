@@ -10,44 +10,42 @@ use std::cmp;
 use std::ops::Range;
 use std::sync::Once;
 
-use strum::EnumCount;
-
 use rav1d_shared::align::AlignedVec64;
+use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
 use rav1d_shared::cdf::{rav1d_cdf_thread_copy, rav1d_cdf_thread_init_static, CdfContext};
 use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
 use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use crate::contexts::{self, scan_rc};
-use crate::dist;
-use crate::ec::Writer;
-use crate::fdct_fast;
-use crate::palette;
-use crate::partition_cnn::{Cnn, Prune};
-use crate::quant;
-use crate::header::{obu, BitWriter, Frame, Sequence, OBU_FRAME, OBU_SEQUENCE_HEADER};
-use crate::rd::{lambda, CoefCosts, Counter, Sink};
 use rav1d_shared::enum_map::DefaultValue;
-use rav1d_shared::env::{gather_left_partition_prob, gather_top_partition_prob, get_dc_sign_ctx, get_skip_ctx};
-use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
+use rav1d_shared::env::{
+    gather_left_partition_prob, gather_top_partition_prob, get_dc_sign_ctx, get_skip_ctx,
+};
 use rav1d_shared::headers::{Rav1dPixelLayout, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::picture::Rav1dPictureDataComponent;
 use rav1d_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
 use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN};
 use rav1d_shared::ipred_prepare::rav1d_prepare_intra_edges;
 use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
 use rav1d_shared::levels::{
-    BlockLevel, BlockPartition, BlockSize, TxClass, TxfmSize, TxfmType, CFL_PRED, DCT_DCT,
-    DC_PRED, FILTER_PRED, HOR_DOWN_PRED, HOR_PRED, HOR_UP_PRED, IDTX, N_INTRA_PRED_MODES,
-    N_UV_INTRA_PRED_MODES, PAETH_PRED, SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, VERT_LEFT_PRED, VERT_PRED,
-    VERT_RIGHT_PRED, WHT_WHT,
+    BlockLevel, BlockPartition, BlockSize, TxClass, TxfmSize, TxfmType, CFL_PRED, DCT_DCT, DC_PRED,
+    FILTER_PRED, HOR_DOWN_PRED, HOR_PRED, HOR_UP_PRED, IDTX, N_INTRA_PRED_MODES,
+    N_UV_INTRA_PRED_MODES, PAETH_PRED, SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, VERT_LEFT_PRED,
+    VERT_PRED, VERT_RIGHT_PRED, WHT_WHT,
 };
+use rav1d_shared::picture::Rav1dPictureDataComponent;
 use rav1d_shared::qm::DAV1D_QM_TBL;
 use rav1d_shared::tables::{
     TxfmInfo, CFL_ALLOWED_MASK, DAV1D_AL_PART_CTX, DAV1D_BLOCK_SIZES, DAV1D_FILTER_MODE_TO_Y_MODE,
-    DAV1D_INTRA_MODE_CONTEXT, DAV1D_MAX_TXFM_SIZE_FOR_BS,
-    DAV1D_PARTITION_TYPE_COUNT, DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE,
-    DAV1D_TX_TYPES_PER_SET, DAV1D_TX_TYPE_CLASS,
+    DAV1D_INTRA_MODE_CONTEXT, DAV1D_MAX_TXFM_SIZE_FOR_BS, DAV1D_PARTITION_TYPE_COUNT,
+    DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE, DAV1D_TX_TYPES_PER_SET, DAV1D_TX_TYPE_CLASS,
 };
+use strum::EnumCount;
+
+use crate::contexts::{self, scan_rc};
+use crate::ec::Writer;
+use crate::header::{obu, BitWriter, Frame, Sequence, OBU_FRAME, OBU_SEQUENCE_HEADER};
+use crate::partition_cnn::{Cnn, Prune};
+use crate::rd::{lambda, CoefCosts, Counter, Sink};
+use crate::{dist, fdct_fast, palette, quant};
 
 type BD = BitDepth8;
 
@@ -93,19 +91,35 @@ impl Plane {
     }
 
     fn row(&self, y: usize, x: usize, n: usize) -> Vec<u8> {
-        self.comp.slice::<BD, _>((y * self.stride + x.., ..n)).to_vec()
+        self.comp
+            .slice::<BD, _>((y * self.stride + x.., ..n))
+            .to_vec()
     }
 
     fn read(&self, x: usize, y: usize, w: usize, h: usize, out: &mut Vec<u8>) {
         let at = out.len();
         out.resize(at + w * h, 0);
         let len = (h - 1) * self.stride + w;
-        copy_rect(&mut out[at..], w, &self.comp.slice::<BD, _>((y * self.stride + x.., ..len)), self.stride, w, h);
+        copy_rect(
+            &mut out[at..],
+            w,
+            &self.comp.slice::<BD, _>((y * self.stride + x.., ..len)),
+            self.stride,
+            w,
+            h,
+        );
     }
 
     fn write(&self, x: usize, y: usize, w: usize, h: usize, data: &[u8]) {
         let len = (h - 1) * self.stride + w;
-        copy_rect(&mut self.comp.slice_mut::<BD, _>((y * self.stride + x.., ..len)), self.stride, data, w, w, h);
+        copy_rect(
+            &mut self.comp.slice_mut::<BD, _>((y * self.stride + x.., ..len)),
+            self.stride,
+            data,
+            w,
+            w,
+            h,
+        );
     }
 }
 
@@ -156,7 +170,11 @@ impl Ctx {
     /// The units in `r`, at most 16 (and their 8×8 partition units), to be put back by `restore`.
     fn save(&self, r: Range<usize>) -> Saved {
         let p = r.start / 2..r.end.div_ceil(2);
-        let mut s = Saved { n: r.len(), np: p.len(), ..Saved::default() };
+        let mut s = Saved {
+            n: r.len(),
+            np: p.len(),
+            ..Saved::default()
+        };
         let a = r.start;
         s.mode.copy_from_slice(&self.mode[a..][..16]);
         s.uvmode.copy_from_slice(&self.uvmode[a..][..16]);
@@ -174,7 +192,10 @@ impl Ctx {
 
     /// The coefficient contexts of the units in `r`, at most 16.
     fn save_coef(&self, r: Range<usize>) -> Saved {
-        let mut s = Saved { n: r.len(), ..Saved::default() };
+        let mut s = Saved {
+            n: r.len(),
+            ..Saved::default()
+        };
         s.lcoef.copy_from_slice(&self.lcoef[r.start..][..16]);
         s.ccoef[0].copy_from_slice(&self.ccoef[0][r.start..][..16]);
         s.ccoef[1].copy_from_slice(&self.ccoef[1][r.start..][..16]);
@@ -327,7 +348,13 @@ pub trait Decide {
 
     /// A transform type from `set` (ignored when `set` is empty and the type is fixed) and its
     /// levels, or `None` to have them chosen by rate and distortion.
-    fn residual(&mut self, _plane: usize, _tx: TxfmSize, _set: &[TxfmType], _levels: &mut [i32]) -> Option<TxfmType> {
+    fn residual(
+        &mut self,
+        _plane: usize,
+        _tx: TxfmSize,
+        _set: &[TxfmType],
+        _levels: &mut [i32],
+    ) -> Option<TxfmType> {
         None
     }
 }
@@ -349,7 +376,13 @@ impl Decide for Skip {
         (Intra::default(), 0)
     }
 
-    fn residual(&mut self, _: usize, _: TxfmSize, set: &[TxfmType], levels: &mut [i32]) -> Option<TxfmType> {
+    fn residual(
+        &mut self,
+        _: usize,
+        _: TxfmSize,
+        set: &[TxfmType],
+        levels: &mut [i32],
+    ) -> Option<TxfmType> {
         levels.fill(0);
         Some(set.first().copied().unwrap_or(DCT_DCT))
     }
@@ -620,7 +653,9 @@ pub fn ssim_reference(width: usize, height: usize, luma: &[u8]) -> f64 {
     for r in 0..rows {
         for c in 0..cols {
             let (x0, y0) = (c * 16, r * 16);
-            let px = |x: usize, y: usize| luma[cmp::min(y0 + y, height - 1) * width + cmp::min(x0 + x, width - 1)] as u32;
+            let px = |x: usize, y: usize| {
+                luma[cmp::min(y0 + y, height - 1) * width + cmp::min(x0 + x, width - 1)] as u32
+            };
             log += ssim_factor(&px, cmp::min(2, w8 - 2 * c), cmp::min(2, h8 - 2 * r)).ln();
         }
     }
@@ -780,7 +815,8 @@ impl<D: Decide> Encoder<D> {
         let q = |qidx: i32| DAV1D_DQ_TBL[0][qidx as usize][1] as f64 / 4.0;
         let target_q = q(base) / ratio;
         let target = (1..255).find(|&i| q(i) >= target_q).unwrap_or(255);
-        let boost = (((base as f64 + 544.0) * (base - target) as f64 / 1279.0).round() as i32).min(80);
+        let boost =
+            (((base as f64 + 544.0) * (base - target) as f64 / 1279.0).round() as i32).min(80);
         cmp::max(base - boost, 1) as u8
     }
 
@@ -797,7 +833,9 @@ impl<D: Decide> Encoder<D> {
             let (x0, y0) = (bx as usize * 4, (by - y) as usize * 4);
             let mut block = [0u8; 256];
             for r in 0..rows * 8 {
-                let row = src.comp.slice::<BD, _>(((y0 + r) * src.stride + x0.., ..cols * 8));
+                let row = src
+                    .comp
+                    .slice::<BD, _>(((y0 + r) * src.stride + x0.., ..cols * 8));
                 block[r * 16..][..cols * 8].copy_from_slice(&row);
             }
             *s = ssim_factor(&|c, r| block[r * 16 + c] as u32, cols, rows) / reference;
@@ -811,7 +849,10 @@ impl<D: Decide> Encoder<D> {
         }
         let (cols, rows) = ((self.bw + 3) >> 2, (self.bh + 3) >> 2);
         let (c0, r0) = (x >> 2, y >> 2);
-        let (c1, r1) = (cmp::min(cols, c0 + (w4 as i32 + 3) / 4), cmp::min(rows, r0 + (h4 as i32 + 3) / 4));
+        let (c1, r1) = (
+            cmp::min(cols, c0 + (w4 as i32 + 3) / 4),
+            cmp::min(rows, r0 + (h4 as i32 + 3) / 4),
+        );
         let (mut log, mut n) = (0.0, 0.0);
         for r in r0..r1 {
             for c in c0..c1 {
@@ -827,7 +868,11 @@ impl<D: Decide> Encoder<D> {
         let clip = |d: i8| (qidx as i32 + d as i32).clamp(0, 255) as usize;
         let tbl = &DAV1D_DQ_TBL[0];
         let u = [tbl[clip(q.u_dc)][0] as u32, tbl[clip(q.u_ac)][1] as u32];
-        self.dq = [[tbl[clip(q.y_dc)][0] as u32, tbl[qidx as usize][1] as u32], u, u];
+        self.dq = [
+            [tbl[clip(q.y_dc)][0] as u32, tbl[qidx as usize][1] as u32],
+            u,
+            u,
+        ];
         self.lambda = lambda(qidx, self.iq);
     }
 
@@ -836,7 +881,9 @@ impl<D: Decide> Encoder<D> {
         let w = self.seq.width as usize;
         let y = self.rows % SB;
         for (p, plane) in self.src.iter().enumerate() {
-            let mut dst = plane.comp.slice_mut::<BD, _>((y * plane.stride.., ..plane.stride));
+            let mut dst = plane
+                .comp
+                .slice_mut::<BD, _>((y * plane.stride.., ..plane.stride));
             dst[..w].copy_from_slice(&row[p][..w]);
             let last = dst[w - 1];
             dst[w..].fill(last);
@@ -879,13 +926,13 @@ impl<D: Decide> Encoder<D> {
     pub fn bytes(&self) -> Vec<u8> {
         let mut tile_data = Vec::new();
         let n = self.coded.len();
-        let size_bytes = self
-            .coded
-            .iter()
-            .take(n - 1)
-            .map(|t| (t.len() as u64).max(1))
-            .max()
-            .map_or(1, |m| (64 - (m - 1).leading_zeros()).div_ceil(8).max(1)) as u8;
+        let size_bytes =
+            self.coded
+                .iter()
+                .take(n - 1)
+                .map(|t| (t.len() as u64).max(1))
+                .max()
+                .map_or(1, |m| (64 - (m - 1).leading_zeros()).div_ceil(8).max(1)) as u8;
         let mut w = BitWriter::default();
         self.frame.write(&self.seq, size_bytes, &mut w);
         w.align();
@@ -950,7 +997,11 @@ impl<D: Decide> Encoder<D> {
                         target = Some(want);
                         delta_steps(1 << log2, last, want)
                     } else {
-                        let want = if self.decide.searches() { last } else { self.decide.qidx(x, y, last) };
+                        let want = if self.decide.searches() {
+                            last
+                        } else {
+                            self.decide.qidx(x, y, last)
+                        };
                         (want as i32 - last as i32) >> log2
                     };
                     qidx = (last as i32 + (delta << log2)).clamp(1, 255) as u8;
@@ -999,7 +1050,11 @@ impl<D: Decide> Encoder<D> {
 
     fn finish_tiles(&mut self) {
         for (ti, tile) in self.tiles.drain(..).enumerate() {
-            self.coded.push(if self.own >> ti & 1 != 0 { tile.w.finish() } else { Vec::new() });
+            self.coded.push(if self.own >> ti & 1 != 0 {
+                tile.w.finish()
+            } else {
+                Vec::new()
+            });
         }
     }
 
@@ -1038,7 +1093,8 @@ impl<D: Decide> Encoder<D> {
 
     fn partition_ctx(&self, bl: BlockLevel, x: i32, y: i32) -> usize {
         let has_bl = |v: u8| (v >> (4 - bl as u8)) & 1;
-        (has_bl(self.above.partition[(x >> 1) as usize]) + 2 * has_bl(self.left.partition[((y & 15) >> 1) as usize])) as usize
+        (has_bl(self.above.partition[(x >> 1) as usize])
+            + 2 * has_bl(self.left.partition[((y & 15) >> 1) as usize])) as usize
     }
 
     fn halves(&self, bl: BlockLevel, x: i32, y: i32) -> Option<Halves> {
@@ -1051,7 +1107,14 @@ impl<D: Decide> Encoder<D> {
         }
     }
 
-    fn write_partition<S: Sink>(s: &mut S, cdf: &mut CdfContext, bl: BlockLevel, ctx: usize, halves: Halves, bp: BlockPartition) {
+    fn write_partition<S: Sink>(
+        s: &mut S,
+        cdf: &mut CdfContext,
+        bl: BlockLevel,
+        ctx: usize,
+        halves: Halves,
+        bp: BlockPartition,
+    ) {
         let pc = &mut cdf.m.partition[bl as usize][ctx];
         match halves {
             Halves::Both => {
@@ -1061,11 +1124,17 @@ impl<D: Decide> Encoder<D> {
             }
             Halves::Top => {
                 assert!(matches!(bp, BlockPartition::Split | BlockPartition::H));
-                s.bool(bp == BlockPartition::Split, gather_top_partition_prob(pc, bl));
+                s.bool(
+                    bp == BlockPartition::Split,
+                    gather_top_partition_prob(pc, bl),
+                );
             }
             Halves::Left => {
                 assert!(matches!(bp, BlockPartition::Split | BlockPartition::V));
-                s.bool(bp == BlockPartition::Split, gather_left_partition_prob(pc, bl));
+                s.bool(
+                    bp == BlockPartition::Split,
+                    gather_left_partition_prob(pc, bl),
+                );
             }
         }
     }
@@ -1154,7 +1223,8 @@ impl<D: Decide> Encoder<D> {
             Split => {
                 let next = bl.decrease().unwrap();
                 let edge = edges.branch(false, edge_index).split;
-                let mut sub = |e: &mut Self, x: i32, y: i32, i: usize| split(e, ti, next, x, y, edge[i]);
+                let mut sub =
+                    |e: &mut Self, x: i32, y: i32, i: usize| split(e, ti, next, x, y, edge[i]);
                 sub(self, x, y, 0);
                 if have_h_split {
                     sub(self, x + hsz, y, 1);
@@ -1219,15 +1289,27 @@ impl<D: Decide> Encoder<D> {
         let b_dim = bs.dimensions();
         let (bw4, bh4) = (b_dim[0] as i32, b_dim[1] as i32);
         let lossless = self.frame.quant.lossless();
-        let max_tx = if lossless { TxfmSize::S4x4 } else { DAV1D_MAX_TXFM_SIZE_FOR_BS[bs as usize][0] };
+        let max_tx = if lossless {
+            TxfmSize::S4x4
+        } else {
+            DAV1D_MAX_TXFM_SIZE_FOR_BS[bs as usize][0]
+        };
         let max_dim = &DAV1D_TXFM_DIMENSIONS[max_tx as usize];
         let limits = Limits {
             angles: b_dim[2] + b_dim[3] >= 2,
-            cfl: if lossless { bw4 == 1 && bh4 == 1 } else { CFL_ALLOWED_MASK & (1 << bs as u8) != 0 },
+            cfl: if lossless {
+                bw4 == 1 && bh4 == 1
+            } else {
+                CFL_ALLOWED_MASK & (1 << bs as u8) != 0
+            },
             filter: cmp::max(b_dim[2], b_dim[3]) <= 3 && self.seq.filter_intra,
             chroma: self.planes > 1,
             palette: self.frame.screen_content && cmp::max(bw4, bh4) <= 16 && bw4 + bh4 >= 4,
-            max_depth: if self.frame.tx_select && !lossless { cmp::min(max_dim.max, 2) } else { 0 },
+            max_depth: if self.frame.tx_select && !lossless {
+                cmp::min(max_dim.max, 2)
+            } else {
+                0
+            },
         };
         (limits, max_tx)
     }
@@ -1244,7 +1326,14 @@ impl<D: Decide> Encoder<D> {
     }
 
     /// Codes one block: predicts and reconstructs it, then writes it, or counts it when dry.
-    fn code_b(&mut self, ti: usize, bs: BlockSize, x: i32, y: i32, edge_flags: EdgeFlags) -> Vec<TxDone> {
+    fn code_b(
+        &mut self,
+        ti: usize,
+        bs: BlockSize,
+        x: i32,
+        y: i32,
+        edge_flags: EdgeFlags,
+    ) -> Vec<TxDone> {
         let b_dim = bs.dimensions();
         self.block_lambda(x, y, b_dim[0] as usize, b_dim[1] as usize);
         let (limits, max_tx) = self.limits(bs);
@@ -1300,10 +1389,24 @@ impl<D: Decide> Encoder<D> {
             bh: self.bh,
         };
         if self.dry {
-            b.write(&mut self.counter, &mut self.cost_cdf, &mut self.above, &mut self.left, &txs, &self.pal_map);
+            b.write(
+                &mut self.counter,
+                &mut self.cost_cdf,
+                &mut self.above,
+                &mut self.left,
+                &txs,
+                &self.pal_map,
+            );
         } else {
             let tile = &mut self.tiles[ti];
-            b.write(&mut tile.w, &mut tile.cdf, &mut self.above, &mut self.left, &txs, &self.pal_map);
+            b.write(
+                &mut tile.w,
+                &mut tile.cdf,
+                &mut self.above,
+                &mut self.left,
+                &txs,
+                &self.pal_map,
+            );
             if b.delta.is_some() {
                 tile.last_qidx = self.sb_qidx;
             }
@@ -1353,7 +1456,9 @@ impl<D: Decide> Encoder<D> {
             if pal {
                 self.predict_palette(false, x, y, w4, h4, bw4, bh4, intra);
             }
-            self.predict_plane(ti, bs, 0, x, y, w4, h4, tx, intra, edge_flags, flags, !pal, &mut txs);
+            self.predict_plane(
+                ti, bs, 0, x, y, w4, h4, tx, intra, edge_flags, flags, !pal, &mut txs,
+            );
         }
         if planes.contains(&1) {
             if intra.pal_sz[1] > 0 {
@@ -1364,8 +1469,11 @@ impl<D: Decide> Encoder<D> {
             }
             let flags = self.sm_uv_flag(ax, ly) | edge_filter;
             for p in 1..3 {
-                let predict = !(intra.uv_mode == CFL_PRED && intra.cfl[p - 1] != 0) && intra.pal_sz[1] == 0;
-                self.predict_plane(ti, bs, p, x, y, w4, h4, uvtx, intra, edge_flags, flags, predict, &mut txs);
+                let predict =
+                    !(intra.uv_mode == CFL_PRED && intra.cfl[p - 1] != 0) && intra.pal_sz[1] == 0;
+                self.predict_plane(
+                    ti, bs, p, x, y, w4, h4, uvtx, intra, edge_flags, flags, predict, &mut txs,
+                );
                 if self.stopped {
                     break;
                 }
@@ -1380,8 +1488,23 @@ impl<D: Decide> Encoder<D> {
     /// the indexes; past the visible `w4`×`h4` they repeat the last column and row, as
     /// `read_pal_indices` fills them.
     #[allow(clippy::too_many_arguments)]
-    fn predict_palette(&mut self, chroma: bool, x: i32, y: i32, w4: i32, h4: i32, bw4: i32, bh4: i32, intra: &Intra) {
-        let (w, h, bw, bh) = (w4 as usize * 4, h4 as usize * 4, bw4 as usize * 4, bh4 as usize * 4);
+    fn predict_palette(
+        &mut self,
+        chroma: bool,
+        x: i32,
+        y: i32,
+        w4: i32,
+        h4: i32,
+        bw4: i32,
+        bh4: i32,
+        intra: &Intra,
+    ) {
+        let (w, h, bw, bh) = (
+            w4 as usize * 4,
+            h4 as usize * 4,
+            bw4 as usize * 4,
+            bh4 as usize * 4,
+        );
         let (x0, wy) = (x as usize * 4, (y as usize * 4) % SB);
         let n = intra.pal_sz[chroma as usize] as usize;
         let mut map = std::mem::take(&mut self.pal_map[chroma as usize]);
@@ -1392,13 +1515,19 @@ impl<D: Decide> Encoder<D> {
         } else {
             map.resize(bw * bh, 0);
             self.palette_map(chroma, x0, wy, w, h, bw, bh, n, intra, &mut map);
-            self.pal_kept.push(PalKept { key, map: map.clone(), bits: None });
+            self.pal_kept.push(PalKept {
+                key,
+                map: map.clone(),
+                bits: None,
+            });
         }
         let planes = if chroma { 1..3 } else { 0..1 };
         for p in planes {
             let rec = &self.rec[p];
             for r in 0..bh {
-                let mut dst = rec.comp.slice_mut::<BD, _>(((wy + r) * rec.stride + x0.., ..bw));
+                let mut dst = rec
+                    .comp
+                    .slice_mut::<BD, _>(((wy + r) * rec.stride + x0.., ..bw));
                 for c in 0..bw {
                     dst[c] = intra.pal[p][map[r * bw + c] as usize];
                 }
@@ -1408,28 +1537,63 @@ impl<D: Decide> Encoder<D> {
     }
 
     /// The bits of a block's palette indexes in `pal_map`, counted once per palette.
-    fn palette_bits(&mut self, chroma: bool, x: i32, y: i32, bw4: i32, bh4: i32, vw: usize, vh: usize, intra: &Intra) -> u32 {
+    fn palette_bits(
+        &mut self,
+        chroma: bool,
+        x: i32,
+        y: i32,
+        bw4: i32,
+        bh4: i32,
+        vw: usize,
+        vh: usize,
+        intra: &Intra,
+    ) -> u32 {
         let key = pal_key(chroma, x, y, bw4, bh4, intra);
-        let at = self.pal_kept.iter().position(|k| k.key == key).expect("the palette was predicted");
+        let at = self
+            .pal_kept
+            .iter()
+            .position(|k| k.key == key)
+            .expect("the palette was predicted");
         if let Some(bits) = self.pal_kept[at].bits {
             return bits;
         }
         let n = intra.pal_sz[chroma as usize];
         let mut c = Counter::default();
-        palette::write_indices(&mut c, &mut self.cost_cdf.m.color_map[chroma as usize][n as usize - 2], &self.pal_kept[at].map, bw4 as usize * 4, vw, vh, n);
+        palette::write_indices(
+            &mut c,
+            &mut self.cost_cdf.m.color_map[chroma as usize][n as usize - 2],
+            &self.pal_kept[at].map,
+            bw4 as usize * 4,
+            vw,
+            vh,
+            n,
+        );
         self.pal_kept[at].bits = Some(c.bits);
         c.bits
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn palette_map(&self, chroma: bool, x0: usize, wy: usize, w: usize, h: usize, bw: usize, bh: usize, n: usize, intra: &Intra, map: &mut [u8]) {
+    fn palette_map(
+        &self,
+        chroma: bool,
+        x0: usize,
+        wy: usize,
+        w: usize,
+        h: usize,
+        bw: usize,
+        bh: usize,
+        n: usize,
+        intra: &Intra,
+        map: &mut [u8],
+    ) {
         for r in 0..h {
             let at = (wy + r) * self.src[0].stride + x0;
             if chroma {
                 let u = self.src[1].comp.slice::<BD, _>((at.., ..w));
                 let v = self.src[2].comp.slice::<BD, _>((at.., ..w));
                 for c in 0..w {
-                    map[r * bw + c] = palette::nearest2(&intra.pal[1][..n], &intra.pal[2][..n], (u[c], v[c]));
+                    map[r * bw + c] =
+                        palette::nearest2(&intra.pal[1][..n], &intra.pal[2][..n], (u[c], v[c]));
                 }
             } else {
                 let px = self.src[0].comp.slice::<BD, _>((at.., ..w));
@@ -1454,11 +1618,24 @@ impl<D: Decide> Encoder<D> {
     }
 
     fn top_edge(&self, plane: usize, py: i32) -> Option<(&DisjointMut<AlignedVec64<u8>>, isize)> {
-        (py * 4 % SB as i32 == 0 && py > 0).then_some((&self.edge, (plane * self.edge_stride) as isize))
+        (py * 4 % SB as i32 == 0 && py > 0)
+            .then_some((&self.edge, (plane * self.edge_stride) as isize))
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn predict_cfl(&mut self, ti: usize, x: i32, y: i32, w4: i32, h4: i32, bw4: i32, bh4: i32, tx: TxfmSize, uvtx: TxfmSize, intra: &Intra) {
+    fn predict_cfl(
+        &mut self,
+        ti: usize,
+        x: i32,
+        y: i32,
+        w4: i32,
+        h4: i32,
+        bw4: i32,
+        bh4: i32,
+        tx: TxfmSize,
+        uvtx: TxfmSize,
+        intra: &Intra,
+    ) {
         let ac = self.cfl_ac(x, y, w4, h4, bw4, bh4, tx);
         for pl in 0..2 {
             if intra.cfl[pl] == 0 {
@@ -1491,7 +1668,16 @@ impl<D: Decide> Encoder<D> {
 
     /// One chroma plane predicted from its DC and `alpha` times `ac`; 0 is the DC prediction.
     #[allow(clippy::too_many_arguments)]
-    fn predict_cfl_plane(&mut self, ti: usize, x: i32, y: i32, uvtx: TxfmSize, ac: &Ac, pl: usize, alpha: i8) {
+    fn predict_cfl_plane(
+        &mut self,
+        ti: usize,
+        x: i32,
+        y: i32,
+        uvtx: TxfmSize,
+        ac: &Ac,
+        pl: usize,
+        alpha: i8,
+    ) {
         let uv_dim = &DAV1D_TXFM_DIMENSIONS[uvtx as usize];
         let tile = &self.tiles[ti];
         let wy = (y as usize * 4) % SB;
@@ -1553,7 +1739,8 @@ impl<D: Decide> Encoder<D> {
         let t_dim = &DAV1D_TXFM_DIMENSIONS[tx as usize];
         let (tw, th) = (t_dim.w as i32, t_dim.h as i32);
         let tile = &self.tiles[ti];
-        let (col_start, col_end, row_start, row_end) = (tile.col_start, tile.col_end, tile.row_start, tile.row_end);
+        let (col_start, col_end, row_start, row_end) =
+            (tile.col_start, tile.col_end, tile.row_start, tile.row_end);
         let sb_has_tr = intra_edge_flags.contains(EdgeFlags::I444_TOP_HAS_RIGHT);
         let sb_has_bl = intra_edge_flags.contains(EdgeFlags::I444_LEFT_HAS_BOTTOM);
         let mode = if plane == 0 {
@@ -1563,8 +1750,15 @@ impl<D: Decide> Encoder<D> {
         } else {
             intra.uv_mode
         };
-        let angle0 = if plane == 0 { intra.y_angle } else { intra.uv_angle } as i32;
-        let coded_txtp = !lossless && self.frame.quant.base != 0 && plane == 0 && t_dim.max < TxfmSize::S32x32 as u8;
+        let angle0 = if plane == 0 {
+            intra.y_angle
+        } else {
+            intra.uv_angle
+        } as i32;
+        let coded_txtp = !lossless
+            && self.frame.quant.base != 0
+            && plane == 0
+            && t_dim.max < TxfmSize::S32x32 as u8;
         let set: &[TxfmType] = if !coded_txtp {
             &[]
         } else if self.frame.reduced_tx_set || t_dim.min == TxfmSize::S16x16 as u8 {
@@ -1588,8 +1782,10 @@ impl<D: Decide> Encoder<D> {
                 if predict {
                     let rec = &self.rec[plane];
                     let dst = rec.comp.with_offset() + (wy * rec.stride + px as usize * 4);
-                    let edge = EdgeFlags::I444_TOP_HAS_RIGHT.select(!((y > 0 || !sb_has_tr) && x + tw >= w4))
-                        | EdgeFlags::I444_LEFT_HAS_BOTTOM.select(!(x > 0 || (!sb_has_bl && y + th >= h4)));
+                    let edge = EdgeFlags::I444_TOP_HAS_RIGHT
+                        .select(!((y > 0 || !sb_has_tr) && x + tw >= w4))
+                        | EdgeFlags::I444_LEFT_HAS_BOTTOM
+                            .select(!(x > 0 || (!sb_has_bl && y + th >= h4)));
                     let mut topleft = EdgePx([0; EDGE_LEN]);
                     let mut angle = angle0;
                     let m = rav1d_prepare_intra_edges(
@@ -1636,7 +1832,9 @@ impl<D: Decide> Encoder<D> {
                     known_eob = Some(-1);
                     Some(fixed_txtp)
                 } else if let Some(replay) = self.replay.as_mut() {
-                    let t = replay.pop().expect("a replayed residual per transform block");
+                    let t = replay
+                        .pop()
+                        .expect("a replayed residual per transform block");
                     debug_assert!(t.plane == plane && t.tx == tx && (t.x4, t.y4) == (px, py));
                     if t.eob >= 0 {
                         levels.copy_from_slice(&t.coefs.levels);
@@ -1663,12 +1861,20 @@ impl<D: Decide> Encoder<D> {
                         t
                     }
                     None => {
-                        let all = if set.is_empty() { std::slice::from_ref(&fixed_txtp) } else { set };
+                        let all = if set.is_empty() {
+                            std::slice::from_ref(&fixed_txtp)
+                        } else {
+                            set
+                        };
                         let mut reduced = [DCT_DCT; 7];
                         let cands = if self.dct_only && !set.is_empty() {
                             &all[1..2]
                         } else if self.reduced_txtp && set.len() == 7 {
-                            let y_mode = if intra.y_mode == FILTER_PRED { DAV1D_FILTER_MODE_TO_Y_MODE[intra.y_angle as usize] } else { intra.y_mode };
+                            let y_mode = if intra.y_mode == FILTER_PRED {
+                                DAV1D_FILTER_MODE_TO_Y_MODE[intra.y_angle as usize]
+                            } else {
+                                intra.y_mode
+                            };
                             let used = REDUCED_INTRA_TXTP[y_mode as usize];
                             let mut k = 0;
                             for &t in set.iter().filter(|&&t| used >> t as u8 & 1 != 0) {
@@ -1679,7 +1885,8 @@ impl<D: Decide> Encoder<D> {
                         } else {
                             all
                         };
-                        let (txtp, eob) = self.rd_residual(bs, plane, px, py, tx, cands, intra, levels);
+                        let (txtp, eob) =
+                            self.rd_residual(bs, plane, px, py, tx, cands, intra, levels);
                         known_eob = Some(eob);
                         txtp
                     }
@@ -1688,15 +1895,25 @@ impl<D: Decide> Encoder<D> {
                 if eob >= 0 && self.recon_ready {
                     let rec = &self.rec[plane];
                     for r in 0..ph {
-                        let row = self.scratch.comp.slice::<BD, _>((r * self.scratch.stride.., ..pw));
-                        rec.comp.slice_mut::<BD, _>(((wy + r) * rec.stride + px as usize * 4.., ..pw)).copy_from_slice(&row);
+                        let row = self
+                            .scratch
+                            .comp
+                            .slice::<BD, _>((r * self.scratch.stride.., ..pw));
+                        rec.comp
+                            .slice_mut::<BD, _>(((wy + r) * rec.stride + px as usize * 4.., ..pw))
+                            .copy_from_slice(&row);
                     }
                 } else if eob >= 0 {
                     let mut b = self.bufs.take().unwrap();
                     self.dequant(plane, tx, txtp, levels, &mut b.cf.0[..n], n);
                     let rec = &self.rec[plane];
                     let dst = rec.comp.with_offset() + (wy * rec.stride + px as usize * 4);
-                    self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut b.cf.0[..n], eob, BD::new(()));
+                    self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(
+                        dst,
+                        &mut b.cf.0[..n],
+                        eob,
+                        BD::new(()),
+                    );
                     self.bufs = Some(b);
                 }
                 let v = res_ctx(levels, eob);
@@ -1716,7 +1933,15 @@ impl<D: Decide> Encoder<D> {
                 let ch = cmp::min(th, self.bh - py) as usize;
                 a[px as usize..][..cw].fill(v);
                 l[(py & 15) as usize..][..ch].fill(v);
-                out.push(TxDone { plane, x4: px, y4: py, tx, coefs: Coefs { txtp, levels }, eob, bits: self.residual_bits });
+                out.push(TxDone {
+                    plane,
+                    x4: px,
+                    y4: py,
+                    tx,
+                    coefs: Coefs { txtp, levels },
+                    eob,
+                    bits: self.residual_bits,
+                });
                 if let Some(limit) = self.limit {
                     self.spent.0 += self.residual_dist;
                     self.spent.1 += self.residual_bits.unwrap_or(0);
@@ -1740,21 +1965,62 @@ impl<D: Decide> Encoder<D> {
         let n = cmp::min(pw, 32) * cmp::min(ph, 32);
         let (x0, wy) = (x as usize * 4, (y as usize * 4) % SB);
         let mut b = self.bufs.take().unwrap();
-        let Bufs { residual, coefs, trial, .. } = &mut *b;
+        let Bufs {
+            residual,
+            coefs,
+            trial,
+            ..
+        } = &mut *b;
         let (src, rec) = (&self.src[0], &self.rec[0]);
         let (at, len) = (wy * src.stride + x0, (ph - 1) * src.stride + pw);
-        dist::residual(residual, &src.comp.slice::<BD, _>((at.., ..len)), src.stride, &rec.comp.slice::<BD, _>((at.., ..len)), rec.stride, pw, ph);
+        dist::residual(
+            residual,
+            &src.comp.slice::<BD, _>((at.., ..len)),
+            src.stride,
+            &rec.comp.slice::<BD, _>((at.., ..len)),
+            rec.stride,
+            pw,
+            ph,
+        );
         fdct_fast::forward(&residual[..pw * ph], pw, &mut coefs[..n], tx, DCT_DCT);
         let qm = self.qm[tx as usize][0];
         let shift = cmp::max(0, t_dim.ctx as i32 - 2) as u32;
-        let (eob, err, _) = quant::quantize(&coefs[..n], &mut trial[..n], self.dq[0], qm, shift, 48, scan_index(tx, TxClass::TwoD));
+        let (eob, err, _) = quant::quantize(
+            &coefs[..n],
+            &mut trial[..n],
+            self.dq[0],
+            qm,
+            shift,
+            48,
+            scan_index(tx, TxClass::TwoD),
+        );
         let (ax, ly) = (x as usize, (y & 15) as usize);
         let (mut a, mut l) = ([0x40u8; 48], [0x40u8; 48]);
         a[..16].copy_from_slice(&self.above.lcoef[ax..][..16]);
         l[..16].copy_from_slice(&self.left.lcoef[ly..][..16]);
         let mut c = Counter::default();
         let (qidx, reduced) = (self.frame.quant.base, self.frame.reduced_tx_set);
-        write_coefs(&mut c, &mut self.cost_cdf, Some(&self.coef_costs), &mut a, &mut l, 0, 0, 0, tx, bs, DCT_DCT, &trial[..n], eob, intra, false, qidx, reduced, i32::MAX, i32::MAX);
+        write_coefs(
+            &mut c,
+            &mut self.cost_cdf,
+            Some(&self.coef_costs),
+            &mut a,
+            &mut l,
+            0,
+            0,
+            0,
+            tx,
+            bs,
+            DCT_DCT,
+            &trial[..n],
+            eob,
+            intra,
+            false,
+            qidx,
+            reduced,
+            i32::MAX,
+            i32::MAX,
+        );
         self.bufs = Some(b);
         err as f64 / 64.0 + self.lambda * c.bits as f64 / 512.0
     }
@@ -1778,7 +2044,10 @@ impl<D: Decide> Encoder<D> {
     fn var4_of(&self, x: i32, y: i32) -> [i64; 256] {
         let mut out = [-1; 256];
         let w = cmp::min(64, (self.seq.width as usize).saturating_sub(x as usize * 4)) & !3;
-        let h = cmp::min(64, (self.seq.height as usize).saturating_sub(y as usize * 4)) & !3;
+        let h = cmp::min(
+            64,
+            (self.seq.height as usize).saturating_sub(y as usize * 4),
+        ) & !3;
         if w == 0 || h == 0 {
             return out;
         }
@@ -1812,13 +2081,18 @@ impl<D: Decide> Encoder<D> {
     fn block_variance(&self, x: i32, y: i32, n4: usize) -> u64 {
         let x0 = x as usize * 4;
         let w = cmp::min(n4 * 4, (self.seq.width as usize).saturating_sub(x0));
-        let h = cmp::min(n4 * 4, (self.seq.height as usize).saturating_sub(y as usize * 4));
+        let h = cmp::min(
+            n4 * 4,
+            (self.seq.height as usize).saturating_sub(y as usize * 4),
+        );
         if w == 0 || h == 0 {
             return 0;
         }
         let px = self.source(0, x, y, w, h);
         let n = (w * h) as u64;
-        let (sum, sse) = px.iter().fold((0u64, 0u64), |(s, q), &p| (s + p as u64, q + (p as u64) * (p as u64)));
+        let (sum, sse) = px.iter().fold((0u64, 0u64), |(s, q), &p| {
+            (s + p as u64, q + (p as u64) * (p as u64))
+        });
         (sse * n - sum * sum) / (n * n)
     }
 
@@ -1841,16 +2115,40 @@ impl<D: Decide> Encoder<D> {
         let wy = (py as usize * 4) % SB;
         let x0 = px as usize * 4;
         let vw = cmp::min(pw, (self.seq.width as usize).saturating_sub(x0));
-        let vh = cmp::min(ph, (self.seq.height as usize).saturating_sub(py as usize * 4));
+        let vh = cmp::min(
+            ph,
+            (self.seq.height as usize).saturating_sub(py as usize * 4),
+        );
         let n = levels.len();
         self.stats[self.stage][0] += 1;
         self.stats[self.stage][1] += (n * cands.len()) as u64;
         let mut b = self.bufs.take().unwrap();
-        let Bufs { src, pred, residual, coefs, trial, cf } = &mut *b;
+        let Bufs {
+            src,
+            pred,
+            residual,
+            coefs,
+            trial,
+            cf,
+        } = &mut *b;
         let stride = self.src[plane].stride;
         let (at, len) = (wy * stride + x0, (ph - 1) * stride + pw);
-        copy_rect(src, pw, &self.src[plane].comp.slice::<BD, _>((at.., ..len)), stride, pw, ph);
-        copy_rect(pred, pw, &self.rec[plane].comp.slice::<BD, _>((at.., ..len)), stride, pw, ph);
+        copy_rect(
+            src,
+            pw,
+            &self.src[plane].comp.slice::<BD, _>((at.., ..len)),
+            stride,
+            pw,
+            ph,
+        );
+        copy_rect(
+            pred,
+            pw,
+            &self.rec[plane].comp.slice::<BD, _>((at.., ..len)),
+            stride,
+            pw,
+            ph,
+        );
         dist::residual(residual, src, pw, pred, pw, pw, ph);
         let block = bs.dimensions();
         self.skip_predicted = plane == 0
@@ -1876,24 +2174,69 @@ impl<D: Decide> Encoder<D> {
         let rate = |e: &mut Self, txtp: TxfmType, lv: &[i32], eob: i32| -> u32 {
             let (mut a, mut l) = (a0, l0);
             let mut c = Counter::default();
-            write_coefs(&mut c, &mut e.cost_cdf, Some(&e.coef_costs), &mut a, &mut l, plane, 0, 0, tx, bs, txtp, lv, eob, intra, lossless, e.frame.quant.base, e.frame.reduced_tx_set, i32::MAX, i32::MAX);
+            write_coefs(
+                &mut c,
+                &mut e.cost_cdf,
+                Some(&e.coef_costs),
+                &mut a,
+                &mut l,
+                plane,
+                0,
+                0,
+                tx,
+                bs,
+                txtp,
+                lv,
+                eob,
+                intra,
+                lossless,
+                e.frame.quant.base,
+                e.frame.reduced_tx_set,
+                i32::MAX,
+                i32::MAX,
+            );
             c.bits
         };
         let zero_rate = rate(self, cands[0], &[], -1);
         self.residual_bits = Some(zero_rate);
-        let zero_dist = if lossless { 0 } else { sse(&src[..], &pred[..], pw) };
+        let zero_dist = if lossless {
+            0
+        } else {
+            sse(&src[..], &pred[..], pw)
+        };
         self.residual_dist = zero_dist;
-        let zero = if lossless { f64::MAX } else { zero_dist as f64 + self.lambda * zero_rate as f64 / 512.0 };
+        let zero = if lossless {
+            f64::MAX
+        } else {
+            zero_dist as f64 + self.lambda * zero_rate as f64 / 512.0
+        };
         let mut best = (zero, cands[0], -1);
         levels.fill(0);
         let shift = cmp::max(0, t_dim.ctx as i32 - 2) as u32;
-        if self.tx_domain_dist && cands.len() > 1 && self.rdoq == 0 && !lossless && (vw, vh) == (pw, ph) {
+        if self.tx_domain_dist
+            && cands.len() > 1
+            && self.rdoq == 0
+            && !lossless
+            && (vw, vh) == (pw, ph)
+        {
             let mut winner: Option<(f64, TxfmType, i32, u32, usize)> = None;
             let mut columns = fdct_fast::Columns::new();
             for &txtp in cands {
                 columns.forward(&residual[..pw * ph], pw, &mut coefs[..n], tx, txtp);
-                let qm = if txtp < IDTX { self.qm[tx as usize][plane] } else { None };
-                let (eob, err, last) = quant::quantize(&coefs[..n], &mut trial[..n], self.dq[plane], qm, shift, 48, scan_index(tx, DAV1D_TX_TYPE_CLASS[txtp as usize]));
+                let qm = if txtp < IDTX {
+                    self.qm[tx as usize][plane]
+                } else {
+                    None
+                };
+                let (eob, err, last) = quant::quantize(
+                    &coefs[..n],
+                    &mut trial[..n],
+                    self.dq[plane],
+                    qm,
+                    shift,
+                    48,
+                    scan_index(tx, DAV1D_TX_TYPE_CLASS[txtp as usize]),
+                );
                 if eob < 0 {
                     continue;
                 }
@@ -1915,8 +2258,17 @@ impl<D: Decide> Encoder<D> {
                 self.dequant(plane, tx, txtp, levels, &mut cf.0[..n], last);
                 self.scratch.write(0, 0, pw, ph, &pred[..pw * ph]);
                 let dst = self.scratch.comp.with_offset();
-                self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut cf.0[..n], eob, BD::new(()));
-                let dist = sse(&src[..], &self.scratch.comp.slice::<BD, _>((0.., ..SB * SB)), SB);
+                self.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(
+                    dst,
+                    &mut cf.0[..n],
+                    eob,
+                    BD::new(()),
+                );
+                let dist = sse(
+                    &src[..],
+                    &self.scratch.comp.slice::<BD, _>((0.., ..SB * SB)),
+                    SB,
+                );
                 if dist as f64 + self.lambda * bits as f64 / 512.0 < zero {
                     self.recon_ready = true;
                     self.residual_bits = Some(bits);
@@ -1933,15 +2285,32 @@ impl<D: Decide> Encoder<D> {
         let mut columns = fdct_fast::Columns::new();
         for &txtp in cands {
             columns.forward(&residual[..pw * ph], pw, &mut coefs[..n], tx, txtp);
-            let qm = if txtp < IDTX { self.qm[tx as usize][plane] } else { None };
+            let qm = if txtp < IDTX {
+                self.qm[tx as usize][plane]
+            } else {
+                None
+            };
             let index = scan_index(tx, DAV1D_TX_TYPE_CLASS[txtp as usize]);
-            let (eob, _, used) = quant::quantize(&coefs[..n], &mut trial[..n], self.dq[plane], qm, shift, if lossless { 64 } else { 48 }, index);
+            let (eob, _, used) = quant::quantize(
+                &coefs[..n],
+                &mut trial[..n],
+                self.dq[plane],
+                qm,
+                shift,
+                if lossless { 64 } else { 48 },
+                index,
+            );
             if eob < 0 {
                 continue;
             }
             let mut eob = eob;
             let mut bits = if self.cuts.est_rate > 0.0 && cands.len() == 1 && self.rdoq == 0 {
-                trial[..n].iter().filter(|&&v| v != 0).map(|&v| self.cuts.est_rate + 2.0 * (v.unsigned_abs() as f32).log2()).sum::<f32>() as u32 * 512
+                trial[..n]
+                    .iter()
+                    .filter(|&&v| v != 0)
+                    .map(|&v| self.cuts.est_rate + 2.0 * (v.unsigned_abs() as f32).log2())
+                    .sum::<f32>() as u32
+                    * 512
             } else {
                 rate(self, txtp, &trial[..n], eob)
             };
@@ -1949,13 +2318,26 @@ impl<D: Decide> Encoder<D> {
                 e.dequant(plane, tx, txtp, lv, &mut cf.0[..n], used);
                 e.scratch.write(0, 0, pw, ph, &pred[..pw * ph]);
                 let dst = e.scratch.comp.with_offset();
-                e.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(dst, &mut cf.0[..n], eob, BD::new(()));
-                sse(&src[..], &e.scratch.comp.slice::<BD, _>((0.., ..SB * SB)), SB)
+                e.dsp.itx.itxfm_add[tx as usize][txtp as usize].call::<BD>(
+                    dst,
+                    &mut cf.0[..n],
+                    eob,
+                    BD::new(()),
+                );
+                sse(
+                    &src[..],
+                    &e.scratch.comp.slice::<BD, _>((0.., ..SB * SB)),
+                    SB,
+                )
             };
             let mut dist = reconstruct(self, &trial[..n], eob, cf);
             last = Some(txtp);
             if self.rdoq > 0 && !self.dct_only && !lossless {
-                let qm = if txtp < IDTX { self.qm[tx as usize][plane] } else { None };
+                let qm = if txtp < IDTX {
+                    self.qm[tx as usize][plane]
+                } else {
+                    None
+                };
                 let dqp = self.dq[plane];
                 let step = |rc: usize| {
                     let q = dqp[(rc != 0) as usize];
@@ -1980,9 +2362,18 @@ impl<D: Decide> Encoder<D> {
                             tried += 1;
                             let lower = l - l.signum();
                             trial[rc] = lower;
-                            let new_eob = if lower == 0 && i == eob { eob_of(tx, txtp, &trial[..n]) } else { eob };
-                            let new_bits = if new_eob < 0 { u32::MAX } else { rate(self, txtp, &trial[..n], new_eob) };
-                            let delta = k * (err(rc, lower) - err(rc, l)) + self.lambda * (new_bits as f64 - bits as f64) / 512.0;
+                            let new_eob = if lower == 0 && i == eob {
+                                eob_of(tx, txtp, &trial[..n])
+                            } else {
+                                eob
+                            };
+                            let new_bits = if new_eob < 0 {
+                                u32::MAX
+                            } else {
+                                rate(self, txtp, &trial[..n], new_eob)
+                            };
+                            let delta = k * (err(rc, lower) - err(rc, l))
+                                + self.lambda * (new_bits as f64 - bits as f64) / 512.0;
                             if new_eob >= 0 && delta < 0.0 {
                                 bits = new_bits;
                                 eob = new_eob;
@@ -2012,10 +2403,22 @@ impl<D: Decide> Encoder<D> {
     }
 
     /// `levels` beyond the `last` in raster order are 0 and leave 0 in `cf`.
-    fn dequant(&self, plane: usize, tx: TxfmSize, txtp: TxfmType, levels: &[i32], cf: &mut [i16], last: usize) {
+    fn dequant(
+        &self,
+        plane: usize,
+        tx: TxfmSize,
+        txtp: TxfmType,
+        levels: &[i32],
+        cf: &mut [i16],
+        last: usize,
+    ) {
         let t_dim = &DAV1D_TXFM_DIMENSIONS[tx as usize];
         let shift = cmp::max(0, t_dim.ctx as i32 - 2) as u32;
-        let qm = if txtp < IDTX { self.qm[tx as usize][plane] } else { None };
+        let qm = if txtp < IDTX {
+            self.qm[tx as usize][plane]
+        } else {
+            None
+        };
         let m = last.next_multiple_of(8).min(levels.len());
         quant::dequantize(&levels[..m], &mut cf[..m], self.dq[plane], qm, shift);
         cf[m..].fill(0);
@@ -2025,7 +2428,10 @@ impl<D: Decide> Encoder<D> {
     fn sse(&self, x: i32, y: i32, w4: usize, h4: usize, planes: Range<usize>) -> u64 {
         let x0 = x as usize * 4;
         let w = cmp::min(w4 * 4, (self.seq.width as usize).saturating_sub(x0));
-        let h = cmp::min(h4 * 4, (self.seq.height as usize).saturating_sub(y as usize * 4));
+        let h = cmp::min(
+            h4 * 4,
+            (self.seq.height as usize).saturating_sub(y as usize * 4),
+        );
         let wy = (y as usize * 4) % SB;
         if w == 0 || h == 0 {
             return 0;
@@ -2033,8 +2439,12 @@ impl<D: Decide> Encoder<D> {
         let mut total = 0;
         for p in planes {
             let (src, rec) = (&self.src[p], &self.rec[p]);
-            let a = src.comp.slice::<BD, _>((wy * src.stride + x0.., ..(h - 1) * src.stride + w));
-            let b = rec.comp.slice::<BD, _>((wy * rec.stride + x0.., ..(h - 1) * rec.stride + w));
+            let a = src
+                .comp
+                .slice::<BD, _>((wy * src.stride + x0.., ..(h - 1) * src.stride + w));
+            let b = rec
+                .comp
+                .slice::<BD, _>((wy * rec.stride + x0.., ..(h - 1) * rec.stride + w));
             total += dist::sse(&a, src.stride, &b, rec.stride, w, h);
         }
         total
@@ -2056,14 +2466,24 @@ impl<D: Decide> Encoder<D> {
     fn satd_plane(&self, plane: usize, x: i32, y: i32, w4: usize, h4: usize) -> u64 {
         let x0 = x as usize * 4;
         let w = cmp::min(w4 * 4, (self.seq.width as usize).saturating_sub(x0)).next_multiple_of(4);
-        let h = cmp::min(h4 * 4, (self.seq.height as usize).saturating_sub(y as usize * 4)).next_multiple_of(4);
+        let h = cmp::min(
+            h4 * 4,
+            (self.seq.height as usize).saturating_sub(y as usize * 4),
+        )
+        .next_multiple_of(4);
         if w == 0 || h == 0 {
             return 0;
         }
         let (src, rec) = (&self.src[plane], &self.rec[plane]);
         let at = (y as usize * 4) % SB * src.stride + x0;
         let len = (h - 1) * src.stride + w;
-        dist::satd(&src.comp.slice::<BD, _>((at.., ..len)), &rec.comp.slice::<BD, _>((at.., ..len)), src.stride, w, h)
+        dist::satd(
+            &src.comp.slice::<BD, _>((at.., ..len)),
+            &rec.comp.slice::<BD, _>((at.., ..len)),
+            src.stride,
+            w,
+            h,
+        )
     }
 
     fn snap(&self, x: i32, y: i32, w4: usize, h4: usize) -> Snap {
@@ -2072,7 +2492,10 @@ impl<D: Decide> Encoder<D> {
         for p in &self.rec {
             p.read(x as usize * 4, wy, w4 * 4, h4 * 4, &mut pixels);
         }
-        Snap { pixels, ..self.snap_contexts(x, y, w4, h4) }
+        Snap {
+            pixels,
+            ..self.snap_contexts(x, y, w4, h4)
+        }
     }
 
     fn snap_contexts(&self, x: i32, y: i32, w4: usize, h4: usize) -> Snap {
@@ -2092,7 +2515,13 @@ impl<D: Decide> Encoder<D> {
         let wy = (s.y as usize * 4) % SB;
         let n = s.w4 * s.h4 * 16;
         for (i, p) in self.rec.iter().enumerate() {
-            p.write(s.x as usize * 4, wy, s.w4 * 4, s.h4 * 4, &s.pixels[i * n..][..n]);
+            p.write(
+                s.x as usize * 4,
+                wy,
+                s.w4 * 4,
+                s.h4 * 4,
+                &s.pixels[i * n..][..n],
+            );
         }
         self.restore_contexts(s);
     }
@@ -2127,7 +2556,8 @@ impl<D: Decide> Encoder<D> {
         let s = self.snap_contexts(x, y, 16, 16);
         self.dry = true;
         self.counter = Counter::default();
-        self.cnn = (self.cnn_prune != 0 && x + 16 <= self.bw && y + 16 <= self.bh).then(|| Box::new(self.cnn_of(x)));
+        self.cnn = (self.cnn_prune != 0 && x + 16 <= self.bw && y + 16 <= self.bh)
+            .then(|| Box::new(self.cnn_of(x)));
         if self.graphic_guard {
             self.var4 = self.var4_of(x, y);
         }
@@ -2161,7 +2591,13 @@ impl<D: Decide> Encoder<D> {
     fn pick_partition(&mut self, ti: usize, bl: BlockLevel, x: i32, y: i32, edge_index: EdgeIndex) {
         let edges = &IntraEdges::DEFAULT;
         let Some(halves) = self.halves(bl, x, y) else {
-            return self.pick_partition(ti, bl.decrease().unwrap(), x, y, edges.branch(false, edge_index).split[0]);
+            return self.pick_partition(
+                ti,
+                bl.decrease().unwrap(),
+                x,
+                y,
+                edges.branch(false, edge_index).split[0],
+            );
         };
         let n4 = 32 >> bl as u8;
         self.block_lambda(x, y, n4, n4);
@@ -2181,36 +2617,67 @@ impl<D: Decide> Encoder<D> {
         let split_allowed = level + 1 < self.levels.end;
         let none_allowed = !(level < self.levels.start && split_allowed);
         let cnn = match &self.cnn {
-            Some(cnn) if halves == Halves::Both && level < 4 && x + n4 as i32 <= self.bw && y + n4 as i32 <= self.bh => {
+            Some(cnn)
+                if halves == Halves::Both
+                    && level < 4
+                    && x + n4 as i32 <= self.bw
+                    && y + n4 as i32 <= self.bh =>
+            {
                 let (bx, by) = ((x & 15) as usize / n4, (y & 15) as usize / n4);
-                cnn.prune(level as usize, bx, by, self.cnn_prune, self.seq.width, self.seq.height)
+                cnn.prune(
+                    level as usize,
+                    bx,
+                    by,
+                    self.cnn_prune,
+                    self.seq.width,
+                    self.seq.height,
+                )
             }
             _ => Prune::default(),
         };
         let mut graphic = Option::None;
         let mut is_graphic = |e: &Self| *graphic.get_or_insert_with(|| e.graphic_block(x, y, n4));
-        let cnn = if self.graphic_guard && (cnn.none || cnn.split || cnn.rect) && is_graphic(self) { Prune::default() } else { cnn };
+        let cnn = if self.graphic_guard && (cnn.none || cnn.split || cnn.rect) && is_graphic(self) {
+            Prune::default()
+        } else {
+            cnn
+        };
         // The best candidate's pixels and contexts are snapped only when a later candidate is
         // about to overwrite them; a best left in place needs neither the snap nor the restore.
         let mut best: Option<(f64, u32, Option<Snap>, Vec<Node>)> = Option::None;
         let mut dirty = false;
         let (mut none_cost, mut split_cost) = (f64::INFINITY, f64::INFINITY);
         let mut rect_under = false;
-        let split8 = self.split8_adaptive && level == 2 && halves == Halves::Both && none_allowed && split_allowed;
+        let split8 = self.split8_adaptive
+            && level == 2
+            && halves == Halves::Both
+            && none_allowed
+            && split_allowed;
         // The block's own activity picks the counters it learns from: a flat region teaches
         // nothing about the edges and textures beside it.
-        let bucket = if split8 || (self.rect_adaptive || self.graphic_guard) && self.rect_ratio > 0.0 { self.activity_bucket(x, y, n4) } else { 0 };
+        let bucket =
+            if split8 || (self.rect_adaptive || self.graphic_guard) && self.rect_ratio > 0.0 {
+                self.activity_bucket(x, y, n4)
+            } else {
+                0
+            };
         let prune8 = split8 && {
             let seen = &mut self.split_seen[ti][bucket];
             seen.0 += 1;
             let (met, tried, gained, total, big) = *seen;
             tried >= 32 && gained <= total * 0.05 && big * 4 <= tried && met % 16 != 0
         };
-        let decided = (self.cuts.var_split > 0.0 && halves == Halves::Both && none_allowed && split_allowed).then(|| {
-            let step = self.dq[0][1] as f32 / 8.0;
-            let variance = self.block_variance(x, y, n4) as f32 / (step * step);
-            (variance <= self.cuts.var_split).then_some(false).or((variance > self.cuts.var_split.max(self.cuts.var_keep)).then_some(true))
-        }).flatten();
+        let decided =
+            (self.cuts.var_split > 0.0 && halves == Halves::Both && none_allowed && split_allowed)
+                .then(|| {
+                    let step = self.dq[0][1] as f32 / 8.0;
+                    let variance = self.block_variance(x, y, n4) as f32 / (step * step);
+                    (variance <= self.cuts.var_split)
+                        .then_some(false)
+                        .or((variance > self.cuts.var_split.max(self.cuts.var_keep))
+                            .then_some(true))
+                })
+                .flatten();
         for &bp in cands {
             if let Some(split) = decided {
                 if bp != if split { Split } else { None } {
@@ -2230,7 +2697,9 @@ impl<D: Decide> Encoder<D> {
                 }
             }
             if matches!(bp, H | V) && halves == Halves::Both && self.rect >= 2 {
-                if let Some([Node::Part(None), Node::Block(intra, ..), ..]) = best.as_ref().map(|b| b.3.as_slice()) {
+                if let Some([Node::Part(None), Node::Block(intra, ..), ..]) =
+                    best.as_ref().map(|b| b.3.as_slice())
+                {
                     let along = match bp {
                         V => matches!(intra.y_mode, VERT_PRED | VERT_LEFT_PRED | VERT_RIGHT_PRED),
                         _ => matches!(intra.y_mode, HOR_PRED | HOR_DOWN_PRED | HOR_UP_PRED),
@@ -2242,7 +2711,12 @@ impl<D: Decide> Encoder<D> {
             }
             if matches!(bp, H | V) && halves == Halves::Both && self.rect >= 1 {
                 // A drawn block takes the full search's learnt prune at its ratio instead.
-                let (ratio, adaptive) = if self.graphic_guard && !self.rect_adaptive && is_graphic(self) { (0.9, true) } else { (self.rect_ratio, self.rect_adaptive) };
+                let (ratio, adaptive) =
+                    if self.graphic_guard && !self.rect_adaptive && is_graphic(self) {
+                        (0.9, true)
+                    } else {
+                        (self.rect_ratio, self.rect_adaptive)
+                    };
                 if split_cost < ratio * none_cost {
                     if !adaptive {
                         continue;
@@ -2261,7 +2735,12 @@ impl<D: Decide> Encoder<D> {
                     }
                 }
             }
-            if bp != None && self.prune > 0.0 && best.as_ref().is_some_and(|b| b.0 < self.prune * self.lambda * (n4 * n4) as f64) {
+            if bp != None
+                && self.prune > 0.0
+                && best
+                    .as_ref()
+                    .is_some_and(|b| b.0 < self.prune * self.lambda * (n4 * n4) as f64)
+            {
                 break;
             }
             if dirty {
@@ -2370,7 +2849,14 @@ impl<D: Decide> Encoder<D> {
         }
     }
 
-    fn pick_block_timed(&mut self, ti: usize, bs: BlockSize, x: i32, y: i32, edge_flags: EdgeFlags) {
+    fn pick_block_timed(
+        &mut self,
+        ti: usize,
+        bs: BlockSize,
+        x: i32,
+        y: i32,
+        edge_flags: EdgeFlags,
+    ) {
         self.pal_kept.clear();
         let b_dim = bs.dimensions();
         let (w4, h4) = (b_dim[0] as usize, b_dim[1] as usize);
@@ -2380,37 +2866,70 @@ impl<D: Decide> Encoder<D> {
         let (ax, ly) = (x as usize, (y & 15) as usize);
         let lossless = self.frame.quant.lossless();
         let tx_select = self.frame.tx_select && !lossless;
-        let (vw, vh) = ((cmp::min(w4 as i32, self.bw - x) * 4) as usize, (cmp::min(h4 as i32, self.bh - y) * 4) as usize);
+        let (vw, vh) = (
+            (cmp::min(w4 as i32, self.bw - x) * 4) as usize,
+            (cmp::min(h4 as i32, self.bh - y) * 4) as usize,
+        );
         let mode_bits = |e: &mut Self, intra: &Intra, depth: u8| -> u32 {
             let mut c = Counter::default();
-            write_luma_modes(&mut c, &mut e.cost_cdf, &e.above, &e.left, ax, ly, intra, &limits);
+            write_luma_modes(
+                &mut c,
+                &mut e.cost_cdf,
+                &e.above,
+                &e.left,
+                ax,
+                ly,
+                intra,
+                &limits,
+            );
             if limits.palette {
-                write_pal_y(&mut c, &mut e.cost_cdf, &e.above, &e.left, ax, ly, bs, intra);
+                write_pal_y(
+                    &mut c,
+                    &mut e.cost_cdf,
+                    &e.above,
+                    &e.left,
+                    ax,
+                    ly,
+                    bs,
+                    intra,
+                );
             }
             write_filter(&mut c, &mut e.cost_cdf, bs, intra, &limits);
             if intra.pal_sz[0] > 0 {
                 c.bits += e.palette_bits(false, x, y, w4 as i32, h4 as i32, vw, vh, intra);
             }
-            write_depth(&mut c, &mut e.cost_cdf, &e.above, &e.left, ax, ly, depth, max_tx, tx_select);
+            write_depth(
+                &mut c,
+                &mut e.cost_cdf,
+                &e.above,
+                &e.left,
+                ax,
+                ly,
+                depth,
+                max_tx,
+                tx_select,
+            );
             c.bits
         };
 
-        let luma = |e: &mut Self, intra: &Intra, depth: u8, limit: Option<f64>| -> (f64, Vec<TxDone>) {
-            e.restore_contexts(&start);
-            (e.limit, e.spent) = (limit, (0, 0));
-            let txs = e.predict_block(ti, bs, x, y, edge_flags, intra, depth, 0..1);
-            e.limit = None;
-            if std::mem::take(&mut e.stopped) {
-                return (f64::INFINITY, txs);
-            }
-            let bits = mode_bits(e, intra, depth) + coef_bits(e, &txs, bs, intra);
-            let dist = e.sse(x, y, w4, h4, 0..1);
-            (e.rd_cost(dist, bits), txs)
-        };
+        let luma =
+            |e: &mut Self, intra: &Intra, depth: u8, limit: Option<f64>| -> (f64, Vec<TxDone>) {
+                e.restore_contexts(&start);
+                (e.limit, e.spent) = (limit, (0, 0));
+                let txs = e.predict_block(ti, bs, x, y, edge_flags, intra, depth, 0..1);
+                e.limit = None;
+                if std::mem::take(&mut e.stopped) {
+                    return (f64::INFINITY, txs);
+                }
+                let bits = mode_bits(e, intra, depth) + coef_bits(e, &txs, bs, intra);
+                let dist = e.sse(x, y, w4, h4, 0..1);
+                (e.rd_cost(dist, bits), txs)
+            };
 
         let keep = self.keep_modes;
         let sad_lambda = self.lambda.sqrt();
-        let inside = (x as u32 + w4 as u32) * 4 <= self.seq.width && (y as u32 + h4 as u32) * 4 <= self.seq.height;
+        let inside = (x as u32 + w4 as u32) * 4 <= self.seq.width
+            && (y as u32 + h4 as u32) * 4 <= self.seq.height;
         let rank_rd = self.rank_rd && !self.frame.quant.lossless();
         let pre = if rank_rd && inside { self.rank_pre } else { 0 };
         let score = |e: &mut Self, intra: &Intra, estimate: bool| -> f64 {
@@ -2444,9 +2963,15 @@ impl<D: Decide> Encoder<D> {
         let cuts = self.cuts;
         let mut scored: Vec<(f64, Intra)> = (0..N_INTRA_PRED_MODES as u8)
             .filter(|&m| !(prune_intra && matches!(m, SMOOTH_V_PRED | SMOOTH_H_PRED)))
-            .filter(|&m| !cuts.few_modes || matches!(m, DC_PRED | VERT_PRED | HOR_PRED | SMOOTH_PRED | PAETH_PRED))
+            .filter(|&m| {
+                !cuts.few_modes
+                    || matches!(m, DC_PRED | VERT_PRED | HOR_PRED | SMOOTH_PRED | PAETH_PRED)
+            })
             .map(|m| {
-                let c = Intra { y_mode: m, ..Default::default() };
+                let c = Intra {
+                    y_mode: m,
+                    ..Default::default()
+                };
                 (score(self, &c, rank_rd && pre == 0), c)
             })
             .collect();
@@ -2471,13 +2996,20 @@ impl<D: Decide> Encoder<D> {
                 if prune_intra && FILTER_FROM_BEST[best_so_far] >> f & 1 == 0 {
                     continue;
                 }
-                let c = Intra { y_mode: FILTER_PRED, y_angle: f, ..Default::default() };
+                let c = Intra {
+                    y_mode: FILTER_PRED,
+                    y_angle: f,
+                    ..Default::default()
+                };
                 scored.push((score(self, &c, rank_rd && pre == 0), c));
             }
         }
         if limits.palette {
             for pal in palette::candidates_y(&self.source(0, x, y, vw, vh)) {
-                let mut c = Intra { y_mode: DC_PRED, ..Default::default() };
+                let mut c = Intra {
+                    y_mode: DC_PRED,
+                    ..Default::default()
+                };
                 c.pal_sz[0] = pal.len() as u8;
                 c.pal[0][..pal.len()].copy_from_slice(&pal);
                 scored.push((score(self, &c, rank_rd && pre == 0), c));
@@ -2494,7 +3026,12 @@ impl<D: Decide> Encoder<D> {
         self.lap(&mut clock, 0);
         // The kept modes' depth-0 codes are the depth search's where that too is DCT-only.
         let mut coded: Vec<(Intra, f64, Vec<TxDone>, bool)> = Vec::new();
-        let one_pass = cuts.one_pass && cuts.one_luma && keep == 1 && self.late_txtp && inside && self.tx_depths == 0;
+        let one_pass = cuts.one_pass
+            && cuts.one_luma
+            && keep == 1
+            && self.late_txtp
+            && inside
+            && self.tx_depths == 0;
         if keep > 0 && !one_pass {
             scored.truncate(keep);
             for s in scored.iter_mut() {
@@ -2514,9 +3051,17 @@ impl<D: Decide> Encoder<D> {
         let depths = if inside { self.tx_depths } else { 2 };
         let mut best_luma = (f64::MAX, scored[0].1, 0u8);
         let mut luma_txs = Vec::new();
-        for &(_, c) in scored.iter().take(if one_pass { 0 } else if cuts.one_luma { 1 } else { 2 }) {
+        for &(_, c) in scored.iter().take(if one_pass {
+            0
+        } else if cuts.one_luma {
+            1
+        } else {
+            2
+        }) {
             for depth in 0..=cmp::min(limits.max_depth, depths) {
-                let done = (depth == 0).then(|| coded.iter().position(|d| d.0 == c)).flatten();
+                let done = (depth == 0)
+                    .then(|| coded.iter().position(|d| d.0 == c))
+                    .flatten();
                 let (cost, txs) = match done {
                     Some(i) => {
                         let (_, cost, txs, skip) = coded.swap_remove(i);
@@ -2574,7 +3119,16 @@ impl<D: Decide> Encoder<D> {
                 let mut c = Counter::default();
                 write_chroma_modes(&mut c, &mut e.cost_cdf, intra, &limits);
                 if limits.palette {
-                    write_pal_uv(&mut c, &mut e.cost_cdf, &e.above, &e.left, ax, ly, bs, intra);
+                    write_pal_uv(
+                        &mut c,
+                        &mut e.cost_cdf,
+                        &e.above,
+                        &e.left,
+                        ax,
+                        ly,
+                        bs,
+                        intra,
+                    );
                 }
                 if intra.pal_sz[1] > 0 {
                     c.bits += e.palette_bits(true, x, y, w4 as i32, h4 as i32, vw, vh, intra);
@@ -2586,17 +3140,27 @@ impl<D: Decide> Encoder<D> {
             let mut best = (f64::MAX, intra);
             let mut modes: Vec<(f64, Intra)> = (0..N_UV_INTRA_PRED_MODES as u8 - 1)
                 .map(|m| {
-                    let mut c = Intra { uv_mode: m, uv_angle: 0, cfl: [0; 2], ..intra };
+                    let mut c = Intra {
+                        uv_mode: m,
+                        uv_angle: 0,
+                        cfl: [0; 2],
+                        ..intra
+                    };
                     c.pal_sz[1] = 0;
                     (0.0, c)
                 })
                 .collect();
             let keep_chroma = self.keep_chroma;
-            let fit = (limits.cfl && !cuts.no_cfl && cuts.cfl_fit).then(|| self.cfl_fit(x, y, bs, depth));
+            let fit =
+                (limits.cfl && !cuts.no_cfl && cuts.cfl_fit).then(|| self.cfl_fit(x, y, bs, depth));
             if cuts.uv_few {
                 modes.retain(|m| m.1.uv_mode == DC_PRED);
             } else if self.uv_from_luma {
-                let y_mode = if intra.y_mode == FILTER_PRED { DC_PRED } else { intra.y_mode };
+                let y_mode = if intra.y_mode == FILTER_PRED {
+                    DC_PRED
+                } else {
+                    intra.y_mode
+                };
                 modes.retain(|m| UV_FROM_LUMA[y_mode as usize] >> m.1.uv_mode & 1 != 0);
             } else if keep_chroma > 0 {
                 for m in modes.iter_mut() {
@@ -2623,10 +3187,17 @@ impl<D: Decide> Encoder<D> {
                     self.recycle(txs);
                 }
             }
-            if limits.angles && !cuts.no_uv_angles && (VERT_PRED..=VERT_LEFT_PRED).contains(&best.1.uv_mode) {
+            if limits.angles
+                && !cuts.no_uv_angles
+                && (VERT_PRED..=VERT_LEFT_PRED).contains(&best.1.uv_mode)
+            {
                 let d = best.1;
                 let outward = self.uv_outward;
-                let deltas: &[[i8; 3]] = if outward { &[[-1, -2, -3], [1, 2, 3]] } else { &[[-3, -2, -1], [1, 2, 3]] };
+                let deltas: &[[i8; 3]] = if outward {
+                    &[[-1, -2, -3], [1, 2, 3]]
+                } else {
+                    &[[-3, -2, -1], [1, 2, 3]]
+                };
                 for run in deltas {
                     for &a in run {
                         let c = Intra { uv_angle: a, ..d };
@@ -2648,7 +3219,12 @@ impl<D: Decide> Encoder<D> {
             if limits.palette {
                 let (u, v) = (self.source(1, x, y, vw, vh), self.source(2, x, y, vw, vh));
                 for (pu, pv) in palette::candidates_uv(&u, &v) {
-                    let mut c = Intra { uv_mode: DC_PRED, uv_angle: 0, cfl: [0; 2], ..intra };
+                    let mut c = Intra {
+                        uv_mode: DC_PRED,
+                        uv_angle: 0,
+                        cfl: [0; 2],
+                        ..intra
+                    };
                     c.pal_sz[1] = pu.len() as u8;
                     c.pal[1][..pu.len()].copy_from_slice(&pu);
                     c.pal[2][..pv.len()].copy_from_slice(&pv);
@@ -2664,7 +3240,10 @@ impl<D: Decide> Encoder<D> {
             }
             let step = self.dq[1][1] as f32 / 8.0;
             let dc_alone = cuts.cfl_share > 0.0
-                && fit.is_some_and(|(_, gain, variance)| (gain as f32) <= 2.0 * step * step || (gain as f32) < cuts.cfl_share * variance as f32);
+                && fit.is_some_and(|(_, gain, variance)| {
+                    (gain as f32) <= 2.0 * step * step
+                        || (gain as f32) < cuts.cfl_share * variance as f32
+                });
             if limits.cfl && !cuts.no_cfl && !dc_alone {
                 let alphas = match fit {
                     Some((alphas, ..)) => alphas,
@@ -2674,7 +3253,12 @@ impl<D: Decide> Encoder<D> {
                     }
                 };
                 if alphas != [0, 0] {
-                    let c = Intra { uv_mode: CFL_PRED, uv_angle: 0, cfl: alphas, ..intra };
+                    let c = Intra {
+                        uv_mode: CFL_PRED,
+                        uv_angle: 0,
+                        cfl: alphas,
+                        ..intra
+                    };
                     let (cost, txs) = chroma(self, &c, best.0);
                     if cost < best.0 {
                         best = (cost, c);
@@ -2694,7 +3278,8 @@ impl<D: Decide> Encoder<D> {
         // Luma was coded last for the winner and chroma trials leave it alone; its chroma stands
         // if it was the last tried. A palette's index map may be another candidate's.
         if limits.chroma && intra.pal_sz == [0, 0] && !chroma_txs.is_empty() {
-            if self.last_chroma != Some((intra.uv_mode, intra.uv_angle, intra.cfl, intra.pal_sz[1])) {
+            if self.last_chroma != Some((intra.uv_mode, intra.uv_angle, intra.cfl, intra.pal_sz[1]))
+            {
                 chroma_txs.reverse();
                 self.replay = Some(chroma_txs);
                 self.restore_contexts(&start);
@@ -2718,7 +3303,8 @@ impl<D: Decide> Encoder<D> {
         self.lap(&mut clock, 4);
         self.stage = 5;
         self.chosen.push(txs);
-        self.plan.push(Node::Block(intra, depth, self.chosen.len() - 1));
+        self.plan
+            .push(Node::Block(intra, depth, self.chosen.len() - 1));
     }
 
     /// The alphas that minimise each chroma plane's error against the luma AC, whose mean is
@@ -2727,15 +3313,29 @@ impl<D: Decide> Encoder<D> {
         let b_dim = bs.dimensions();
         let (bw4, bh4) = (b_dim[0] as i32, b_dim[1] as i32);
         let (tx, _) = self.tx_sizes(bs, depth);
-        let ac = self.cfl_ac(x, y, cmp::min(bw4, self.bw - x), cmp::min(bh4, self.bh - y), bw4, bh4, tx);
+        let ac = self.cfl_ac(
+            x,
+            y,
+            cmp::min(bw4, self.bw - x),
+            cmp::min(bh4, self.bh - y),
+            bw4,
+            bh4,
+            tx,
+        );
         let (stride, x0, wy) = (bw4 as usize * 4, x as usize * 4, (y as usize * 4) % SB);
         let w = cmp::min(stride, (self.seq.width as usize).saturating_sub(x0));
-        let h = cmp::min(bh4 as usize * 4, (self.seq.height as usize).saturating_sub(y as usize * 4));
+        let h = cmp::min(
+            bh4 as usize * 4,
+            (self.seq.height as usize).saturating_sub(y as usize * 4),
+        );
         let (mut alphas, mut gain, mut variance) = ([0; 2], 0.0, 0.0);
         for p in 0..2 {
             let src = &self.src[1 + p];
-            let plane = src.comp.slice::<BD, _>((wy * src.stride + x0.., ..(h - 1) * src.stride + w));
-            let (mut ac_ac, mut ac_s, mut sum_ac, mut sum_s, mut s_s) = (0i64, 0i64, 0i64, 0i64, 0i64);
+            let plane = src
+                .comp
+                .slice::<BD, _>((wy * src.stride + x0.., ..(h - 1) * src.stride + w));
+            let (mut ac_ac, mut ac_s, mut sum_ac, mut sum_s, mut s_s) =
+                (0i64, 0i64, 0i64, 0i64, 0i64);
             for (row, a) in plane.chunks(src.stride).zip(ac.0.chunks_exact(stride)) {
                 for (&s, &a) in row[..w].iter().zip(&a[..w]) {
                     let (s, a) = (s as i32, a as i32);
@@ -2761,7 +3361,16 @@ impl<D: Decide> Encoder<D> {
 
     /// CfL alphas that best predict each chroma plane from the reconstructed luma.
     #[allow(clippy::too_many_arguments)]
-    fn cfl_alphas(&mut self, ti: usize, bs: BlockSize, x: i32, y: i32, intra: &Intra, depth: u8, luma_done: &Snap) -> [i8; 2] {
+    fn cfl_alphas(
+        &mut self,
+        ti: usize,
+        bs: BlockSize,
+        x: i32,
+        y: i32,
+        intra: &Intra,
+        depth: u8,
+        luma_done: &Snap,
+    ) -> [i8; 2] {
         let b_dim = bs.dimensions();
         let (w4, h4) = (b_dim[0] as usize, b_dim[1] as usize);
         let (bw4, bh4) = (b_dim[0] as i32, b_dim[1] as i32);
@@ -2797,7 +3406,11 @@ impl<D: Decide> Encoder<D> {
                 continue;
             }
             self.restore_contexts(luma_done);
-            let c = Intra { uv_mode: CFL_PRED, cfl: [a, a], ..*intra };
+            let c = Intra {
+                uv_mode: CFL_PRED,
+                cfl: [a, a],
+                ..*intra
+            };
             self.predict_cfl(ti, x, y, cw4, ch4, bw4, bh4, tx, uvtx, &c);
             for p in 0..2 {
                 let d = self.sse(x, y, w4, h4, 1 + p..2 + p);
@@ -2877,11 +3490,21 @@ fn delta_steps(res: i32, last: u8, want: u8) -> i32 {
 /// libaom's `predict_skip_txfm` at level 1 for an 8-bit luma residual of `pw`×`ph`, `vw`×`vh`
 /// of it visible: a mean square error under (dc_q / 8)² / 8 and DCT coefficients, in tiles of up
 /// to 16×16, all under a block-size multiple of the quantizer.
-fn predicts_skip(residual: &[i16], pw: usize, ph: usize, vw: usize, vh: usize, dq: [u32; 2]) -> bool {
+fn predicts_skip(
+    residual: &[i16],
+    pw: usize,
+    ph: usize,
+    vw: usize,
+    vh: usize,
+    dq: [u32; 2],
+) -> bool {
     let mut se = 0u64;
     for r in 0..vh {
         // A row's squares of differences under 256 fit u32, which vectorizes.
-        se += residual[r * pw..][..vw].iter().map(|&d| (d as i32 * d as i32) as u32).sum::<u32>() as u64;
+        se += residual[r * pw..][..vw]
+            .iter()
+            .map(|&d| (d as i32 * d as i32) as u32)
+            .sum::<u32>() as u64;
     }
     let n = (dq[0] >> 3) as u64;
     if se / (pw * ph) as u64 > n * n / 8 {
@@ -2910,7 +3533,11 @@ fn predicts_skip(residual: &[i16], pw: usize, ph: usize, vw: usize, vh: usize, d
                 tile[r * tw..][..tw].copy_from_slice(&residual[(y + r) * pw + x..][..tw]);
             }
             fdct_fast::forward(&tile[..tw * th], tw, &mut coefs[..tw * th], tx, DCT_DCT);
-            if coefs[0].unsigned_abs() << 7 >= thresh * dq[0] || coefs[1..tw * th].iter().any(|c| c.unsigned_abs() << 7 >= thresh * dq[1]) {
+            if coefs[0].unsigned_abs() << 7 >= thresh * dq[0]
+                || coefs[1..tw * th]
+                    .iter()
+                    .any(|c| c.unsigned_abs() << 7 >= thresh * dq[1])
+            {
                 return false;
             }
         }
@@ -2948,7 +3575,9 @@ fn res_ctx(levels: &[i32], eob: i32) -> u8 {
         return 0x40;
     }
     // At most 1024 levels under 2^20: the sum cannot wrap, and a plain sum vectorizes.
-    let cul = levels.iter().fold(0u32, |a, l| a.wrapping_add(l.unsigned_abs() & 0xfffff));
+    let cul = levels
+        .iter()
+        .fold(0u32, |a, l| a.wrapping_add(l.unsigned_abs() & 0xfffff));
     let sign = match levels[0] {
         0 => 0x40,
         d if d < 0 => 0,
@@ -2978,7 +3607,15 @@ struct BlockWrite {
 
 impl BlockWrite {
     #[allow(clippy::too_many_arguments)]
-    fn write<S: Sink>(&self, s: &mut S, cdf: &mut CdfContext, above: &mut Ctx, left: &mut Ctx, txs: &[TxDone], maps: &[Vec<u8>; 2]) {
+    fn write<S: Sink>(
+        &self,
+        s: &mut S,
+        cdf: &mut CdfContext,
+        above: &mut Ctx,
+        left: &mut Ctx,
+        txs: &[TxDone],
+        maps: &[Vec<u8>; 2],
+    ) {
         let (ax, ly) = (self.x as usize, (self.y & 15) as usize);
         let b_dim = self.bs.dimensions();
         let (bw4, bh4) = (b_dim[0] as usize, b_dim[1] as usize);
@@ -3000,7 +3637,11 @@ impl BlockWrite {
         if self.limits.chroma {
             write_chroma_modes(s, cdf, &self.intra, &self.limits);
         }
-        let y_mode = if self.intra.y_mode == FILTER_PRED { DC_PRED } else { self.intra.y_mode };
+        let y_mode = if self.intra.y_mode == FILTER_PRED {
+            DC_PRED
+        } else {
+            self.intra.y_mode
+        };
         if self.limits.palette {
             write_pal_y(s, cdf, above, left, ax, ly, self.bs, &self.intra);
             if self.limits.chroma {
@@ -3008,14 +3649,35 @@ impl BlockWrite {
             }
         }
         write_filter(s, cdf, self.bs, &self.intra, &self.limits);
-        let (w, h) = ((cmp::min(bw4 as i32, self.bw - self.x) * 4) as usize, (cmp::min(bh4 as i32, self.bh - self.y) * 4) as usize);
+        let (w, h) = (
+            (cmp::min(bw4 as i32, self.bw - self.x) * 4) as usize,
+            (cmp::min(bh4 as i32, self.bh - self.y) * 4) as usize,
+        );
         for pl in 0..2 {
             if self.intra.pal_sz[pl] > 0 {
                 let n = self.intra.pal_sz[pl];
-                palette::write_indices(s, &mut cdf.m.color_map[pl][n as usize - 2], &maps[pl], bw4 * 4, w, h, n);
+                palette::write_indices(
+                    s,
+                    &mut cdf.m.color_map[pl][n as usize - 2],
+                    &maps[pl],
+                    bw4 * 4,
+                    w,
+                    h,
+                    n,
+                );
             }
         }
-        write_depth(s, cdf, above, left, ax, ly, self.depth, self.max_tx, self.tx_select && !self.lossless);
+        write_depth(
+            s,
+            cdf,
+            above,
+            left,
+            ax,
+            ly,
+            self.depth,
+            self.max_tx,
+            self.tx_select && !self.lossless,
+        );
         if !self.skip {
             for t in txs {
                 let (a, l) = coef_ctx(above, left, t.plane);
@@ -3024,7 +3686,8 @@ impl BlockWrite {
                     let t_dim = &DAV1D_TXFM_DIMENSIONS[t.tx as usize];
                     let v = res_ctx(&t.coefs.levels, t.eob);
                     a[t.x4 as usize..][..cmp::min(t_dim.w as i32, self.bw - t.x4) as usize].fill(v);
-                    l[(t.y4 & 15) as usize..][..cmp::min(t_dim.h as i32, self.bh - t.y4) as usize].fill(v);
+                    l[(t.y4 & 15) as usize..][..cmp::min(t_dim.h as i32, self.bh - t.y4) as usize]
+                        .fill(v);
                     continue;
                 }
                 write_coefs(
@@ -3069,8 +3732,12 @@ impl BlockWrite {
         above.pal_sz[ax..ax + bw4].fill(self.intra.pal_sz[0]);
         left.pal_sz[ly..ly + bh4].fill(self.intra.pal_sz[0]);
         if self.intra.pal_sz[0] > 0 {
-            above.pal[ax..ax + bw4].iter_mut().for_each(|p| p[0] = self.intra.pal[0]);
-            left.pal[ly..ly + bh4].iter_mut().for_each(|p| p[0] = self.intra.pal[0]);
+            above.pal[ax..ax + bw4]
+                .iter_mut()
+                .for_each(|p| p[0] = self.intra.pal[0]);
+            left.pal[ly..ly + bh4]
+                .iter_mut()
+                .for_each(|p| p[0] = self.intra.pal[0]);
         }
         above.skip[ax..ax + bw4].fill(self.skip as u8);
         left.skip[ly..ly + bh4].fill(self.skip as u8);
@@ -3081,8 +3748,12 @@ impl BlockWrite {
             left.pal_sz_uv[ly..ly + bh4].fill(self.intra.pal_sz[1]);
             if self.intra.pal_sz[1] > 0 {
                 let [_, u, v] = self.intra.pal;
-                above.pal[ax..ax + bw4].iter_mut().for_each(|p| (p[1], p[2]) = (u, v));
-                left.pal[ly..ly + bh4].iter_mut().for_each(|p| (p[1], p[2]) = (u, v));
+                above.pal[ax..ax + bw4]
+                    .iter_mut()
+                    .for_each(|p| (p[1], p[2]) = (u, v));
+                left.pal[ly..ly + bh4]
+                    .iter_mut()
+                    .for_each(|p| (p[1], p[2]) = (u, v));
             }
         }
     }
@@ -3090,8 +3761,21 @@ impl BlockWrite {
 
 /// The luma mode and its angle delta.
 #[allow(clippy::too_many_arguments)]
-fn write_luma_modes<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ctx, ax: usize, ly: usize, intra: &Intra, limits: &Limits) {
-    let y_mode = if intra.y_mode == FILTER_PRED { DC_PRED } else { intra.y_mode };
+fn write_luma_modes<S: Sink>(
+    s: &mut S,
+    cdf: &mut CdfContext,
+    above: &Ctx,
+    left: &Ctx,
+    ax: usize,
+    ly: usize,
+    intra: &Intra,
+    limits: &Limits,
+) {
+    let y_mode = if intra.y_mode == FILTER_PRED {
+        DC_PRED
+    } else {
+        intra.y_mode
+    };
     let ymode_cdf = &mut cdf.kfym[DAV1D_INTRA_MODE_CONTEXT[above.mode[ax] as usize] as usize]
         [DAV1D_INTRA_MODE_CONTEXT[left.mode[ly] as usize] as usize];
     s.symbol(y_mode, ymode_cdf, N_INTRA_PRED_MODES as u8 - 1);
@@ -3103,7 +3787,16 @@ fn write_luma_modes<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left:
 
 /// The luma palette flag and, with a palette, its size and colours.
 #[allow(clippy::too_many_arguments)]
-fn write_pal_y<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ctx, ax: usize, ly: usize, bs: BlockSize, intra: &Intra) {
+fn write_pal_y<S: Sink>(
+    s: &mut S,
+    cdf: &mut CdfContext,
+    above: &Ctx,
+    left: &Ctx,
+    ax: usize,
+    ly: usize,
+    bs: BlockSize,
+    intra: &Intra,
+) {
     if !matches!(intra.y_mode, DC_PRED | FILTER_PRED) {
         return;
     }
@@ -3114,15 +3807,31 @@ fn write_pal_y<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ctx
     s.bool_adapt(n > 0, &mut cdf.m.pal_y[sz_ctx][pal_ctx]);
     if n > 0 {
         s.symbol(n as u8 - 2, &mut cdf.m.pal_sz[0][sz_ctx], 6);
-        let a_n = if ly != 0 { above.pal_sz[ax] as usize } else { 0 };
-        let (cache, c_n) = palette::cache(&above.pal[ax][0][..a_n], &left.pal[ly][0][..left.pal_sz[ly] as usize]);
+        let a_n = if ly != 0 {
+            above.pal_sz[ax] as usize
+        } else {
+            0
+        };
+        let (cache, c_n) = palette::cache(
+            &above.pal[ax][0][..a_n],
+            &left.pal[ly][0][..left.pal_sz[ly] as usize],
+        );
         palette::write_colors(s, &intra.pal[0][..n], &cache[..c_n], false);
     }
 }
 
 /// The chroma palette flag and, with a palette, its size and U and V colours.
 #[allow(clippy::too_many_arguments)]
-fn write_pal_uv<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ctx, ax: usize, ly: usize, bs: BlockSize, intra: &Intra) {
+fn write_pal_uv<S: Sink>(
+    s: &mut S,
+    cdf: &mut CdfContext,
+    above: &Ctx,
+    left: &Ctx,
+    ax: usize,
+    ly: usize,
+    bs: BlockSize,
+    intra: &Intra,
+) {
     if intra.uv_mode != DC_PRED {
         return;
     }
@@ -3132,15 +3841,32 @@ fn write_pal_uv<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ct
     s.bool_adapt(n > 0, &mut cdf.m.pal_uv[(intra.pal_sz[0] > 0) as usize]);
     if n > 0 {
         s.symbol(n as u8 - 2, &mut cdf.m.pal_sz[1][sz_ctx], 6);
-        let a_n = if ly != 0 { above.pal_sz_uv[ax] as usize } else { 0 };
-        let (cache, c_n) = palette::cache(&above.pal[ax][1][..a_n], &left.pal[ly][1][..left.pal_sz_uv[ly] as usize]);
+        let a_n = if ly != 0 {
+            above.pal_sz_uv[ax] as usize
+        } else {
+            0
+        };
+        let (cache, c_n) = palette::cache(
+            &above.pal[ax][1][..a_n],
+            &left.pal[ly][1][..left.pal_sz_uv[ly] as usize],
+        );
         palette::write_colors(s, &intra.pal[1][..n], &cache[..c_n], true);
         palette::write_v(s, &intra.pal[2][..n]);
     }
 }
 
-fn write_filter<S: Sink>(s: &mut S, cdf: &mut CdfContext, bs: BlockSize, intra: &Intra, limits: &Limits) {
-    let y_mode = if intra.y_mode == FILTER_PRED { DC_PRED } else { intra.y_mode };
+fn write_filter<S: Sink>(
+    s: &mut S,
+    cdf: &mut CdfContext,
+    bs: BlockSize,
+    intra: &Intra,
+    limits: &Limits,
+) {
+    let y_mode = if intra.y_mode == FILTER_PRED {
+        DC_PRED
+    } else {
+        intra.y_mode
+    };
     if y_mode == DC_PRED && intra.pal_sz[0] == 0 && limits.filter {
         let filter = (intra.y_mode == FILTER_PRED).then_some(intra.y_angle as u8);
         s.bool_adapt(filter.is_some(), &mut cdf.m.use_filter_intra[bs as usize]);
@@ -3152,26 +3878,57 @@ fn write_filter<S: Sink>(s: &mut S, cdf: &mut CdfContext, bs: BlockSize, intra: 
 
 /// The transform depth, when the frame selects it.
 #[allow(clippy::too_many_arguments)]
-fn write_depth<S: Sink>(s: &mut S, cdf: &mut CdfContext, above: &Ctx, left: &Ctx, ax: usize, ly: usize, depth: u8, max_tx: TxfmSize, tx_select: bool) {
+fn write_depth<S: Sink>(
+    s: &mut S,
+    cdf: &mut CdfContext,
+    above: &Ctx,
+    left: &Ctx,
+    ax: usize,
+    ly: usize,
+    depth: u8,
+    max_tx: TxfmSize,
+    tx_select: bool,
+) {
     let max_dim = &DAV1D_TXFM_DIMENSIONS[max_tx as usize];
     if tx_select && max_dim.max > 0 {
-        let tctx = (left.tx_intra[ly] as i32 >= max_dim.lh as i32) as usize + (above.tx_intra[ax] as i32 >= max_dim.lw as i32) as usize;
+        let tctx = (left.tx_intra[ly] as i32 >= max_dim.lh as i32) as usize
+            + (above.tx_intra[ax] as i32 >= max_dim.lw as i32) as usize;
         let c = &mut cdf.m.txsz[(max_dim.max - 1) as usize][tctx];
         s.symbol(depth, c, cmp::min(max_dim.max, 2));
     }
 }
 
 fn write_chroma_modes<S: Sink>(s: &mut S, cdf: &mut CdfContext, intra: &Intra, limits: &Limits) {
-    let y_mode = if intra.y_mode == FILTER_PRED { DC_PRED } else { intra.y_mode };
+    let y_mode = if intra.y_mode == FILTER_PRED {
+        DC_PRED
+    } else {
+        intra.y_mode
+    };
     let c = &mut cdf.m.uv_mode[limits.cfl as usize][y_mode as usize];
-    s.symbol(intra.uv_mode, c, N_UV_INTRA_PRED_MODES as u8 - 1 - !limits.cfl as u8);
+    s.symbol(
+        intra.uv_mode,
+        c,
+        N_UV_INTRA_PRED_MODES as u8 - 1 - !limits.cfl as u8,
+    );
     if intra.uv_mode == CFL_PRED {
-        let sign = intra.cfl.map(|a| if a == 0 { 0u8 } else if a < 0 { 1 } else { 2 });
+        let sign = intra.cfl.map(|a| {
+            if a == 0 {
+                0u8
+            } else if a < 0 {
+                1
+            } else {
+                2
+            }
+        });
         s.symbol(sign[0] * 3 + sign[1] - 1, &mut cdf.m.cfl_sign.0, 7);
         for i in 0..2 {
             if sign[i] != 0 {
                 let ctx = (sign[i] == 2) as usize * 3 + sign[1 - i] as usize;
-                s.symbol(intra.cfl[i].unsigned_abs() - 1, &mut cdf.m.cfl_alpha[ctx], 15);
+                s.symbol(
+                    intra.cfl[i].unsigned_abs() - 1,
+                    &mut cdf.m.cfl_alpha[ctx],
+                    15,
+                );
             }
         }
     } else if limits.angles && (VERT_PRED..=VERT_LEFT_PRED).contains(&intra.uv_mode) {
@@ -3187,16 +3944,20 @@ const EDGE_LEN: usize = 257;
 
 /// libaom's `av1_derived_filter_intra_mode_used_flag`: FILTER_DC and the filter mode of the best
 /// mode so far.
-const FILTER_FROM_BEST: [u8; N_INTRA_PRED_MODES] = [0x01, 0x03, 0x05, 0x01, 0x01, 0x01, 0x09, 0x01, 0x01, 0x01, 0x01, 0x01, 0x11];
+const FILTER_FROM_BEST: [u8; N_INTRA_PRED_MODES] = [
+    0x01, 0x03, 0x05, 0x01, 0x01, 0x01, 0x09, 0x01, 0x01, 0x01, 0x01, 0x01, 0x11,
+];
 
 /// libaom's `av1_derived_chroma_intra_mode_used_flag` without CfL: DC, SMOOTH and the luma
 /// winner's own mode.
-const UV_FROM_LUMA: [u16; N_INTRA_PRED_MODES] =
-    [0x201, 0x203, 0x205, 0x209, 0x211, 0x221, 0x241, 0x281, 0x301, 0x201, 0x601, 0xa01, 0x1201];
+const UV_FROM_LUMA: [u16; N_INTRA_PRED_MODES] = [
+    0x201, 0x203, 0x205, 0x209, 0x211, 0x221, 0x241, 0x281, 0x301, 0x201, 0x601, 0xa01, 0x1201,
+];
 
 /// libaom's `av1_reduced_intra_tx_used_flag`: transform types by luma mode, bit per type.
-const REDUCED_INTRA_TXTP: [u16; N_INTRA_PRED_MODES] =
-    [0x80f, 0x40f, 0x80f, 0x20f, 0x80f, 0x40f, 0x80f, 0x80f, 0x40f, 0x80f, 0x40f, 0x80f, 0xc0e];
+const REDUCED_INTRA_TXTP: [u16; N_INTRA_PRED_MODES] = [
+    0x80f, 0x40f, 0x80f, 0x20f, 0x80f, 0x40f, 0x80f, 0x80f, 0x40f, 0x80f, 0x40f, 0x80f, 0xc0e,
+];
 
 #[repr(C, align(64))]
 struct EdgePx([u8; EDGE_LEN]);
@@ -3214,7 +3975,11 @@ struct Bufs {
     cf: Coef,
 }
 
-fn coef_ctx<'a>(above: &'a mut Ctx, left: &'a mut Ctx, plane: usize) -> (&'a mut [u8], &'a mut [u8]) {
+fn coef_ctx<'a>(
+    above: &'a mut Ctx,
+    left: &'a mut Ctx,
+    plane: usize,
+) -> (&'a mut [u8], &'a mut [u8]) {
     if plane == 0 {
         (&mut above.lcoef, &mut left.lcoef)
     } else {
@@ -3248,24 +4013,65 @@ fn scan_index(tx: TxfmSize, class: TxClass) -> &'static [u16] {
     &tables[tx as usize * 3 + c]
 }
 
-fn pal_key(chroma: bool, x: i32, y: i32, bw4: i32, bh4: i32, intra: &Intra) -> (bool, u8, i32, i32, i32, i32, [[u8; 8]; 2]) {
-    let colours = if chroma { [intra.pal[1], intra.pal[2]] } else { [intra.pal[0], [0; 8]] };
-    (chroma, intra.pal_sz[chroma as usize], x, y, bw4, bh4, colours)
+fn pal_key(
+    chroma: bool,
+    x: i32,
+    y: i32,
+    bw4: i32,
+    bh4: i32,
+    intra: &Intra,
+) -> (bool, u8, i32, i32, i32, i32, [[u8; 8]; 2]) {
+    let colours = if chroma {
+        [intra.pal[1], intra.pal[2]]
+    } else {
+        [intra.pal[0], [0; 8]]
+    };
+    (
+        chroma,
+        intra.pal_sz[chroma as usize],
+        x,
+        y,
+        bw4,
+        bh4,
+        colours,
+    )
 }
 
 fn eob_of(tx: TxfmSize, txtp: TxfmType, levels: &[i32]) -> i32 {
     let index = scan_index(tx, DAV1D_TX_TYPE_CLASS[txtp as usize]);
-    levels.iter().zip(index).filter(|(&l, _)| l != 0).map(|(_, &i)| i as i32).max().unwrap_or(-1)
+    levels
+        .iter()
+        .zip(index)
+        .filter(|(&l, _)| l != 0)
+        .map(|(_, &i)| i as i32)
+        .max()
+        .unwrap_or(-1)
 }
 
-fn base_tok<S: Sink>(w: &mut S, costs: Option<&CoefCosts>, cdf: &mut CdfContext, t: usize, chroma: usize, ctx: usize, s: u8) {
+fn base_tok<S: Sink>(
+    w: &mut S,
+    costs: Option<&CoefCosts>,
+    cdf: &mut CdfContext,
+    t: usize,
+    chroma: usize,
+    ctx: usize,
+    s: u8,
+) {
     match costs {
         Some(c) => w.add(c.base[t][chroma][ctx][s as usize] as u32),
         None => w.symbol(s, &mut cdf.coef.base_tok[t][chroma][ctx], 3),
     }
 }
 
-fn br_tok<S: Sink>(w: &mut S, costs: Option<&CoefCosts>, cdf: &mut CdfContext, hi: usize, chroma: usize, ctx: usize, tok: u8) {
+fn br_tok<S: Sink>(
+    w: &mut S,
+    costs: Option<&CoefCosts>,
+    cdf: &mut CdfContext,
+    hi: usize,
+    chroma: usize,
+    ctx: usize,
+    tok: u8,
+) {
     match costs {
         Some(c) => w.add(c.br[hi][chroma][ctx][tok as usize]),
         None => w.hi_tok(tok, &mut cdf.coef.br_tok[hi][chroma][ctx]),
@@ -3308,7 +4114,10 @@ fn write_coefs<S: Sink>(
         Rav1dPixelLayout::I444,
     );
     let all_skip = eob < 0;
-    w.bool_adapt(all_skip, &mut cdf.coef.skip[t_dim.ctx as usize][sctx.get() as usize]);
+    w.bool_adapt(
+        all_skip,
+        &mut cdf.coef.skip[t_dim.ctx as usize][sctx.get() as usize],
+    );
     let set_ctx = |a: &mut [u8], l: &mut [u8], v: u8| {
         let n = cmp::min(t_dim.w as i64, bw as i64 - x4 as i64) as usize;
         let m = cmp::min(t_dim.h as i64, bh as i64 - y4 as i64) as usize;
@@ -3326,11 +4135,25 @@ fn write_coefs<S: Sink>(
             intra.y_mode
         } as usize;
         if reduced_tx_set || t_dim.min == TxfmSize::S16x16 as u8 {
-            let idx = DAV1D_TX_TYPES_PER_SET[..5].iter().position(|&t| t == txtp).unwrap();
-            w.symbol(idx as u8, &mut cdf.m.txtp_intra2[t_dim.min as usize][y_mode], 4);
+            let idx = DAV1D_TX_TYPES_PER_SET[..5]
+                .iter()
+                .position(|&t| t == txtp)
+                .unwrap();
+            w.symbol(
+                idx as u8,
+                &mut cdf.m.txtp_intra2[t_dim.min as usize][y_mode],
+                4,
+            );
         } else {
-            let idx = DAV1D_TX_TYPES_PER_SET[5..12].iter().position(|&t| t == txtp).unwrap();
-            w.symbol(idx as u8, &mut cdf.m.txtp_intra1[t_dim.min as usize][y_mode], 6);
+            let idx = DAV1D_TX_TYPES_PER_SET[5..12]
+                .iter()
+                .position(|&t| t == txtp)
+                .unwrap();
+            w.symbol(
+                idx as u8,
+                &mut cdf.m.txtp_intra1[t_dim.min as usize][y_mode],
+                6,
+            );
         }
     }
     let slw = cmp::min(t_dim.lw, TxfmSize::S32x32 as u8);
@@ -3339,7 +4162,11 @@ fn write_coefs<S: Sink>(
     let class = DAV1D_TX_TYPE_CLASS[txtp as usize];
     let is_1d = (class != TxClass::TwoD) as usize;
     let eob = eob as u32;
-    let bin = if eob == 0 { 0 } else { 32 - eob.leading_zeros() } as u8;
+    let bin = if eob == 0 {
+        0
+    } else {
+        32 - eob.leading_zeros()
+    } as u8;
     let n = 4 + tx2dszctx;
     match tx2dszctx {
         0 => w.symbol(bin, &mut cdf.coef.eob_bin_16[chroma][is_1d], n),
@@ -3352,7 +4179,10 @@ fn write_coefs<S: Sink>(
     }
     if bin > 1 {
         let hi = eob >> (bin - 2) & 1 != 0;
-        w.bool_adapt(hi, &mut cdf.coef.eob_hi_bit[t_dim.ctx as usize][chroma][bin as usize]);
+        w.bool_adapt(
+            hi,
+            &mut cdf.coef.eob_hi_bit[t_dim.ctx as usize][chroma][bin as usize],
+        );
         w.bools(eob & ((1 << (bin - 2)) - 1), bin - 2);
     }
 
@@ -3384,16 +4214,32 @@ fn write_coefs<S: Sink>(
             tail(lv);
         }
         let ctx = 1 + (eob > (2 << tx2dszctx)) as usize + (eob > (4 << tx2dszctx)) as usize;
-        w.symbol((cmp::min(lv, 3) - 1) as u8, &mut cdf.coef.eob_base_tok[t_dim.ctx as usize][chroma][ctx], 2);
+        w.symbol(
+            (cmp::min(lv, 3) - 1) as u8,
+            &mut cdf.coef.eob_base_tok[t_dim.ctx as usize][chroma][ctx],
+            2,
+        );
         if lv >= 3 {
-            let far = if class == TxClass::TwoD { (x | y) > 1 } else { y != 0 };
+            let far = if class == TxClass::TwoD {
+                (x | y) > 1
+            } else {
+                y != 0
+            };
             let ctx = if far { 14 } else { 7 };
             br_tok(w, costs, cdf, hi_ctx, chroma, ctx, cmp::min(lv, 15) as u8);
         }
         let mut serial = eob as usize;
         if let Some(c) = raster {
             let t = t_dim.ctx as usize;
-            ac = contexts::ac_bits(lay, coefs, eob as usize, base_ctx, br_mag, &c.base[t][chroma], &c.br[hi_ctx][chroma]);
+            ac = contexts::ac_bits(
+                lay,
+                coefs,
+                eob as usize,
+                base_ctx,
+                br_mag,
+                &c.base[t][chroma],
+                &c.br[hi_ctx][chroma],
+            );
             serial = 1;
         }
         for i in (1..serial).rev() {
@@ -3401,25 +4247,61 @@ fn write_coefs<S: Sink>(
             let off = off as usize;
             let lv = coefs[rc as usize].unsigned_abs();
             tail(lv);
-            base_tok(w, costs, cdf, t_dim.ctx as usize, chroma, base_ctx[off] as usize, cmp::min(lv, 3) as u8);
+            base_tok(
+                w,
+                costs,
+                cdf,
+                t_dim.ctx as usize,
+                chroma,
+                base_ctx[off] as usize,
+                cmp::min(lv, 3) as u8,
+            );
             if class == TxClass::TwoD {
                 y |= x;
             }
             if lv >= 3 {
-                let ctx = if y > (class == TxClass::TwoD) as u8 { 14 } else { 7 } + br_mag[off] as usize;
+                let ctx = if y > (class == TxClass::TwoD) as u8 {
+                    14
+                } else {
+                    7
+                } + br_mag[off] as usize;
                 br_tok(w, costs, cdf, hi_ctx, chroma, ctx, cmp::min(lv, 15) as u8);
             }
         }
-        let lo = if class == TxClass::TwoD { 0 } else { base_ctx[0] as usize };
+        let lo = if class == TxClass::TwoD {
+            0
+        } else {
+            base_ctx[0] as usize
+        };
         let lv = level_at(0);
-        base_tok(w, costs, cdf, t_dim.ctx as usize, chroma, lo, cmp::min(lv, 3) as u8);
+        base_tok(
+            w,
+            costs,
+            cdf,
+            t_dim.ctx as usize,
+            chroma,
+            lo,
+            cmp::min(lv, 3) as u8,
+        );
         if lv >= 3 {
-            br_tok(w, costs, cdf, hi_ctx, chroma, br_mag[0] as usize, cmp::min(lv, 15) as u8);
+            br_tok(
+                w,
+                costs,
+                cdf,
+                hi_ctx,
+                chroma,
+                br_mag[0] as usize,
+                cmp::min(lv, 15) as u8,
+            );
         }
         dc_level = lv;
     } else {
         let lv = level_at(0);
-        w.symbol((cmp::min(lv, 3) - 1) as u8, &mut cdf.coef.eob_base_tok[t_dim.ctx as usize][chroma][0], 2);
+        w.symbol(
+            (cmp::min(lv, 3) - 1) as u8,
+            &mut cdf.coef.eob_base_tok[t_dim.ctx as usize][chroma][0],
+            2,
+        );
         if lv >= 3 {
             br_tok(w, costs, cdf, hi_ctx, chroma, 0, cmp::min(lv, 15) as u8);
         }
@@ -3460,9 +4342,10 @@ fn write_coefs<S: Sink>(
 }
 #[cfg(test)]
 pub(crate) mod tests {
+    use rav1d_dec::{Decoder, PlanarImageComponent, Settings};
+
     use super::*;
     use crate::header::{Colour, Quant, Tiling};
-    use rav1d_dec::{Decoder, PlanarImageComponent, Settings};
 
     pub struct Rng(pub u64);
 
@@ -3506,7 +4389,10 @@ pub(crate) mod tests {
 
         fn mode(&mut self, _: BlockSize, _: i32, _: i32, l: &Limits) -> (Intra, u8) {
             let r = &mut self.rng;
-            let mut m = Intra { y_mode: r.below(13) as u8, ..Default::default() };
+            let mut m = Intra {
+                y_mode: r.below(13) as u8,
+                ..Default::default()
+            };
             if l.angles && (VERT_PRED..=VERT_LEFT_PRED).contains(&m.y_mode) {
                 m.y_angle = r.below(7) as i8 - 3;
             }
@@ -3549,14 +4435,28 @@ pub(crate) mod tests {
             (m, r.below(l.max_depth as u32 + 1) as u8)
         }
 
-        fn residual(&mut self, _: usize, _: TxfmSize, set: &[TxfmType], levels: &mut [i32]) -> Option<TxfmType> {
-            let txtp = if set.is_empty() { DCT_DCT } else { set[self.rng.below(set.len() as u32) as usize] };
+        fn residual(
+            &mut self,
+            _: usize,
+            _: TxfmSize,
+            set: &[TxfmType],
+            levels: &mut [i32],
+        ) -> Option<TxfmType> {
+            let txtp = if set.is_empty() {
+                DCT_DCT
+            } else {
+                set[self.rng.below(set.len() as u32) as usize]
+            };
             let density = [0, 1, 4, self.density][self.rng.below(4) as usize];
             for l in levels.iter_mut() {
                 *l = if self.rng.below(100) < density {
                     let m = [2, 4, 16, 3000][self.rng.below(4) as usize];
                     let v = 1 + self.rng.below(m) as i32;
-                    if self.rng.next() & 1 == 0 { v } else { -v }
+                    if self.rng.next() & 1 == 0 {
+                        v
+                    } else {
+                        -v
+                    }
                 } else {
                     0
                 };
@@ -3568,7 +4468,9 @@ pub(crate) mod tests {
     /// Sorted colours from a small set, so neighbouring palettes share some.
     fn random_colors(r: &mut Rng, n: usize) -> Vec<u8> {
         const SET: [u8; 12] = [0, 1, 37, 74, 127, 128, 191, 200, 223, 239, 254, 255];
-        let mut c: Vec<u8> = (0..n).map(|_| SET[r.below(12) as usize] ^ (r.below(3) as u8 * 2)).collect();
+        let mut c: Vec<u8> = (0..n)
+            .map(|_| SET[r.below(12) as usize] ^ (r.below(3) as u8 * 2))
+            .collect();
         c.sort_unstable();
         c
     }
@@ -3578,7 +4480,11 @@ pub(crate) mod tests {
             width,
             height,
             mono,
-            colour: (!mono).then_some(Colour { primaries: 1, transfer: 13, matrix: 6 }),
+            colour: (!mono).then_some(Colour {
+                primaries: 1,
+                transfer: 13,
+                matrix: 6,
+            }),
             full_range: true,
             filter_intra: true,
             edge_filter: true,
@@ -3590,7 +4496,10 @@ pub(crate) mod tests {
     pub fn frame(seq: &Sequence, base: u8) -> Frame {
         Frame {
             screen_content: false,
-            quant: Quant { base, ..Default::default() },
+            quant: Quant {
+                base,
+                ..Default::default()
+            },
             delta_q_log2: None,
             lf: [0; 4],
             sharpness: 0,
@@ -3614,7 +4523,13 @@ pub(crate) mod tests {
     }
 
     /// The planes rav1d decodes, with or without its in-loop filters.
-    pub fn decode_with(data: Vec<u8>, w: usize, h: usize, planes: usize, filters: bool) -> Vec<Vec<u8>> {
+    pub fn decode_with(
+        data: Vec<u8>,
+        w: usize,
+        h: usize,
+        planes: usize,
+        filters: bool,
+    ) -> Vec<Vec<u8>> {
         let mut s = Settings::new();
         if !filters {
             s.set_inloop_filters(rav1d_dec::InloopFilterType::empty());
@@ -3623,15 +4538,25 @@ pub(crate) mod tests {
         s.set_max_frame_delay(1);
         s.set_strict_std_compliance(true);
         let mut d = Decoder::with_settings(&s).unwrap();
-        d.send_data(data.into_boxed_slice(), None, None, None).unwrap();
-        let pic = d.get_picture().or_else(|_| d.get_picture()).expect("a picture");
+        d.send_data(data.into_boxed_slice(), None, None, None)
+            .unwrap();
+        let pic = d
+            .get_picture()
+            .or_else(|_| d.get_picture())
+            .expect("a picture");
         assert_eq!((pic.width() as usize, pic.height() as usize), (w, h));
-        let comps = [PlanarImageComponent::Y, PlanarImageComponent::U, PlanarImageComponent::V];
+        let comps = [
+            PlanarImageComponent::Y,
+            PlanarImageComponent::U,
+            PlanarImageComponent::V,
+        ];
         comps[..planes]
             .iter()
             .map(|&c| {
                 let (plane, stride) = (pic.plane(c), pic.stride(c) as usize);
-                (0..h).flat_map(|y| plane[y * stride..][..w].to_vec()).collect()
+                (0..h)
+                    .flat_map(|y| plane[y * stride..][..w].to_vec())
+                    .collect()
             })
             .collect()
     }
@@ -3640,13 +4565,33 @@ pub(crate) mod tests {
         decode_with(data, w, h, planes, false)
     }
 
-    pub fn round_trip<D: Decide>(img: &[Vec<u8>], w: usize, h: usize, frame: Frame, decide: D) -> Coded {
-        round_trip_with(img, w, h, sequence(w as u32, h as u32, img.len() == 1), frame, decide)
+    pub fn round_trip<D: Decide>(
+        img: &[Vec<u8>],
+        w: usize,
+        h: usize,
+        frame: Frame,
+        decide: D,
+    ) -> Coded {
+        round_trip_with(
+            img,
+            w,
+            h,
+            sequence(w as u32, h as u32, img.len() == 1),
+            frame,
+            decide,
+        )
     }
 
     /// Codes `img`, decodes it with rav1d's in-loop filters off and checks the planes equal the
     /// encoder's reconstruction.
-    pub fn round_trip_with<D: Decide>(img: &[Vec<u8>], w: usize, h: usize, seq: Sequence, frame: Frame, decide: D) -> Coded {
+    pub fn round_trip_with<D: Decide>(
+        img: &[Vec<u8>],
+        w: usize,
+        h: usize,
+        seq: Sequence,
+        frame: Frame,
+        decide: D,
+    ) -> Coded {
         let planes = img.len();
         let mut e = Encoder::new(seq.clone(), frame, decide);
         e.recon = Some(vec![Vec::new(); planes]);
@@ -3678,7 +4623,16 @@ pub(crate) mod tests {
         let mut fr = frame(&seq, 1 + (seed * 37 % 250) as u8);
         f(&mut fr);
         let img = image(w, h, planes, seed);
-        round_trip(&img, w, h, fr, Random { rng: Rng(seed * 7919 + 1), density: 30 });
+        round_trip(
+            &img,
+            w,
+            h,
+            fr,
+            Random {
+                rng: Rng(seed * 7919 + 1),
+                density: 30,
+            },
+        );
     }
 
     #[test]
@@ -3703,22 +4657,61 @@ pub(crate) mod tests {
                 let coefs: Vec<i32> = (0..n)
                     .map(|_| match rng.below(16 / dense) {
                         0 => {
-                            let v = if rng.below(8) == 0 { rng.below(60) } else { rng.below(5) } as i32;
-                            if rng.below(2) == 0 { -v } else { v }
+                            let v = if rng.below(8) == 0 {
+                                rng.below(60)
+                            } else {
+                                rng.below(5)
+                            } as i32;
+                            if rng.below(2) == 0 {
+                                -v
+                            } else {
+                                v
+                            }
                         }
                         _ => 0,
                     })
                     .collect();
                 let eob = eob_of(tx, txtp, &coefs);
-                let plane = if t_dim.max > TxfmSize::S32x32 as u8 { 0 } else { rng.below(3) as usize };
-                let intra = Intra { y_mode: rng.below(13) as u8, ..Default::default() };
+                let plane = if t_dim.max > TxfmSize::S32x32 as u8 {
+                    0
+                } else {
+                    rng.below(3) as usize
+                };
+                let intra = Intra {
+                    y_mode: rng.below(13) as u8,
+                    ..Default::default()
+                };
                 let count = |costs: Option<&CoefCosts>, cdf: &mut CdfContext| {
                     let (mut a, mut l) = ([0x40u8; 48], [0x40u8; 48]);
                     let mut c = Counter::default();
-                    write_coefs(&mut c, cdf, costs, &mut a, &mut l, plane, 0, 0, tx, BlockSize::Bs64x64, txtp, &coefs, eob, &intra, false, qidx, false, i32::MAX, i32::MAX);
+                    write_coefs(
+                        &mut c,
+                        cdf,
+                        costs,
+                        &mut a,
+                        &mut l,
+                        plane,
+                        0,
+                        0,
+                        tx,
+                        BlockSize::Bs64x64,
+                        txtp,
+                        &coefs,
+                        eob,
+                        &intra,
+                        false,
+                        qidx,
+                        false,
+                        i32::MAX,
+                        i32::MAX,
+                    );
                     c.bits
                 };
-                assert_eq!(count(Some(&costs), &mut cdf), count(None, &mut cdf), "{tx:?} {txtp} eob {eob}");
+                assert_eq!(
+                    count(Some(&costs), &mut cdf),
+                    count(None, &mut cdf),
+                    "{tx:?} {txtp} eob {eob}"
+                );
             }
         }
     }
@@ -3726,7 +4719,11 @@ pub(crate) mod tests {
     #[test]
     fn prediction_only() {
         for (w, h) in [(64, 64), (1, 1), (100, 37), (130, 70), (8, 200)] {
-            for (mono, bl) in [(false, BlockLevel::Bl16x16), (true, BlockLevel::Bl32x32), (false, BlockLevel::Bl8x8)] {
+            for (mono, bl) in [
+                (false, BlockLevel::Bl16x16),
+                (true, BlockLevel::Bl32x32),
+                (false, BlockLevel::Bl8x8),
+            ] {
                 let planes = if mono { 1 } else { 3 };
                 let seq = sequence(w as u32, h as u32, mono);
                 round_trip(&image(w, h, planes, 1), w, h, frame(&seq, 100), Skip(bl));
@@ -3736,7 +4733,14 @@ pub(crate) mod tests {
 
     #[test]
     fn random_decisions() {
-        let sizes = [(64, 64), (100, 37), (130, 70), (3, 5), (257, 129), (16, 300)];
+        let sizes = [
+            (64, 64),
+            (100, 37),
+            (130, 70),
+            (3, 5),
+            (257, 129),
+            (16, 300),
+        ];
         for (i, (w, h)) in sizes.into_iter().enumerate() {
             for seed in 0..6 {
                 let s = (i * 10 + seed) as u64 + 1;
@@ -3785,7 +4789,10 @@ pub(crate) mod tests {
         for (w, h, screen) in [(320, 128, true), (320, 100, false), (500, 70, true)] {
             for img in [graphic(w, h), photo(w, h, 3, 3)] {
                 let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
-                let options = crate::Options { tile_cols_log2: 1, ..crate::Options::effort(100, 4, screen, (w * h) as u64).tune_iq() };
+                let options = crate::Options {
+                    tile_cols_log2: 1,
+                    ..crate::Options::effort(100, 4, screen, (w * h) as u64).tune_iq()
+                };
                 let mut e = crate::encoder(w as u32, h as u32, &rows, &options, false);
                 assert!(e.frame.tiling.cols() == 2);
                 e.recon = Some(vec![Vec::new(); 3]);
@@ -3798,7 +4805,11 @@ pub(crate) mod tests {
                 let recon = c.recon.as_ref().unwrap();
                 for p in 0..3 {
                     if let Some(i) = (0..w * h).find(|&i| decoded[p][i] != recon[p][i]) {
-                        panic!("{w}x{h} screen {screen} plane {p}: first difference at ({}, {})", i % w, i / w);
+                        panic!(
+                            "{w}x{h} screen {screen} plane {p}: first difference at ({}, {})",
+                            i % w,
+                            i / w
+                        );
                     }
                 }
             }
@@ -3813,8 +4824,13 @@ pub(crate) mod tests {
             let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
             for effort in 0..=3 {
                 for qidx in [60, 200] {
-                    let photos = crate::Options::effort(qidx, effort, false, (w * h) as u64).tune_iq().fast();
-                    let drawn = crate::Options::effort(qidx, effort, true, (w * h) as u64).drawn(effort).tune_iq().fast();
+                    let photos = crate::Options::effort(qidx, effort, false, (w * h) as u64)
+                        .tune_iq()
+                        .fast();
+                    let drawn = crate::Options::effort(qidx, effort, true, (w * h) as u64)
+                        .drawn(effort)
+                        .tune_iq()
+                        .fast();
                     for (name, options) in [("photos", photos), ("drawn", drawn)] {
                         let mut e = crate::encoder(w as u32, h as u32, &rows, &options, false);
                         e.recon = Some(vec![Vec::new(); 3]);
@@ -3842,8 +4858,17 @@ pub(crate) mod tests {
         let (w, h) = (700, 150);
         let img = photo(w, h, 3, 7);
         let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
-        let options = crate::Options { tile_cols_log2: 1, ..crate::Options::effort(120, 4, false, (w * h) as u64).tune_iq() };
-        let alone = crate::still(w as u32, h as u32, &rows, &options, &rav1d_dec::DecoderTrials);
+        let options = crate::Options {
+            tile_cols_log2: 1,
+            ..crate::Options::effort(120, 4, false, (w * h) as u64).tune_iq()
+        };
+        let alone = crate::still(
+            w as u32,
+            h as u32,
+            &rows,
+            &options,
+            &rav1d_dec::DecoderTrials,
+        );
         let threads: rav1d_shared::Spawner = std::sync::Arc::new(|f| {
             std::thread::spawn(f);
             true
@@ -3864,15 +4889,40 @@ pub(crate) mod tests {
         });
         let shared = std::sync::Arc::new(img.clone());
         for spawner in [&threads, &refusing, &dropping, &keeping] {
-            let coded = crate::still_on(w as u32, h as u32, shared.clone(), &options, Some(spawner), &rav1d_dec::DecoderTrials);
+            let coded = crate::still_on(
+                w as u32,
+                h as u32,
+                shared.clone(),
+                &options,
+                Some(spawner),
+                &rav1d_dec::DecoderTrials,
+            );
             assert!(coded.data == alone.data);
         }
         for f in late.lock().unwrap().drain(..) {
             f();
         }
-        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::still_on(w as u32, h as u32, shared.clone(), &options, Some(&panicking), &rav1d_dec::DecoderTrials)));
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::still_on(
+                w as u32,
+                h as u32,
+                shared.clone(),
+                &options,
+                Some(&panicking),
+                &rav1d_dec::DecoderTrials,
+            )
+        }));
         assert!(failed.is_err());
-        let one = crate::still(w as u32, h as u32, &rows, &crate::Options { tile_cols_log2: 0, ..options }, &rav1d_dec::DecoderTrials);
+        let one = crate::still(
+            w as u32,
+            h as u32,
+            &rows,
+            &crate::Options {
+                tile_cols_log2: 0,
+                ..options
+            },
+            &rav1d_dec::DecoderTrials,
+        );
         assert!(one.data != alone.data);
     }
 
@@ -3888,11 +4938,32 @@ pub(crate) mod tests {
             let img = graphic(w, h);
             let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
             let shared = std::sync::Arc::new(img.clone());
-            let base = crate::Options { tile_cols_log2: 1, ..crate::Options::effort(120, 4, false, (w * h) as u64).tune_iq() };
+            let base = crate::Options {
+                tile_cols_log2: 1,
+                ..crate::Options::effort(120, 4, false, (w * h) as u64).tune_iq()
+            };
             for options in [base.clone(), base.fast()] {
-                let alone = crate::still(w as u32, h as u32, &rows, &options, &rav1d_dec::DecoderTrials);
-                let on = crate::still_on(w as u32, h as u32, shared.clone(), &options, Some(&threads), &rav1d_dec::DecoderTrials);
-                assert!(alone.data == on.data, "{w}x{h}: one thread {} B, threads {} B", alone.data.len(), on.data.len());
+                let alone = crate::still(
+                    w as u32,
+                    h as u32,
+                    &rows,
+                    &options,
+                    &rav1d_dec::DecoderTrials,
+                );
+                let on = crate::still_on(
+                    w as u32,
+                    h as u32,
+                    shared.clone(),
+                    &options,
+                    Some(&threads),
+                    &rav1d_dec::DecoderTrials,
+                );
+                assert!(
+                    alone.data == on.data,
+                    "{w}x{h}: one thread {} B, threads {} B",
+                    alone.data.len(),
+                    on.data.len()
+                );
             }
         }
     }
@@ -3905,7 +4976,11 @@ pub(crate) mod tests {
     fn psnr(a: &[Vec<u8>], b: &[Vec<u8>]) -> f64 {
         let (mut se, mut n) = (0u64, 0usize);
         for (p, q) in a.iter().zip(b) {
-            se += p.iter().zip(q).map(|(&x, &y)| ((x as i32 - y as i32).pow(2)) as u64).sum::<u64>();
+            se += p
+                .iter()
+                .zip(q)
+                .map(|(&x, &y)| ((x as i32 - y as i32).pow(2)) as u64)
+                .sum::<u64>();
             n += p.len();
         }
         10.0 * (255.0f64 * 255.0 * n as f64 / se.max(1) as f64).log10()
@@ -3919,8 +4994,13 @@ pub(crate) mod tests {
                 (0..w * h)
                     .map(|i| {
                         let (x, y) = ((i % w) as f64, (i / w) as f64);
-                        let v = 128.0 + 60.0 * ((x * 0.05 + p as f64).sin() * (y * 0.03).cos())
-                            + if (x - 40.0).abs() < 10.0 || (y - 70.0).abs() < 3.0 { 50.0 } else { 0.0 };
+                        let v = 128.0
+                            + 60.0 * ((x * 0.05 + p as f64).sin() * (y * 0.03).cos())
+                            + if (x - 40.0).abs() < 10.0 || (y - 70.0).abs() < 3.0 {
+                                50.0
+                            } else {
+                                0.0
+                            };
                         (v as i32 + (rng.next() % 5) as i32 - 2).clamp(0, 255) as u8
                     })
                     .collect()
@@ -3945,11 +5025,21 @@ pub(crate) mod tests {
             let coded = round_trip(&img, w, h, fr, Rd);
             let db = psnr(&img, coded.recon.as_ref().unwrap());
             let bpp = coded.data.len() as f64 * 8.0 / (w * h) as f64;
-            eprintln!("rd {w}x{h} mono {mono} q {base}: {db:.4} dB {} bytes {bpp:.3} bpp", coded.data.len());
+            eprintln!(
+                "rd {w}x{h} mono {mono} q {base}: {db:.4} dB {} bytes {bpp:.3} bpp",
+                coded.data.len()
+            );
             if base == 0 {
-                assert!(coded.recon.as_ref().unwrap() == &img, "lossless changed pixels");
+                assert!(
+                    coded.recon.as_ref().unwrap() == &img,
+                    "lossless changed pixels"
+                );
             }
-            assert!(coded.data.len() <= max_bytes && db >= min_db, "{} bytes {db} dB", coded.data.len());
+            assert!(
+                coded.data.len() <= max_bytes && db >= min_db,
+                "{} bytes {db} dB",
+                coded.data.len()
+            );
         }
     }
 
@@ -4001,7 +5091,11 @@ pub(crate) mod tests {
             let planes = if mono { 1 } else { 3 };
             let img = photo(w, h, planes, 3);
             let (seq, fr) = crate::headers(w as u32, h as u32, mono, qidx);
-            assert!(fr.lf[0] > 0 && fr.cdef.is_some_and(|c| c.y[0] > 0), "{:?}", fr.lf);
+            assert!(
+                fr.lf[0] > 0 && fr.cdef.is_some_and(|c| c.y[0] > 0),
+                "{:?}",
+                fr.lf
+            );
             let mut unfiltered_fr = fr.clone();
             unfiltered_fr.lf = [0; 4];
             unfiltered_fr.cdef = None;
@@ -4009,7 +5103,11 @@ pub(crate) mod tests {
             let coded = round_trip_with(&img, w, h, seq, fr, Rd);
             let unfiltered = psnr(&img, coded.recon.as_ref().unwrap());
             let filtered = psnr(&img, &decode_with(coded.data.clone(), w, h, planes, true));
-            eprintln!("filters q {qidx} mono {mono}: {unfiltered:.3} -> {filtered:.3} dB, {} -> {} bytes", plain.data.len(), coded.data.len());
+            eprintln!(
+                "filters q {qidx} mono {mono}: {unfiltered:.3} -> {filtered:.3} dB, {} -> {} bytes",
+                plain.data.len(),
+                coded.data.len()
+            );
             assert!(filtered > unfiltered + 0.05);
             assert!(coded.data.len() <= plain.data.len() + 8);
         }
@@ -4038,12 +5136,21 @@ pub(crate) mod tests {
         let full = run(0);
         let kept = run(4);
         eprintln!("satd ranking: all modes {full:?}, 4 kept {kept:?}");
-        assert!(kept.0 as f64 <= full.0 as f64 * 1.04 && kept.1 >= full.1 - 0.15, "{full:?} {kept:?}");
+        assert!(
+            kept.0 as f64 <= full.0 as f64 * 1.04 && kept.1 >= full.1 - 0.15,
+            "{full:?} {kept:?}"
+        );
     }
 
     /// A picture of flat shapes and one-pixel lines in a few colours.
     fn graphic(w: usize, h: usize) -> Vec<Vec<u8>> {
-        let colours = [[235u8, 128, 128], [40, 160, 110], [120, 90, 200], [200, 30, 150], [16, 128, 128]];
+        let colours = [
+            [235u8, 128, 128],
+            [40, 160, 110],
+            [120, 90, 200],
+            [200, 30, 150],
+            [16, 128, 128],
+        ];
         let mut planes = vec![vec![0u8; w * h]; 3];
         for y in 0..h {
             for x in 0..w {
@@ -4102,7 +5209,13 @@ pub(crate) mod tests {
                 }
                 (m, 0)
             }
-            fn residual(&mut self, _: usize, _: TxfmSize, set: &[TxfmType], levels: &mut [i32]) -> Option<TxfmType> {
+            fn residual(
+                &mut self,
+                _: usize,
+                _: TxfmSize,
+                set: &[TxfmType],
+                levels: &mut [i32],
+            ) -> Option<TxfmType> {
                 levels.fill(0);
                 Some(set.first().copied().unwrap_or(DCT_DCT))
             }
@@ -4179,35 +5292,52 @@ pub(crate) mod tests {
             fast_cdef: std::env::var("ENC_FAST_CDEF").is_ok_and(|v| v == "1"),
             tile_cols_log2: std::env::var("ENC_TILES").map_or(1, |v| v.parse().unwrap()),
         };
-        let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
         files.sort();
         let (mut ms, mut bytes, mut db) = (0, 0, 0.0);
         for path in &files {
             let (w0, h0, rgb) = ppm(path);
             let crop: usize = std::env::var("ENC_CROP").map_or(usize::MAX, |v| v.parse().unwrap());
             let (w, h) = (w0.min(crop), h0.min(crop));
-            let rgb: Vec<u8> = (0..h).flat_map(|y| rgb[y * w0 * 3..][..w * 3].to_vec()).collect();
+            let rgb: Vec<u8> = (0..h)
+                .flat_map(|y| rgb[y * w0 * 3..][..w * 3].to_vec())
+                .collect();
             let mut planes = vec![vec![0u8; w * h]; 3];
             for (i, px) in rgb.chunks_exact(3).enumerate() {
                 let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
                 planes[0][i] = ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) as u8;
-                planes[1][i] = ((-11059 * r - 21709 * g + 32768 * b + (128 << 16) + 32768) >> 16).clamp(0, 255) as u8;
-                planes[2][i] = ((32768 * r - 27439 * g - 5329 * b + (128 << 16) + 32768) >> 16).clamp(0, 255) as u8;
+                planes[1][i] = ((-11059 * r - 21709 * g + 32768 * b + (128 << 16) + 32768) >> 16)
+                    .clamp(0, 255) as u8;
+                planes[2][i] = ((32768 * r - 27439 * g - 5329 * b + (128 << 16) + 32768) >> 16)
+                    .clamp(0, 255) as u8;
             }
             let rows: Vec<&[u8]> = planes.iter().map(|p| p.as_slice()).collect();
             // `ENC_EFFORT` takes the product's options: effort, tune IQ and `ENC_FAST=1` for the fast search.
             let options = match std::env::var("ENC_EFFORT") {
                 Ok(effort) => {
                     let effort: u8 = effort.parse().unwrap();
-                    let mut o = crate::Options::effort(qidx, effort, options.screen, (w * h) as u64).tune_iq();
+                    let mut o =
+                        crate::Options::effort(qidx, effort, options.screen, (w * h) as u64)
+                            .tune_iq();
                     if std::env::var("ENC_DRAWN").is_ok_and(|v| v == "1") {
                         o = o.drawn(effort);
                     }
                     if let Ok(t) = std::env::var("ENC_TILES") {
                         o.tile_cols_log2 = t.parse().unwrap();
                     }
-                    let mut o = if std::env::var("ENC_FAST").is_ok_and(|v| v == "1") { o.fast() } else { o };
-                    for (k, v) in std::env::var("ENC_SET").unwrap_or_default().split(',').filter_map(|s| s.split_once('=')) {
+                    let mut o = if std::env::var("ENC_FAST").is_ok_and(|v| v == "1") {
+                        o.fast()
+                    } else {
+                        o
+                    };
+                    for (k, v) in std::env::var("ENC_SET")
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter_map(|s| s.split_once('='))
+                    {
                         match k {
                             "keep" => o.keep_modes = v.parse().unwrap(),
                             "keep_uv" => o.keep_chroma = v.parse().unwrap(),
@@ -4249,11 +5379,22 @@ pub(crate) mod tests {
                 true
             });
             let shared = std::sync::Arc::new(planes.clone());
-            let workers = std::env::var("ENC_THREADS").is_ok_and(|v| v == "1").then_some((&threads, &shared));
-            let mut e = crate::still_rows(w as u32, h as u32, &rows, &options, std::env::var("ENC_STATS").is_ok(), workers);
+            let workers = std::env::var("ENC_THREADS")
+                .is_ok_and(|v| v == "1")
+                .then_some((&threads, &shared));
+            let mut e = crate::still_rows(
+                w as u32,
+                h as u32,
+                &rows,
+                &options,
+                std::env::var("ENC_STATS").is_ok(),
+                workers,
+            );
             let searched = t.elapsed().as_millis();
             let stats = e.stats;
-            let add = |a: &mut (u32, u32, f64, f64, u32), b: &(u32, u32, f64, f64, u32)| *a = (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4);
+            let add = |a: &mut (u32, u32, f64, f64, u32), b: &(u32, u32, f64, f64, u32)| {
+                *a = (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4)
+            };
             let mut rect_seen = [[(0, 0, 0.0, 0.0, 0); 4]; 5];
             let mut split_seen = [(0, 0, 0.0, 0.0, 0); 4];
             for col in &e.rect_seen {
@@ -4271,7 +5412,8 @@ pub(crate) mod tests {
             let ns = e.stage_ns.map(|n| n / 1_000_000);
             let sizes = e.size_ns.map(|n| n / 1_000_000);
             let estimated = e.estimated as f64 / 4096.0;
-            let estimated_db = 10.0 * (65025.0 * (w * h * 3) as f64 / e.estimated_sse.max(1) as f64).log10();
+            let estimated_db =
+                10.0 * (65025.0 * (w * h * 3) as f64 / e.estimated_sse.max(1) as f64).log10();
             if options.filter_search {
                 e.flush();
                 crate::filters::search(&mut e, &rows, &rav1d_dec::DecoderTrials);
@@ -4280,30 +5422,78 @@ pub(crate) mod tests {
             let t = t.elapsed().as_millis();
             if std::env::var("ENC_STATS").is_ok() {
                 let px = (w * h) as f64;
-                let per = stats.map(|[n, c]| format!("{:.2}/{:.1}", n as f64 * 64.0 / px, c as f64 / px));
+                let per =
+                    stats.map(|[n, c]| format!("{:.2}/{:.1}", n as f64 * 64.0 / px, c as f64 / px));
                 println!("  estimated {estimated:.0} B {estimated_db:.2} dB unfiltered");
                 println!("  searches per 8x8 / coefficients per pixel: rank {} depth {} chroma {} final {} code {}", per[0], per[1], per[2], per[4], per[5]);
                 println!("  ms: rank {} depth {} chroma {} final {}, coded {searched}, with filters {t}; kept modes {}; scoring restore {} predict {} mode bits {} estimate {}", ns[0], ns[1], ns[2], ns[4], ns[3], ns[6], ns[7], ns[8], ns[9]);
                 for (l, side) in [64, 32, 16].into_iter().enumerate() {
-                    println!("  rect under the ratio at {side}, met/tried/gain%/big by activity: {}", rect_seen[l].iter().map(|s| format!("{}/{}/{:.3}/{}", s.0, s.1, 100.0 * s.2 / s.3.max(1.0), s.4)).collect::<Vec<_>>().join(" "));
+                    println!(
+                        "  rect under the ratio at {side}, met/tried/gain%/big by activity: {}",
+                        rect_seen[l]
+                            .iter()
+                            .map(|s| format!(
+                                "{}/{}/{:.3}/{}",
+                                s.0,
+                                s.1,
+                                100.0 * s.2 / s.3.max(1.0),
+                                s.4
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
                 }
-                println!("  16x16 splits met/tried/gain%/big by activity: {}", split_seen.iter().map(|s| format!("{}/{}/{:.3}/{}", s.0, s.1, 100.0 * s.2 / s.3.max(1.0), s.4)).collect::<Vec<_>>().join(" "));
-                println!("  ms by block side: 4 {} 8 {} 16 {} 32 {} 64 {}", sizes[0], sizes[1], sizes[2], sizes[3], sizes[4]);
+                println!(
+                    "  16x16 splits met/tried/gain%/big by activity: {}",
+                    split_seen
+                        .iter()
+                        .map(|s| format!(
+                            "{}/{}/{:.3}/{}",
+                            s.0,
+                            s.1,
+                            100.0 * s.2 / s.3.max(1.0),
+                            s.4
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+                println!(
+                    "  ms by block side: 4 {} 8 {} 16 {} 32 {} 64 {}",
+                    sizes[0], sizes[1], sizes[2], sizes[3], sizes[4]
+                );
             }
             // `ENC_NO_DECODE=1` leaves only the encoder for a profile or a cycle count.
-            let d = if std::env::var("ENC_NO_DECODE").is_ok() { 0.0 } else { psnr(&planes, &decode_with(c.data.clone(), w, h, 3, true)) };
-            println!("{:20} {t:6} ms {:7} B {d:6.2} dB", path.file_stem().unwrap().to_string_lossy(), c.data.len());
+            let d = if std::env::var("ENC_NO_DECODE").is_ok() {
+                0.0
+            } else {
+                psnr(&planes, &decode_with(c.data.clone(), w, h, 3, true))
+            };
+            println!(
+                "{:20} {t:6} ms {:7} B {d:6.2} dB",
+                path.file_stem().unwrap().to_string_lossy(),
+                c.data.len()
+            );
             if std::env::var("ENC_UNFILTERED").is_ok() {
-                println!("  before the in-loop filters {:.2} dB", psnr(&planes, &decode_with(c.data.clone(), w, h, 3, false)));
+                println!(
+                    "  before the in-loop filters {:.2} dB",
+                    psnr(&planes, &decode_with(c.data.clone(), w, h, 3, false))
+                );
             }
             ms += t;
             if let Ok(out) = std::env::var("ENC_OUT") {
-                std::fs::write(format!("{out}/{}.obu", path.file_stem().unwrap().to_string_lossy()), &c.data).unwrap();
+                std::fs::write(
+                    format!("{out}/{}.obu", path.file_stem().unwrap().to_string_lossy()),
+                    &c.data,
+                )
+                .unwrap();
             }
             bytes += c.data.len();
             db += d;
         }
-        println!("total {ms} ms {bytes} B mean {:.3} dB", db / files.len() as f64);
+        println!(
+            "total {ms} ms {bytes} B mean {:.3} dB",
+            db / files.len() as f64
+        );
     }
 
     /// Variance Boost lowers the qindex of flat superblocks: a picture half photo, half gradient
@@ -4333,10 +5523,26 @@ pub(crate) mod tests {
         assert!(boosted.recon.as_ref().unwrap() == &decode(boosted.data.clone(), w, h, 3));
         let db = |c: &Coded, half: usize| {
             let d = decode_with(c.data.clone(), w, h, 3, true);
-            let pick = |v: &Vec<Vec<u8>>| v.iter().map(|p| (0..h).flat_map(|y| p[y * w + half * w / 2..][..w / 2].to_vec()).collect()).collect::<Vec<Vec<u8>>>();
+            let pick = |v: &Vec<Vec<u8>>| {
+                v.iter()
+                    .map(|p| {
+                        (0..h)
+                            .flat_map(|y| p[y * w + half * w / 2..][..w / 2].to_vec())
+                            .collect()
+                    })
+                    .collect::<Vec<Vec<u8>>>()
+            };
             psnr(&pick(&img), &pick(&d))
         };
-        eprintln!("variance boost: plain {} B {:.2}/{:.2} dB, boosted {} B {:.2}/{:.2} dB", plain.data.len(), db(&plain, 0), db(&plain, 1), boosted.data.len(), db(&boosted, 0), db(&boosted, 1));
+        eprintln!(
+            "variance boost: plain {} B {:.2}/{:.2} dB, boosted {} B {:.2}/{:.2} dB",
+            plain.data.len(),
+            db(&plain, 0),
+            db(&plain, 1),
+            boosted.data.len(),
+            db(&boosted, 0),
+            db(&boosted, 1)
+        );
         assert!(db(&boosted, 1) > db(&plain, 1) + 0.5);
     }
 
@@ -4359,7 +5565,13 @@ pub(crate) mod tests {
             let c = e.finish();
             let recon = c.recon.as_ref().unwrap();
             assert!(recon == &decode(c.data.clone(), w, h, 3));
-            eprintln!("cnn prune {level}: {} B {:.2} dB, full search {} B {:.2} dB", c.data.len(), psnr(&img, recon), full.data.len(), psnr(&img, full.recon.as_ref().unwrap()));
+            eprintln!(
+                "cnn prune {level}: {} B {:.2} dB, full search {} B {:.2} dB",
+                c.data.len(),
+                psnr(&img, recon),
+                full.data.len(),
+                psnr(&img, full.recon.as_ref().unwrap())
+            );
         }
     }
 
@@ -4388,7 +5600,11 @@ pub(crate) mod tests {
         }
         let weighted = e.finish();
         assert!(weighted.recon.as_ref().unwrap() == &decode(weighted.data.clone(), w, h, 3));
-        eprintln!("ssim weighting: plain {} B, weighted {} B", plain.data.len(), weighted.data.len());
+        eprintln!(
+            "ssim weighting: plain {} B, weighted {} B",
+            plain.data.len(),
+            weighted.data.len()
+        );
         assert!(weighted.data.len() * 10 < plain.data.len() * 9);
     }
 
@@ -4405,9 +5621,17 @@ pub(crate) mod tests {
             let db = psnr(&img, &decode_with(c.data.clone(), w, h, 3, true));
             (c.data.len(), db)
         };
-        let iq = crate::Options { quant_matrices: true, chroma_delta_q: true, iq_rdmult: true, ..plain.clone() };
+        let iq = crate::Options {
+            quant_matrices: true,
+            chroma_delta_q: true,
+            iq_rdmult: true,
+            ..plain.clone()
+        };
         let (a, b) = (code(&plain), code(&iq));
-        eprintln!("tune iq: plain {} B {:.2} dB, tune iq {} B {:.2} dB", a.0, a.1, b.0, b.1);
+        eprintln!(
+            "tune iq: plain {} B {:.2} dB, tune iq {} B {:.2} dB",
+            a.0, a.1, b.0, b.1
+        );
         assert!(b.0 < a.0 && b.1 > a.1 - 3.0);
     }
 
@@ -4417,17 +5641,31 @@ pub(crate) mod tests {
     fn filter_search() {
         let (w, h) = (160, 120);
         let img: Vec<Vec<u8>> = (0..3)
-            .map(|p| (0..w * h).map(|i| {
-                let (x, y) = (i % w, i / w);
-                let base = (x + 2 * y + 60 * p) as u8;
-                if (x / 20 + y / 20) % 2 == 0 { base } else { base.wrapping_add(90) }
-            }).collect())
+            .map(|p| {
+                (0..w * h)
+                    .map(|i| {
+                        let (x, y) = (i % w, i / w);
+                        let base = (x + 2 * y + 60 * p) as u8;
+                        if (x / 20 + y / 20) % 2 == 0 {
+                            base
+                        } else {
+                            base.wrapping_add(90)
+                        }
+                    })
+                    .collect()
+            })
             .collect();
         let planes: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
         let code = |search: bool| {
-            let o = crate::Options { filter_search: search, ..crate::Options::effort(144, 4, false, u64::MAX) };
+            let o = crate::Options {
+                filter_search: search,
+                ..crate::Options::effort(144, 4, false, u64::MAX)
+            };
             let c = crate::still(w as u32, h as u32, &planes, &o, &rav1d_dec::DecoderTrials);
-            (c.data.len(), psnr(&img, &decode_with(c.data.clone(), w, h, 3, true)))
+            (
+                c.data.len(),
+                psnr(&img, &decode_with(c.data.clone(), w, h, 3, true)),
+            )
         };
         let (from_q, searched) = (code(false), code(true));
         eprintln!("filter search: from q {from_q:?}, searched {searched:?}");
@@ -4439,10 +5677,23 @@ pub(crate) mod tests {
     #[test]
     fn skip_prediction() {
         let flat = |r: i16| vec![r; 64 * 64];
-        let checker = |r: i16| (0..64 * 64).map(|i| if (i / 64 + i % 64) % 2 == 0 { r } else { -r }).collect::<Vec<i16>>();
+        let checker = |r: i16| {
+            (0..64 * 64)
+                .map(|i| if (i / 64 + i % 64) % 2 == 0 { r } else { -r })
+                .collect::<Vec<i16>>()
+        };
         let skip = |res: &[i16], dq| predicts_skip(res, 64, 64, 64, 64, dq);
-        assert_eq!((skip(&flat(2), [600, 600]), skip(&flat(3), [600, 600])), (true, false));
-        assert_eq!((skip(&checker(26), [600, 1 << 20]), skip(&checker(27), [600, 1 << 20])), (true, false));
+        assert_eq!(
+            (skip(&flat(2), [600, 600]), skip(&flat(3), [600, 600])),
+            (true, false)
+        );
+        assert_eq!(
+            (
+                skip(&checker(26), [600, 1 << 20]),
+                skip(&checker(27), [600, 1 << 20])
+            ),
+            (true, false)
+        );
         assert!(!skip(&checker(2), [600, 20]));
     }
 }

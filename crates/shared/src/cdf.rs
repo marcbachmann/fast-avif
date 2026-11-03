@@ -4,7 +4,6 @@ use std::cmp;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use crate::sync::{RwLock, RwLockWriteGuard};
 use strum::EnumCount;
 
 use crate::align::{Align16, Align32, Align4, Align8};
@@ -14,6 +13,7 @@ use crate::levels::{
     BlockLevel, BlockPartition, BlockSize, MVJoint, SegmentId, TxfmSize, N_COMP_INTER_PRED_MODES,
     N_INTRA_PRED_MODES, N_UV_INTRA_PRED_MODES,
 };
+use crate::sync::{RwLock, RwLockWriteGuard};
 use crate::tables::DAV1D_PARTITION_TYPE_COUNT;
 
 #[derive(Clone, Default)]
@@ -4937,11 +4937,7 @@ static DEFAULT_CDF: CdfDefaultContext = CdfDefaultContext {
     ])),
 };
 
-pub fn rav1d_cdf_thread_update(
-    hdr: &Rav1dFrameHeader,
-    dst: &mut CdfContext,
-    src: &CdfContext,
-) {
+pub fn rav1d_cdf_thread_update(hdr: &Rav1dFrameHeader, dst: &mut CdfContext, src: &CdfContext) {
     macro_rules! update_cdf_1d {
         ($n1d:expr, $($name:tt)+) => {
             dst.$($name)+[$n1d] = 0

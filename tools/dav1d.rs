@@ -52,7 +52,12 @@ fn args() -> Result<Args, String> {
             Some((k, v)) if k.starts_with("--") => (k.to_string(), Some(v.to_string())),
             _ => (arg.clone(), None),
         };
-        let mut value = || inline.clone().or_else(|| it.next()).ok_or_else(|| format!("{k} needs a value"));
+        let mut value = || {
+            inline
+                .clone()
+                .or_else(|| it.next())
+                .ok_or_else(|| format!("{k} needs a value"))
+        };
         match k.as_str() {
             "-i" | "--input" => a.input = value()?,
             "-o" | "--output" => a.output = Some(value()?),
@@ -67,10 +72,16 @@ fn args() -> Result<Args, String> {
                 println!("{}", rav1d::rav1d_version());
                 std::process::exit(0);
             }
-            "--framedelay" => a.frame_delay = value()?.parse().map_err(|e| format!("--framedelay: {e}"))?,
-            "--oppoint" => a.operating_point = value()?.parse().map_err(|e| format!("--oppoint: {e}"))?,
+            "--framedelay" => {
+                a.frame_delay = value()?.parse().map_err(|e| format!("--framedelay: {e}"))?
+            }
+            "--oppoint" => {
+                a.operating_point = value()?.parse().map_err(|e| format!("--oppoint: {e}"))?
+            }
             "--alllayers" => a.all_layers = value()? != "0",
-            "--sizelimit" => a.size_limit = value()?.parse().map_err(|e| format!("--sizelimit: {e}"))?,
+            "--sizelimit" => {
+                a.size_limit = value()?.parse().map_err(|e| format!("--sizelimit: {e}"))?
+            }
             "--strict" => a.strict = value()? != "0",
             "--decodeframetype" => {
                 a.frame_type = match value()?.as_str() {
@@ -78,7 +89,11 @@ fn args() -> Result<Args, String> {
                     "reference" => DecodeFrameType::Reference,
                     "intra" => DecodeFrameType::Intra,
                     "key" => DecodeFrameType::Key,
-                    other => return Err(format!("--decodeframetype {other}: all, reference, intra or key")),
+                    other => {
+                        return Err(format!(
+                            "--decodeframetype {other}: all, reference, intra or key"
+                        ))
+                    }
                 }
             }
             "--demuxer" => {
@@ -97,9 +112,21 @@ fn args() -> Result<Args, String> {
 /// flags below them, as its kernels are chosen level by level.
 fn cpu_mask(s: &str) -> Result<u32, String> {
     let named: &[(&str, u32)] = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-        &[("sse2", 1), ("ssse3", 3), ("sse41", 7), ("avx2", 15), ("avx512icl", 31)]
+        &[
+            ("sse2", 1),
+            ("ssse3", 3),
+            ("sse41", 7),
+            ("avx2", 15),
+            ("avx512icl", 31),
+        ]
     } else if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-        &[("neon", 1), ("dotprod", 2), ("i8mm", 4), ("sve", 8), ("sve2", 16)]
+        &[
+            ("neon", 1),
+            ("dotprod", 2),
+            ("i8mm", 4),
+            ("sve", 8),
+            ("sve2", 16),
+        ]
     } else if cfg!(any(target_arch = "riscv32", target_arch = "riscv64")) {
         &[("rvv", 1)]
     } else {
@@ -114,7 +141,9 @@ fn cpu_mask(s: &str) -> Result<u32, String> {
     if let Some(hex) = s.strip_prefix("0x") {
         return u32::from_str_radix(hex, 16).map_err(|e| format!("--cpumask: {e}"));
     }
-    s.parse::<i64>().map(|n| n as u32).map_err(|e| format!("--cpumask {s}: {e}"))
+    s.parse::<i64>()
+        .map(|n| n as u32)
+        .map_err(|e| format!("--cpumask {s}: {e}"))
 }
 
 /// Reads the leb128 at `at`, giving the value and the bytes it took.
@@ -204,27 +233,36 @@ struct Md5 {
 
 impl Md5 {
     const K: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
+        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
+        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
+        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
+        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
+        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xeb86d391,
     ];
     const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
-        14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
-        21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
 
     fn new() -> Self {
-        Self { state: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476], block: [0; 64], filled: 0, len: 0 }
+        Self {
+            state: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
+            block: [0; 64],
+            filled: 0,
+            len: 0,
+        }
     }
 
     fn body(&mut self) {
-        let m: [u32; 16] = std::array::from_fn(|i| u32::from_le_bytes(self.block[4 * i..][..4].try_into().unwrap()));
+        let m: [u32; 16] = std::array::from_fn(|i| {
+            u32::from_le_bytes(self.block[4 * i..][..4].try_into().unwrap())
+        });
         let [mut a, mut b, mut c, mut d] = self.state;
         for i in 0..64 {
             let (f, g) = match i / 16 {
@@ -233,7 +271,10 @@ impl Md5 {
                 2 => (b ^ c ^ d, (3 * i + 5) % 16),
                 _ => (c ^ (b | !d), (7 * i) % 16),
             };
-            let f = f.wrapping_add(a).wrapping_add(Self::K[i]).wrapping_add(m[g]);
+            let f = f
+                .wrapping_add(a)
+                .wrapping_add(Self::K[i])
+                .wrapping_add(m[g]);
             a = d;
             d = c;
             c = b;
@@ -265,7 +306,11 @@ impl Md5 {
             self.update(&[0]);
         }
         self.update(&bits);
-        self.state.iter().flat_map(|s| s.to_le_bytes()).map(|b| format!("{b:02x}")).collect()
+        self.state
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 
@@ -281,11 +326,23 @@ fn hash_picture(md5: &mut Md5, p: &rav1d::Picture) {
     };
     hash_plane(md5, p, PlanarImageComponent::Y, w * sample, h);
     for c in [PlanarImageComponent::U, PlanarImageComponent::V] {
-        hash_plane(md5, p, c, ((w + ss_hor) >> ss_hor) * sample, (h + ss_ver) >> ss_ver);
+        hash_plane(
+            md5,
+            p,
+            c,
+            ((w + ss_hor) >> ss_hor) * sample,
+            (h + ss_ver) >> ss_ver,
+        );
     }
 }
 
-fn hash_plane(md5: &mut Md5, p: &rav1d::Picture, c: PlanarImageComponent, bytes: usize, rows: usize) {
+fn hash_plane(
+    md5: &mut Md5,
+    p: &rav1d::Picture,
+    c: PlanarImageComponent,
+    bytes: usize,
+    rows: usize,
+) {
     let (stride, data) = (p.stride(c) as usize, p.plane(c));
     for y in 0..rows {
         md5.update(&data[y * stride..][..bytes]);
@@ -296,8 +353,14 @@ fn run(a: &Args) -> Result<ExitCode, String> {
     if let Some(m) = a.muxer.as_deref().filter(|m| !matches!(*m, "md5" | "null")) {
         return Err(format!("--muxer {m}: this runner writes md5 or null"));
     }
-    if let Some(o) = a.output.as_deref().filter(|o| a.muxer.is_none() && !(matches!(*o, "-" | "/dev/null") || o.ends_with(".md5"))) {
-        return Err(format!("-o {o}: this runner writes an md5, name a .md5 file or -"));
+    if let Some(o) = a
+        .output
+        .as_deref()
+        .filter(|o| a.muxer.is_none() && !(matches!(*o, "-" | "/dev/null") || o.ends_with(".md5")))
+    {
+        return Err(format!(
+            "-o {o}: this runner writes an md5, name a .md5 file or -"
+        ));
     }
     if let Some(mask) = &a.cpu_mask {
         rav1d_set_cpu_flags_mask(cpu_mask(mask)?);
@@ -311,8 +374,10 @@ fn run(a: &Args) -> Result<ExitCode, String> {
         annexb_units(&data).ok_or("unknown stream format")?
     };
     // As dav1d's CLI: -o /dev/null is the null muxer, any other output without a muxer the md5.
-    let null = a.muxer.as_deref() == Some("null") || a.muxer.is_none() && a.output.as_deref() == Some("/dev/null");
-    let hashing = a.verify.is_some() || !null && (a.muxer.as_deref() == Some("md5") || a.muxer.is_none() && a.output.is_some());
+    let null = a.muxer.as_deref() == Some("null")
+        || a.muxer.is_none() && a.output.as_deref() == Some("/dev/null");
+    let hashing = a.verify.is_some()
+        || !null && (a.muxer.as_deref() == Some("md5") || a.muxer.is_none() && a.output.is_some());
     let mut settings = Settings::new();
     settings.set_n_threads(a.threads);
     settings.set_max_frame_delay(a.frame_delay);
@@ -382,7 +447,9 @@ fn run(a: &Args) -> Result<ExitCode, String> {
     } else {
         match a.output.as_deref() {
             Some("-") | None => println!("{digest}"),
-            Some(path) => std::fs::File::create(path).and_then(|mut f| writeln!(f, "{digest}")).map_err(|e| format!("{path}: {e}"))?,
+            Some(path) => std::fs::File::create(path)
+                .and_then(|mut f| writeln!(f, "{digest}"))
+                .map_err(|e| format!("{path}: {e}"))?,
         }
     }
     Ok(ExitCode::SUCCESS)

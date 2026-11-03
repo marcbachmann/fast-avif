@@ -1,19 +1,20 @@
 use std::cmp;
 use std::mem::MaybeUninit;
-use rav1d_shared::sync::RwLock;
-use zerocopy::FromBytes;
 
 use rav1d_shared::align::{Align16, AlignedVec2, ArrayDefault};
-use crate::ctx::CaseSet;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::intops::{clip, iclip};
 use rav1d_shared::headers::{
     Rav1dFrameHeader, Rav1dLoopfilterModeRefDeltas, Rav1dPixelLayout, Rav1dRestorationType,
 };
-use crate::internal::Bxy;
+use rav1d_shared::intops::{clip, iclip};
 use rav1d_shared::levels::{BlockSize, SegmentId, TxfmSize};
 use rav1d_shared::relaxed_atomic::RelaxedAtomic;
+use rav1d_shared::sync::RwLock;
 use rav1d_shared::tables::DAV1D_TXFM_DIMENSIONS;
+use zerocopy::FromBytes;
+
+use crate::ctx::CaseSet;
+use crate::internal::Bxy;
 
 #[repr(C)]
 pub struct Av1FilterLUT {

@@ -1,25 +1,26 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 use std::hint::assert_unchecked;
 use std::marker::PhantomData;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ops::Range;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{array, mem};
+
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
+use crate::bitdepth::BitDepth;
 use crate::disjoint_mut::{
     AsMutPtr, DisjointImmutGuard, DisjointMut, DisjointMutGuard, SliceBounds,
 };
 use crate::error::{Rav1dError, Rav1dResult};
-use crate::bitdepth::BitDepth;
-use crate::props::Rav1dDataProps;
 use crate::headers::{
     Rav1dContentLightLevel, Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay,
     Rav1dPixelLayout, Rav1dSequenceHeader,
 };
 use crate::pixels::Pixels;
 use crate::pool::MemPool;
+use crate::props::Rav1dDataProps;
 use crate::strided::Strided;
 use crate::with_offset::WithOffset;
 
@@ -624,8 +625,7 @@ mod tests {
     fn block_empty() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        pic.with_offset()
-            .block::<BitDepth8>(-9..-9, 0..4);
+        pic.with_offset().block::<BitDepth8>(-9..-9, 0..4);
     }
 
     fn refused(rows: Range<isize>, cols: Range<isize>) {
@@ -663,9 +663,7 @@ mod tests {
     fn block_rows_borrowed_alone() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        let b = pic
-            .with_offset()
-            .block::<BitDepth8>(0..3, 0..8);
+        let b = pic.with_offset().block::<BitDepth8>(0..3, 0..8);
         let _middle = pic
             .with_offset()
             .block::<BitDepth8>(1..2, 0..8)
@@ -679,9 +677,7 @@ mod tests {
     fn block_rows_overlap_tracked() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        let b = pic
-            .with_offset()
-            .block::<BitDepth8>(0..2, 0..8);
+        let b = pic.with_offset().block::<BitDepth8>(0..2, 0..8);
         let _w = b.row_mut(1, 0, 8);
         let _r = b.row(1, 4, 4);
     }
@@ -692,9 +688,7 @@ mod tests {
     fn block_row_outside_the_footprint() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        let b = pic
-            .with_offset()
-            .block::<BitDepth8>(0..2, 0..8);
+        let b = pic.with_offset().block::<BitDepth8>(0..2, 0..8);
         let _ = b.row(0, 1, 8);
     }
 
@@ -704,9 +698,7 @@ mod tests {
     fn block_row_past_its_pixels_refused_in_release() {
         let mut buf = plane::<BitDepth8>();
         let pic = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), S);
-        let b = pic
-            .with_offset()
-            .block::<BitDepth8>(0..1, 0..8);
+        let b = pic.with_offset().block::<BitDepth8>(0..1, 0..8);
         let _ = b.row(H as isize, 0, 8);
     }
 
@@ -794,7 +786,9 @@ impl PictureParameters {
         Some(PlaneLayout {
             offsets: [0, y, y.checked_add(uv)?],
             strides,
-            len: y.checked_add(uv.checked_mul(2)?)?.checked_add(RAV1D_PICTURE_ALIGNMENT)?,
+            len: y
+                .checked_add(uv.checked_mul(2)?)?
+                .checked_add(RAV1D_PICTURE_ALIGNMENT)?,
         })
     }
 }
@@ -855,12 +849,21 @@ impl Drop for PoolBuf {
 impl PictureAllocator for PoolAllocator {
     fn alloc(&self, picture: &PictureParameters) -> Result<PictureBuffer, Rav1dError> {
         let mut layout = picture.plane_layout().ok_or(Rav1dError::OutOfMemory)?;
-        let buf = self.0.pop_init(layout.len.checked_add(RAV1D_PICTURE_ALIGNMENT).ok_or(Rav1dError::OutOfMemory)?, 0);
+        let buf = self.0.pop_init(
+            layout
+                .len
+                .checked_add(RAV1D_PICTURE_ALIGNMENT)
+                .ok_or(Rav1dError::OutOfMemory)?,
+            0,
+        );
         let skip = buf.as_ptr().align_offset(RAV1D_PICTURE_ALIGNMENT);
         layout.offsets = layout.offsets.map(|o| o + skip);
         layout.len = buf.len();
         Ok(PictureBuffer {
-            memory: Box::new(PoolBuf { pool: self.0.clone(), buf }),
+            memory: Box::new(PoolBuf {
+                pool: self.0.clone(),
+                buf,
+            }),
             layout,
         })
     }
@@ -934,13 +937,16 @@ pub fn alloc_picture_data(
         bpc: p.bpc as u8,
         layout: p.layout,
     };
-    let Ok(Ok(PictureBuffer { memory, layout })) = catch_unwind(AssertUnwindSafe(|| allocator.0.alloc(&picture))) else {
+    let Ok(Ok(PictureBuffer { memory, layout })) =
+        catch_unwind(AssertUnwindSafe(|| allocator.0.alloc(&picture)))
+    else {
         return Err(Rav1dError::OutOfMemory);
     };
     let memory = NonNull::from(Box::leak(Box::new(memory)));
     let held = HeldMemory(memory);
     // SAFETY: `memory` is valid and unaliased until `held` drops; nothing else reads it here.
-    let Ok(bytes) = catch_unwind(AssertUnwindSafe(|| unsafe { (**memory.as_ptr()).as_mut() })) else {
+    let Ok(bytes) = catch_unwind(AssertUnwindSafe(|| unsafe { (**memory.as_ptr()).as_mut() }))
+    else {
         return Err(Rav1dError::OutOfMemory);
     };
     let (data, stride) = place(&picture, bytes, &layout)?;
@@ -948,7 +954,8 @@ pub fn alloc_picture_data(
     let data = array::from_fn(|i| {
         let plane = (i != 0) as usize;
         // SAFETY: `place` checked the pointer, length and stride against the memory.
-        let component = unsafe { Rav1dPictureDataComponentInner::new(data[i], len[plane], stride[plane]) };
+        let component =
+            unsafe { Rav1dPictureDataComponentInner::new(data[i], len[plane], stride[plane]) };
         Rav1dPictureDataComponent(DisjointMut::new(component))
     });
     Ok(Rav1dPicture {
@@ -956,7 +963,11 @@ pub fn alloc_picture_data(
         seq_hdr: Some(seq_hdr),
         frame_hdr,
         stride,
-        data: Some(Arc::new(Rav1dPictureData { data, memory: held, allocator: allocator.clone() })),
+        data: Some(Arc::new(Rav1dPictureData {
+            data,
+            memory: held,
+            allocator: allocator.clone(),
+        })),
         ..Default::default()
     })
 }

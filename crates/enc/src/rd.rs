@@ -1,9 +1,10 @@
 //! Rate and distortion: a sink that counts what the writer would spend, and libaom's λ.
 
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
 use std::cmp;
 
 use rav1d_shared::cdf::CdfCoefContext;
+use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
+
 use crate::ec::{adapt, Writer};
 
 /// Where symbols go: the range writer, or a counter of their cost.
@@ -172,7 +173,10 @@ pub struct CoefCosts {
 
 impl CoefCosts {
     pub fn new(cdf: &CdfCoefContext) -> Box<Self> {
-        let mut c = Box::new(Self { base: [[[[0; 4]; 41]; 2]; 5], br: [[[[0; 16]; 21]; 2]; 4] });
+        let mut c = Box::new(Self {
+            base: [[[[0; 4]; 41]; 2]; 5],
+            br: [[[[0; 16]; 21]; 2]; 4],
+        });
         c.fill(cdf);
         c
     }
@@ -183,10 +187,22 @@ impl CoefCosts {
             let fh = if s < 3 { cdf[s] as u32 } else { 0 };
             cost(fl - fh)
         };
-        for (out, cdfs) in self.base.iter_mut().flatten().flatten().zip(cdf.base_tok.0.iter().flatten().flatten()) {
+        for (out, cdfs) in self
+            .base
+            .iter_mut()
+            .flatten()
+            .flatten()
+            .zip(cdf.base_tok.0.iter().flatten().flatten())
+        {
             *out = std::array::from_fn(|s| sym(cdfs, s) as u16);
         }
-        for (out, cdfs) in self.br.iter_mut().flatten().flatten().zip(cdf.br_tok.0.iter().flatten().flatten()) {
+        for (out, cdfs) in self
+            .br
+            .iter_mut()
+            .flatten()
+            .flatten()
+            .zip(cdf.br_tok.0.iter().flatten().flatten())
+        {
             for tok in 3..16usize {
                 let mut rest = tok - 3;
                 let mut bits = 0;

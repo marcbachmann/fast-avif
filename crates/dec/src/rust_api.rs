@@ -30,27 +30,29 @@ use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 pub use av_data::pixel;
-
-use rav1d_shared::error::Rav1dError;
-use rav1d_shared::shared_bytes::SharedBytes;
-use rav1d_shared::in_range::InRange;
 use rav1d_shared::bitdepth::BitDepth8;
-pub use crate::settings::{
-    Rav1dDecodeFrameType as DecodeFrameType, Rav1dInloopFilterType as InloopFilterType,
-};
+use rav1d_shared::error::Rav1dError;
 pub use rav1d_shared::headers::{
     Rav1dAdaptiveBoolean as AdaptiveBoolean, Rav1dContentLightLevel as ContentLightLevel,
     Rav1dMasteringDisplay as MasteringDisplay, Rav1dPixelLayout as PixelLayout,
     Rav1dSequenceHeader as SequenceHeader,
     Rav1dSequenceHeaderOperatingPoint as SequenceHeaderOperatingPoint,
 };
-pub use rav1d_shared::picture::{PictureAllocator, PictureBuffer, PictureParameters, PlaneLayout};
+use rav1d_shared::in_range::InRange;
+pub use rav1d_shared::picture::{
+    PictureAllocator, PictureBuffer, PictureParameters, PlaneLayout,
+    RAV1D_PICTURE_ALIGNMENT as PICTURE_ALIGNMENT,
+};
 use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
-pub use rav1d_shared::picture::RAV1D_PICTURE_ALIGNMENT as PICTURE_ALIGNMENT;
-use crate::internal::Rav1dContext;
-pub use crate::Spawner;
+use rav1d_shared::shared_bytes::SharedBytes;
+
 use crate::decode::rav1d_decode_rows;
+use crate::internal::Rav1dContext;
 use crate::obu::rav1d_parse_sequence_header;
+pub use crate::settings::{
+    Rav1dDecodeFrameType as DecodeFrameType, Rav1dInloopFilterType as InloopFilterType,
+};
+pub use crate::Spawner;
 use crate::{
     rav1d_close, rav1d_flush, rav1d_get_frame_delay, rav1d_get_picture, rav1d_open,
     rav1d_send_data, Rav1dData, Rav1dSettings,
@@ -362,15 +364,27 @@ pub struct DecoderTrials;
 
 #[cfg(feature = "encoder")]
 impl rav1d_shared::filter_trials::FilterTrials for DecoderTrials {
-    fn decoded(&self, data: Box<[u8]>, planes: usize, measure: &mut rav1d_shared::filter_trials::Measure) -> [u64; 3] {
+    fn decoded(
+        &self,
+        data: Box<[u8]>,
+        planes: usize,
+        measure: &mut rav1d_shared::filter_trials::Measure,
+    ) -> [u64; 3] {
         let mut s = Settings::new();
         s.set_inloop_filters(InloopFilterType::DEBLOCK | InloopFilterType::CDEF);
         s.set_n_threads(1);
         s.set_max_frame_delay(1);
         let mut d = Decoder::with_settings(&s).expect("a decoder");
         d.send_data(data, None, None, None).expect("its own stream");
-        let pic = d.get_picture().or_else(|_| d.get_picture()).expect("a picture");
-        let comps = [PlanarImageComponent::Y, PlanarImageComponent::U, PlanarImageComponent::V];
+        let pic = d
+            .get_picture()
+            .or_else(|_| d.get_picture())
+            .expect("a picture");
+        let comps = [
+            PlanarImageComponent::Y,
+            PlanarImageComponent::U,
+            PlanarImageComponent::V,
+        ];
         let (w, h) = (pic.width() as usize, pic.height() as usize);
         let mut out = [0; 3];
         for (p, &c) in comps[..planes].iter().enumerate() {
@@ -391,7 +405,9 @@ impl rav1d_shared::filter_trials::FilterTrials for DecoderTrials {
         s.set_n_threads(1);
         s.set_max_frame_delay(1);
         let mut d = Decoder::with_settings(&s)?;
-        d.ctx.keep_filter_data.store(true, std::sync::atomic::Ordering::Relaxed);
+        d.ctx
+            .keep_filter_data
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         d.ctx.state.try_lock().unwrap().by_rows = true;
         d.send_data(data, None, None, None)?;
         let state = &mut *d.ctx.state.try_lock().unwrap();
@@ -504,8 +520,7 @@ impl Picture {
     /// written.
     pub fn plane_ptr(&self, component: PlanarImageComponent) -> *const u8 {
         let data = &self.inner.data.as_ref().unwrap().data;
-        data[component.as_index()]
-            .as_ptr()
+        data[component.as_index()].as_ptr()
     }
 
     /// Bit depth of the plane data.
@@ -625,4 +640,3 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, Rav1dError> 
     }
     rav1d_parse_sequence_header(data)
 }
-

@@ -28,7 +28,8 @@ unsafe impl GlobalAlloc for Filling {
     unsafe fn realloc(&self, p: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         let q = System.realloc(p, layout, size);
         if !q.is_null() && size > layout.size() {
-            q.add(layout.size()).write_bytes(FILL.load(Ordering::Relaxed), size - layout.size());
+            q.add(layout.size())
+                .write_bytes(FILL.load(Ordering::Relaxed), size - layout.size());
         }
         q
     }
@@ -59,7 +60,14 @@ fn digest(p: &Picture) -> u64 {
     let mut h = DefaultHasher::new();
     let (w, hgt) = (p.width() as usize, p.height() as usize);
     let sample = if p.bit_depth() > 8 { 2 } else { 1 };
-    for (i, c) in [PlanarImageComponent::Y, PlanarImageComponent::U, PlanarImageComponent::V].into_iter().enumerate() {
+    for (i, c) in [
+        PlanarImageComponent::Y,
+        PlanarImageComponent::U,
+        PlanarImageComponent::V,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let (sx, sy) = match p.pixel_layout() {
             PixelLayout::I400 if i > 0 => continue,
             PixelLayout::I420 if i > 0 => (1, 1),
@@ -115,7 +123,9 @@ fn decode(file: &Path, threads: u32, by_rows: bool) -> Vec<Result<u64, Rav1dErro
 
 fn streams() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -127,7 +137,12 @@ fn streams() -> Vec<PathBuf> {
     }
     let mut out = Vec::new();
     for bits in ["8-bit", "10-bit", "12-bit", "multi-bit", "oss-fuzz"] {
-        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dav1d-test-data").join(bits), &mut out);
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/dav1d-test-data")
+                .join(bits),
+            &mut out,
+        );
     }
     out.sort();
     out
@@ -141,16 +156,24 @@ fn reads_no_memory_nothing_wrote() {
     let filter = std::env::var("ROWS_FILTER").unwrap_or_default();
     let mut differ = Vec::new();
     let mut pictures = 0;
-    for file in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
         for (threads, by_rows) in [(1, false), (1, true), (4, false)] {
             FILL.store(0, Ordering::Relaxed);
             let zero = decode(file, threads, by_rows);
             FILL.store(0xff, Ordering::Relaxed);
             let ones = decode(file, threads, by_rows);
-            let upto = |d: &Vec<Result<u64, Rav1dError>>| d.iter().position(|o| o.is_err()).unwrap_or(d.len());
+            let upto = |d: &Vec<Result<u64, Rav1dError>>| {
+                d.iter().position(|o| o.is_err()).unwrap_or(d.len())
+            };
             let n = upto(&zero).min(upto(&ones));
             if zero[..n] != ones[..n] {
-                differ.push(format!("{} threads {threads} by rows {by_rows}", file.display()));
+                differ.push(format!(
+                    "{} threads {threads} by rows {by_rows}",
+                    file.display()
+                ));
             }
             pictures += n;
         }

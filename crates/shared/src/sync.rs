@@ -2,9 +2,8 @@
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{self, PoisonError, TryLockError};
-use std::time::Duration;
-
 pub use std::sync::{RwLockReadGuard, RwLockWriteGuard};
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct Mutex<T: ?Sized>(sync::Mutex<T>);
@@ -84,7 +83,10 @@ impl Condvar {
 
     pub fn wait_for<T>(&self, guard: &mut MutexGuard<'_, T>, timeout: Duration) {
         let inner = guard.0.take().unwrap();
-        let (inner, _) = self.0.wait_timeout(inner, timeout).unwrap_or_else(PoisonError::into_inner);
+        let (inner, _) = self
+            .0
+            .wait_timeout(inner, timeout)
+            .unwrap_or_else(PoisonError::into_inner);
         guard.0 = Some(inner);
     }
 }

@@ -5,51 +5,52 @@ use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
 use atomig::{Atom, Atomic};
+use rav1d_shared::align::{Align16, Align64, AlignedVec2, AlignedVec64};
+use rav1d_shared::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
+use rav1d_shared::cdf::{CdfContext, CdfThreadContext};
+use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
+use rav1d_shared::data::Rav1dData;
+use rav1d_shared::disjoint_mut::{
+    DisjointImmutGuard, DisjointMut, DisjointMutArcSlice, DisjointMutGuard,
+};
+use rav1d_shared::env::BlockContext;
+use rav1d_shared::error::Rav1dError;
+use rav1d_shared::headers::{
+    Rav1dContentLightLevel, Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay,
+    Rav1dSequenceHeader, Rav1dWarpedMotionParams,
+};
+use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN, SCRATCH_EDGE_LEN};
+use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
+use rav1d_shared::levels::{Av1Block, Filter2d, SegmentId, TxfmType, WHT_WHT};
+use rav1d_shared::msac::MsacContext;
+use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
+use rav1d_shared::props::Rav1dDataProps;
+use rav1d_shared::relaxed_atomic::RelaxedAtomic;
 use rav1d_shared::sync::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use strum::FromRepr;
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
-use rav1d_shared::align::{Align16, Align64, AlignedVec2, AlignedVec64};
 use crate::cdef::Rav1dCdefDSPContext;
-use rav1d_shared::cdf::{CdfContext, CdfThreadContext};
-use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
-use rav1d_shared::disjoint_mut::{DisjointImmutGuard, DisjointMut, DisjointMutArcSlice, DisjointMutGuard};
-use rav1d_shared::env::BlockContext;
-use rav1d_shared::error::Rav1dError;
 use crate::filmgrain::{Rav1dFilmGrainDSPContext, GRAIN_HEIGHT, GRAIN_WIDTH};
-use rav1d_shared::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::data::Rav1dData;
-use crate::settings::{Rav1dDecodeFrameType, Rav1dEventFlags, Rav1dInloopFilterType};
-use rav1d_shared::headers::{
-    Rav1dContentLightLevel, Rav1dFrameHeader,
-    Rav1dITUTT35, Rav1dMasteringDisplay, Rav1dSequenceHeader, Rav1dWarpedMotionParams,
-};
-use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
-use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN, SCRATCH_EDGE_LEN};
-use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
-use rav1d_shared::levels::{Av1Block, Filter2d, SegmentId, TxfmType, WHT_WHT};
 use crate::lf_mask::{Av1Filter, Av1FilterLUT, Av1Restoration, Av1RestorationUnit};
 use crate::log::Rav1dLogger;
 use crate::loopfilter::Rav1dLoopFilterDSPContext;
 use crate::looprestoration::Rav1dLoopRestorationDSPContext;
 use crate::lr_apply::LrRestorePlanes;
 use crate::mc::Rav1dMCDSPContext;
-use rav1d_shared::msac::MsacContext;
 use crate::pal::Rav1dPalDSPContext;
 use crate::picture::{PictureFlags, Rav1dThreadPicture};
+#[cfg(feature = "encoder")]
+use crate::recon::rav1d_refilter_sbrow;
 use crate::recon::{
     rav1d_backup_ipred_edge, rav1d_copy_pal_block_uv, rav1d_copy_pal_block_y, rav1d_filter_sbrow,
     rav1d_filter_sbrow_cdef, rav1d_filter_sbrow_deblock_cols, rav1d_filter_sbrow_deblock_rows,
     rav1d_filter_sbrow_lr, rav1d_filter_sbrow_resize, rav1d_read_coef_blocks, rav1d_read_pal_plane,
-    rav1d_read_pal_uv, rav1d_recon_b_inter, rav1d_recon_b_intra,
-    BackupIpredEdgeFn, CopyPalBlockFn, FilterSbrowFn, ReadCoefBlocksFn, ReadPalPlaneFn,
-    ReadPalUVFn, ReconBInterFn, ReconBIntraFn,
+    rav1d_read_pal_uv, rav1d_recon_b_inter, rav1d_recon_b_intra, BackupIpredEdgeFn, CopyPalBlockFn,
+    FilterSbrowFn, ReadCoefBlocksFn, ReadPalPlaneFn, ReadPalUVFn, ReconBInterFn, ReconBIntraFn,
 };
-#[cfg(feature = "encoder")]
-use crate::recon::rav1d_refilter_sbrow;
 use crate::refmvs::{Rav1dRefmvsDSPContext, RefMvsFrame, RefMvsTemporalBlock, RefmvsTile};
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
+use crate::settings::{Rav1dDecodeFrameType, Rav1dEventFlags, Rav1dInloopFilterType};
 use crate::thread_task::{Rav1dTaskIndex, Rav1dTasks};
 
 #[derive(Default)]
@@ -346,7 +347,7 @@ pub struct Rav1dState {
     pub(crate) tiles: Vec<Rav1dTileGroup>,
     pub(crate) n_tiles: i32,
     pub(crate) seq_hdr: Option<Arc<Rav1dSequenceHeader>>, // TODO(kkysen) Previously pooled.
-    pub(crate) frame_hdr: Option<Arc<Rav1dFrameHeader>>, // TODO(kkysen) Previously pooled.
+    pub(crate) frame_hdr: Option<Arc<Rav1dFrameHeader>>,  // TODO(kkysen) Previously pooled.
     pub(crate) content_light: Option<Arc<Rav1dContentLightLevel>>,
     pub(crate) mastering_display: Option<Arc<Rav1dMasteringDisplay>>,
 
@@ -796,8 +797,8 @@ pub(crate) struct Rav1dFrameData {
 
     // for scalable references
     pub svc: [[ScalableMotionParams; 2]; 7], /* [2 x,y][7] */
-    pub resize_step: [i32; 2],             /* y, uv */
-    pub resize_start: [i32; 2],            /* y, uv */
+    pub resize_step: [i32; 2],               /* y, uv */
+    pub resize_start: [i32; 2],              /* y, uv */
 
     pub ts: Vec<Rav1dTileState>,
     pub dsp: &'static Rav1dBitDepthDSPContext,
@@ -850,12 +851,20 @@ impl Rav1dFrameData {
 
     /// The row of `lf.level` holding 4-pixel row `y4` of a plane.
     pub fn lf_level_row(&self, y4: i32) -> usize {
-        (if self.lf.ring { 1 + y4.rem_euclid(self.sb_step) } else { y4 }) as usize
+        (if self.lf.ring {
+            1 + y4.rem_euclid(self.sb_step)
+        } else {
+            y4
+        }) as usize
     }
 
     /// Where the 128-pixel row `sb128y` starts in `lf.mask`.
     pub fn lf_mask_row(&self, sb128y: i32) -> usize {
-        (if self.lf.ring { sb128y.rem_euclid(2) } else { sb128y } * self.sb128w) as usize
+        (if self.lf.ring {
+            sb128y.rem_euclid(2)
+        } else {
+            sb128y
+        } * self.sb128w) as usize
     }
 
     /// Where superblock row `sby`'s bottom edge starts in each of `ipred_edge`'s planes.

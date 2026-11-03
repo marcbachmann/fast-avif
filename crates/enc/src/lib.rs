@@ -1,6 +1,11 @@
 //! An AV1 still-image encoder, see `doc/encoder.md`.
 #![allow(clippy::derivable_impls, clippy::erasing_op, clippy::ptr_eq)]
-#![allow(clippy::unreadable_literal, clippy::unusual_byte_groupings, clippy::new_without_default, clippy::match_overlapping_arm)]
+#![allow(
+    clippy::unreadable_literal,
+    clippy::unusual_byte_groupings,
+    clippy::new_without_default,
+    clippy::match_overlapping_arm
+)]
 #![allow(
     clippy::borrow_deref_ref,
     clippy::borrowed_box,
@@ -56,7 +61,6 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
 
-
 pub mod contexts;
 pub mod dist;
 pub mod ec;
@@ -73,10 +77,10 @@ pub mod rd;
 use std::cmp;
 use std::sync::{Arc, Condvar, Mutex};
 
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
-pub use rav1d_shared::filter_trials::FilterTrials;
 use frame::{Coded, Encoder, Rd};
 use header::{Cdef, Colour, Frame, Quant, Sequence, Tiling};
+use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
+pub use rav1d_shared::filter_trials::FilterTrials;
 
 /// The headers of a still picture at `qidx`, monochrome or 4:4:4 YCbCr in BT.601 full range,
 /// with libaom's deblocking and CDEF strengths for its key frames at that qindex.
@@ -85,7 +89,11 @@ pub fn headers(width: u32, height: u32, mono: bool, qidx: u8) -> (Sequence, Fram
         width,
         height,
         mono,
-        colour: (!mono).then_some(Colour { primaries: 1, transfer: 13, matrix: 6 }),
+        colour: (!mono).then_some(Colour {
+            primaries: 1,
+            transfer: 13,
+            matrix: 6,
+        }),
         full_range: true,
         filter_intra: true,
         edge_filter: true,
@@ -96,7 +104,10 @@ pub fn headers(width: u32, height: u32, mono: bool, qidx: u8) -> (Sequence, Fram
     let level = ((q * 17563 - 421574 + (1 << 17)) >> 18).clamp(0, 63) as u8;
     let frame = Frame {
         screen_content: false,
-        quant: Quant { base: qidx, ..Default::default() },
+        quant: Quant {
+            base: qidx,
+            ..Default::default()
+        },
         delta_q_log2: None,
         lf: [level; 4],
         sharpness: 0,
@@ -112,10 +123,18 @@ pub fn headers(width: u32, height: u32, mono: bool, qidx: u8) -> (Sequence, Fram
 /// libaom's `av1_pick_cdef_from_qp` for an intra frame of natural content: one strength.
 fn cdef_from_q(qidx: u8) -> Cdef {
     let q = DAV1D_DQ_TBL[0][qidx as usize][1] as f32;
-    let fit = |a: f32, b: f32, c: f32, max: i32| ((q * q * a + q * b + c).round() as i32).clamp(0, max) as u8;
-    let y = fit(0.0000033731974, 0.008070594, 0.0187634, 15) * 4 + fit(0.0000029167343, 0.0027798624, 0.0079405, 3);
-    let uv = fit(-0.0000130790995, 0.012892405, -0.00748388, 15) * 4 + fit(0.0000032651783, 0.00035520183, 0.00228092, 3);
-    let mut c = Cdef { damping: 3 + (qidx >> 6), bits: 0, ..Default::default() };
+    let fit = |a: f32, b: f32, c: f32, max: i32| {
+        ((q * q * a + q * b + c).round() as i32).clamp(0, max) as u8
+    };
+    let y = fit(0.0000033731974, 0.008070594, 0.0187634, 15) * 4
+        + fit(0.0000029167343, 0.0027798624, 0.0079405, 3);
+    let uv = fit(-0.0000130790995, 0.012892405, -0.00748388, 15) * 4
+        + fit(0.0000032651783, 0.00035520183, 0.00228092, 3);
+    let mut c = Cdef {
+        damping: 3 + (qidx >> 6),
+        bits: 0,
+        ..Default::default()
+    };
     c.y[0] = y;
     c.uv[0] = uv;
     c
@@ -259,14 +278,92 @@ impl Options {
             1..=3 => (1, 3, 0, 1..4, 2.0),
             _ => (1, 2, 0, 1..4, 4.0),
         };
-        let levels = if effort <= 1 || effort <= 3 && qidx > 100 { levels.start..levels.end.min(3) } else { levels };
-        let cuts = frame::Cuts { one_luma: effort <= 3, uv_few: effort <= 2, no_y_angles: effort <= 2, few_modes: effort == 0, no_uv_angles: effort == 0, no_filter: effort == 0, dct: false, no_cfl: false, var_split: match effort { 0 => 4.0, 1..=3 => 1.0, _ => 0.0 }, var_keep: if matches!(effort, 1..=3) { 64.0 } else { 0.0 }, one_pass: effort <= 1, rate_guess: if effort <= 3 { 4.0 } else { 0.0 }, est_rate: if effort <= 1 { 4.0 } else { 0.0 }, cfl_fit: effort <= 3, cfl_share: if effort <= 3 { 0.6 } else { 0.0 } };
+        let levels = if effort <= 1 || effort <= 3 && qidx > 100 {
+            levels.start..levels.end.min(3)
+        } else {
+            levels
+        };
+        let cuts = frame::Cuts {
+            one_luma: effort <= 3,
+            uv_few: effort <= 2,
+            no_y_angles: effort <= 2,
+            few_modes: effort == 0,
+            no_uv_angles: effort == 0,
+            no_filter: effort == 0,
+            dct: false,
+            no_cfl: false,
+            var_split: match effort {
+                0 => 4.0,
+                1..=3 => 1.0,
+                _ => 0.0,
+            },
+            var_keep: if matches!(effort, 1..=3) { 64.0 } else { 0.0 },
+            one_pass: effort <= 1,
+            rate_guess: if effort <= 3 { 4.0 } else { 0.0 },
+            est_rate: if effort <= 1 { 4.0 } else { 0.0 },
+            cfl_fit: effort <= 3,
+            cfl_share: if effort <= 3 { 0.6 } else { 0.0 },
+        };
         // Text and graphics need the H or V partition along None's direction; photos gain 0.03 dB for 30% more time.
         let rect = if screen && rect == 2 { 3 } else { rect };
         let fine = effort >= 4 && (qidx <= 64 || pixels <= 512 * 512);
-        let (keep_modes, keep_chroma) = if fine { (4, 0) } else { (keep_modes, keep_chroma) };
+        let (keep_modes, keep_chroma) = if fine {
+            (4, 0)
+        } else {
+            (keep_modes, keep_chroma)
+        };
         let rdoq = if effort >= 8 { 8 } else { 0 };
-        Self { cuts, qidx, keep_modes, keep_chroma, screen, rect, late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512), reduced_txtp: effort <= 5 || effort <= 7 && !fine, tx_domain_dist: effort <= 7, uv_from_luma: effort <= 5, prune_intra: effort <= 5 || effort <= 7 && !fine, rank_rd: fine, rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 { 6 } else { 0 }, tx_depths: if effort <= 1 { 0 } else if effort <= 5 { 1 } else { 2 }, levels, prune, variance_boost: false, cnn_prune: if effort > 3 { 0 } else if screen { 1 } else { 2 }, rdoq, ssim: false, quant_matrices: false, chroma_delta_q: false, iq_rdmult: false, skip_prediction: true, iq_filters: false, filter_search: effort >= 4, uv_outward: !screen && pixels > 512 * 512, rect_ratio: if effort >= 4 { 0.9 } else { 0.0 }, rect_adaptive: true, split8_adaptive: effort <= 5 && pixels > 512 * 512, fast_cdef: false, graphic_guard: false, tile_cols_log2: (!screen && pixels > 512 * 512) as u8 }
+        Self {
+            cuts,
+            qidx,
+            keep_modes,
+            keep_chroma,
+            screen,
+            rect,
+            late_txtp: effort <= 5 && (!fine || !screen && pixels > 512 * 512),
+            reduced_txtp: effort <= 5 || effort <= 7 && !fine,
+            tx_domain_dist: effort <= 7,
+            uv_from_luma: effort <= 5,
+            prune_intra: effort <= 5 || effort <= 7 && !fine,
+            rank_rd: fine,
+            rank_pre: if effort <= 3 || effort <= 5 && qidx > 64 {
+                6
+            } else {
+                0
+            },
+            tx_depths: if effort <= 1 {
+                0
+            } else if effort <= 5 {
+                1
+            } else {
+                2
+            },
+            levels,
+            prune,
+            variance_boost: false,
+            cnn_prune: if effort > 3 {
+                0
+            } else if screen {
+                1
+            } else {
+                2
+            },
+            rdoq,
+            ssim: false,
+            quant_matrices: false,
+            chroma_delta_q: false,
+            iq_rdmult: false,
+            skip_prediction: true,
+            iq_filters: false,
+            filter_search: effort >= 4,
+            uv_outward: !screen && pixels > 512 * 512,
+            rect_ratio: if effort >= 4 { 0.9 } else { 0.0 },
+            rect_adaptive: true,
+            split8_adaptive: effort <= 5 && pixels > 512 * 512,
+            fast_cdef: false,
+            graphic_guard: false,
+            tile_cols_log2: (!screen && pixels > 512 * 512) as u8,
+        }
     }
 }
 
@@ -275,18 +372,50 @@ impl Options {
     /// cuts, and text 10 dB to partitions by variance. Each effort still leads libaom's at
     /// equal bytes by dBs, which these cuts trade for its time.
     pub fn drawn(self, effort: u8) -> Self {
-        let cuts = frame::Cuts { uv_few: effort <= 2, no_y_angles: effort <= 2, cfl_fit: effort <= 2, few_modes: effort <= 1, ..Default::default() };
+        let cuts = frame::Cuts {
+            uv_few: effort <= 2,
+            no_y_angles: effort <= 2,
+            cfl_fit: effort <= 2,
+            few_modes: effort <= 1,
+            ..Default::default()
+        };
         let (keep_modes, levels, tx_depths, cuts) = match effort {
-            0 => (1, 1..3, 0, frame::Cuts { one_luma: true, one_pass: true, no_filter: true, no_uv_angles: true, cfl_share: 0.6, ..cuts }),
+            0 => (
+                1,
+                1..3,
+                0,
+                frame::Cuts {
+                    one_luma: true,
+                    one_pass: true,
+                    no_filter: true,
+                    no_uv_angles: true,
+                    cfl_share: 0.6,
+                    ..cuts
+                },
+            ),
             1 => (3, 0..3, 1, cuts),
             _ => (3, 0..self.levels.end, 1, cuts),
         };
-        Self { cuts, keep_modes, levels, tx_depths, ..self }
+        Self {
+            cuts,
+            keep_modes,
+            levels,
+            tx_depths,
+            ..self
+        }
     }
 
     /// Everything libaom's tune IQ changes that the encoder has.
     pub fn tune_iq(self) -> Self {
-        Self { variance_boost: true, ssim: true, quant_matrices: true, chroma_delta_q: true, iq_rdmult: true, iq_filters: true, ..self }
+        Self {
+            variance_boost: true,
+            ssim: true,
+            quant_matrices: true,
+            chroma_delta_q: true,
+            iq_rdmult: true,
+            iq_filters: true,
+            ..self
+        }
     }
 
     /// libaom's shortcuts from cpu-used 5 that cost AVIF gates at effort 4, for speed: partitions
@@ -300,7 +429,15 @@ impl Options {
     /// 2-7% of a photo's time at Q25-Q50.
     pub fn fast(self) -> Self {
         let rank_pre = if self.qidx > 64 { 6 } else { self.rank_pre };
-        Self { cnn_prune: if self.screen { 1 } else { 2 }, rank_pre, rect_ratio: 0.95, rect_adaptive: false, fast_cdef: true, graphic_guard: true, ..self }
+        Self {
+            cnn_prune: if self.screen { 1 } else { 2 },
+            rank_pre,
+            rect_ratio: 0.95,
+            rect_adaptive: false,
+            fast_cdef: true,
+            graphic_guard: true,
+            ..self
+        }
     }
 }
 
@@ -334,8 +471,19 @@ fn chroma_qm_level(qidx: u8) -> u8 {
 
 /// A still picture of 8-bit planes: one plane is monochrome, three are 4:4:4 YCbCr, BT.601 full
 /// range, sRGB. The filter search decodes through `trials`.
-pub fn still(width: u32, height: u32, planes: &[&[u8]], options: &Options, trials: &dyn FilterTrials) -> Coded {
-    finish(still_rows(width, height, planes, options, false, None), planes, options, trials)
+pub fn still(
+    width: u32,
+    height: u32,
+    planes: &[&[u8]],
+    options: &Options,
+    trials: &dyn FilterTrials,
+) -> Coded {
+    finish(
+        still_rows(width, height, planes, options, false, None),
+        planes,
+        options,
+        trials,
+    )
 }
 
 /// `still` with the tile columns after the first coded on threads of `spawner`, as many as it
@@ -349,10 +497,27 @@ pub fn still_on(
     trials: &dyn FilterTrials,
 ) -> Coded {
     let rows: Vec<&[u8]> = planes.iter().map(|p| p.as_slice()).collect();
-    finish(still_rows(width, height, &rows, options, false, spawner.map(|s| (s, &planes))), &rows, options, trials)
+    finish(
+        still_rows(
+            width,
+            height,
+            &rows,
+            options,
+            false,
+            spawner.map(|s| (s, &planes)),
+        ),
+        &rows,
+        options,
+        trials,
+    )
 }
 
-fn finish(mut e: Encoder<Rd>, planes: &[&[u8]], options: &Options, trials: &dyn FilterTrials) -> Coded {
+fn finish(
+    mut e: Encoder<Rd>,
+    planes: &[&[u8]],
+    options: &Options,
+    trials: &dyn FilterTrials,
+) -> Coded {
     if options.filter_search && options.qidx != 0 {
         e.flush();
         filters::search(&mut e, planes, trials);
@@ -404,15 +569,22 @@ pub(crate) fn still_rows(
         e.own = 1 << col;
         push(e, planes)
     };
-    let slots: Vec<_> = (1..cols).map(|_| Arc::new((Mutex::new(Column::Waiting), Condvar::new()))).collect();
+    let slots: Vec<_> = (1..cols)
+        .map(|_| Arc::new((Mutex::new(Column::Waiting), Condvar::new())))
+        .collect();
     for (col, slot) in (1..).zip(&slots) {
         let (slot, shared, options) = (slot.clone(), shared.clone(), options.clone());
         let taken = spawner(Box::new(move || {
-            if !matches!(std::mem::replace(&mut *slot.0.lock().unwrap(), Column::Coding), Column::Waiting) {
+            if !matches!(
+                std::mem::replace(&mut *slot.0.lock().unwrap(), Column::Coding),
+                Column::Waiting
+            ) {
                 return;
             }
             let rows: Vec<&[u8]> = shared.iter().map(|p| p.as_slice()).collect();
-            let coded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| code(col, &rows, &options)));
+            let coded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                code(col, &rows, &options)
+            }));
             *slot.0.lock().unwrap() = Column::Done(coded);
             slot.1.notify_all();
         }));
@@ -432,7 +604,9 @@ pub(crate) fn still_rows(
                     break code(col, planes, options);
                 }
                 Column::Coding => state = slot.1.wait(state).unwrap(),
-                Column::Done(coded) => break coded.unwrap_or_else(|p| std::panic::resume_unwind(p)),
+                Column::Done(coded) => {
+                    break coded.unwrap_or_else(|p| std::panic::resume_unwind(p))
+                }
             }
         };
         e.merge(worker);
@@ -440,9 +614,23 @@ pub(crate) fn still_rows(
     e
 }
 
-pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Options, timing: bool) -> Encoder<Rd> {
+pub(crate) fn encoder(
+    width: u32,
+    height: u32,
+    planes: &[&[u8]],
+    options: &Options,
+    timing: bool,
+) -> Encoder<Rd> {
     let (seq, mut frame) = headers(width, height, planes.len() == 1, options.qidx);
-    frame.tiling = Tiling::with_cols(width, height, if width >= 4 * 64 { options.tile_cols_log2 } else { 0 });
+    frame.tiling = Tiling::with_cols(
+        width,
+        height,
+        if width >= 4 * 64 {
+            options.tile_cols_log2
+        } else {
+            0
+        },
+    );
     frame.screen_content = options.screen;
     let lossy = options.qidx != 0;
     if lossy && options.iq_filters {
@@ -452,7 +640,10 @@ pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Optio
             _ => 0,
         };
         if options.qidx <= 32 {
-            frame.cdef = Some(Cdef { damping: 3, ..Default::default() });
+            frame.cdef = Some(Cdef {
+                damping: 3,
+                ..Default::default()
+            });
         }
     }
     if lossy && options.chroma_delta_q && planes.len() == 3 {
@@ -460,7 +651,11 @@ pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Optio
     }
     if lossy && options.quant_matrices {
         let u = (options.qidx as i32 + frame.quant.u_ac as i32).clamp(0, 255) as u8;
-        frame.quant.qm = Some([luma_qm_level(options.qidx), chroma_qm_level(u), chroma_qm_level(u)]);
+        frame.quant.qm = Some([
+            luma_qm_level(options.qidx),
+            chroma_qm_level(u),
+            chroma_qm_level(u),
+        ]);
     }
     let boost = options.variance_boost && options.qidx != 0;
     if boost {
@@ -495,11 +690,19 @@ pub(crate) fn encoder(width: u32, height: u32, planes: &[&[u8]], options: &Optio
     e.tx_depths = options.tx_depths;
     e.levels = options.levels.clone();
     e.variance_boost = boost;
-    e.cnn_prune = if options.cuts.var_split > 0.0 && options.cuts.var_keep == 0.0 { 0 } else { options.cnn_prune };
+    e.cnn_prune = if options.cuts.var_split > 0.0 && options.cuts.var_keep == 0.0 {
+        0
+    } else {
+        options.cnn_prune
+    };
     e.rdoq = options.rdoq;
     e.prune = options.prune;
     if options.ssim && options.qidx != 0 {
-        e.ssim_reference = Some(frame::ssim_reference(width as usize, height as usize, planes[0]));
+        e.ssim_reference = Some(frame::ssim_reference(
+            width as usize,
+            height as usize,
+            planes[0],
+        ));
     }
     e
 }

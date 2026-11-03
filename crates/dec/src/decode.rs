@@ -1,16 +1,14 @@
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{array, cmp, iter, mem};
-use rav1d_shared::sync::{Condvar, Mutex};
-use strum::EnumCount;
 
 use rav1d_shared::align::{Align16, AlignedVec64};
-use rav1d_shared::shared_bytes::SharedBytes;
+use rav1d_shared::attributes::ctz;
+use rav1d_shared::bitdepth::BPC;
 use rav1d_shared::cdf::{
     rav1d_cdf_thread_alloc, rav1d_cdf_thread_copy, rav1d_cdf_thread_init_static,
     rav1d_cdf_thread_update, CdfMvComponent, CdfThreadContext,
 };
-use crate::ctx::CaseSet;
 use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
 use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutSlice};
 use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
@@ -18,33 +16,19 @@ use rav1d_shared::env::{
     av1_get_bwd_ref_1_ctx, av1_get_bwd_ref_ctx, av1_get_fwd_ref_1_ctx, av1_get_fwd_ref_2_ctx,
     av1_get_fwd_ref_ctx, av1_get_ref_ctx, av1_get_uni_p1_ctx, fix_mv_precision,
     gather_left_partition_prob, gather_top_partition_prob, get_comp_ctx, get_comp_dir_ctx,
-    get_filter_ctx, get_gmv_2d, get_intra_ctx,
-    get_jnt_comp_ctx, get_mask_comp_ctx, get_partition_ctx, get_poc_diff, get_tx_ctx, BlockContext,
+    get_filter_ctx, get_gmv_2d, get_intra_ctx, get_jnt_comp_ctx, get_mask_comp_ctx,
+    get_partition_ctx, get_poc_diff, get_tx_ctx, BlockContext,
 };
 use rav1d_shared::error::{Rav1dError, Rav1dResult};
 use rav1d_shared::extensions::OptionError as _;
-use rav1d_shared::attributes::ctz;
-use rav1d_shared::bitdepth::BPC;
-use rav1d_shared::intops::{apply_sign64, clip, clip_u8, iclip};
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::headers::{
-    Rav1dFilterMode, Rav1dFrameHeader, Rav1dPixelLayout,
-    Rav1dRestorationType, Rav1dSequenceHeader, Rav1dTxfmMode, Rav1dWarpedMotionParams,
-    Rav1dWarpedMotionType, SgrIdx, RAV1D_PRIMARY_REF_NONE,
-};
-use rav1d_shared::picture::Rav1dPicture;
 #[cfg(feature = "encoder")]
 #[cfg(feature = "encoder")]
 use rav1d_shared::filter_trials::{Measure, Trial};
-#[cfg(feature = "encoder")]
-use rav1d_shared::strided::Strided as _;
-use crate::Spawner;
-use crate::internal::{
-    Bxy, Rav1dBitDepthDSPContext, Rav1dContext, Rav1dContextTaskType, Rav1dFrameContext,
-    FrameRows, Rav1dFrameContextFrameThread, Rav1dFrameContextLf, Rav1dFrameData, Rav1dState,
-    Rav1dTaskContext, Rav1dTileState, Rav1dTileStateContext, ScalableMotionParams, ScratchPal,
-    TileStateRef,
+use rav1d_shared::headers::{
+    Rav1dFilterMode, Rav1dFrameHeader, Rav1dPixelLayout, Rav1dRestorationType, Rav1dSequenceHeader,
+    Rav1dTxfmMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType, SgrIdx, RAV1D_PRIMARY_REF_NONE,
 };
+use rav1d_shared::intops::{apply_sign64, clip, clip_u8, iclip};
 use rav1d_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
 use rav1d_shared::levels::{
     Av1Block, Av1BlockInter, Av1BlockInter1d, Av1BlockInter2d, Av1BlockInterNd, Av1BlockIntra,
@@ -54,37 +38,53 @@ use rav1d_shared::levels::{
     NEARMV, NEWMV, NEWMV_NEWMV, N_COMP_INTER_PRED_MODES, N_INTRA_PRED_MODES, N_UV_INTRA_PRED_MODES,
     VERT_LEFT_PRED, VERT_PRED,
 };
-use crate::lf_mask::{
-    rav1d_calc_eih, rav1d_calc_lf_values, rav1d_create_lf_mask_inter, rav1d_create_lf_mask_intra,
-    Av1RestorationUnit,
-};
-use crate::log::Rav1dLog as _;
-use crate::lr_apply::LrRestorePlanes;
 use rav1d_shared::msac::{
     rav1d_msac_decode_bool, rav1d_msac_decode_bool_adapt, rav1d_msac_decode_bool_equi,
     rav1d_msac_decode_bools, rav1d_msac_decode_subexp, rav1d_msac_decode_symbol_adapt16,
     rav1d_msac_decode_symbol_adapt4, rav1d_msac_decode_symbol_adapt8, rav1d_msac_decode_uniform,
     MsacContext,
 };
-use crate::pal::Rav1dPalDSPContext;
-use crate::picture::{rav1d_picture_alloc_copy, rav1d_thread_picture_alloc, Rav1dThreadPicture};
+use rav1d_shared::picture::Rav1dPicture;
+use rav1d_shared::props::Rav1dDataProps;
 use rav1d_shared::qm::DAV1D_QM_TBL;
-use crate::recon::debug_block_info;
-use crate::refmvs::{
-    rav1d_refmvs_find, rav1d_refmvs_init_frame, rav1d_refmvs_tile_sbrow_init, RefMvsBlock,
-    RefMvsCandidate, RefMvsFrame, RefMvsMvPair, RefMvsRefPair,
-};
 use rav1d_shared::relaxed_atomic::RelaxedAtomic;
+use rav1d_shared::shared_bytes::SharedBytes;
+#[cfg(feature = "encoder")]
+use rav1d_shared::strided::Strided as _;
+use rav1d_shared::sync::{Condvar, Mutex};
 use rav1d_shared::tables::{
     CFL_ALLOWED_MASK, DAV1D_AL_PART_CTX, DAV1D_BLOCK_SIZES, DAV1D_COMP_INTER_PRED_MODES,
     DAV1D_FILTER_2D, DAV1D_FILTER_DIR, DAV1D_INTRA_MODE_CONTEXT, DAV1D_MAX_TXFM_SIZE_FOR_BS,
     DAV1D_PARTITION_TYPE_COUNT, DAV1D_SGR_PARAMS, DAV1D_TXFM_DIMENSIONS, DAV1D_WEDGE_CTX_LUT,
     DAV1D_YMODE_SIZE_CONTEXT, INTERINTRA_ALLOWED_MASK, WEDGE_ALLOWED_MASK,
 };
+use strum::EnumCount;
+
+use crate::ctx::CaseSet;
+use crate::internal::{
+    Bxy, FrameRows, Rav1dBitDepthDSPContext, Rav1dContext, Rav1dContextTaskType, Rav1dFrameContext,
+    Rav1dFrameContextFrameThread, Rav1dFrameContextLf, Rav1dFrameData, Rav1dState,
+    Rav1dTaskContext, Rav1dTileState, Rav1dTileStateContext, ScalableMotionParams, ScratchPal,
+    TileStateRef,
+};
+use crate::lf_mask::{
+    rav1d_calc_eih, rav1d_calc_lf_values, rav1d_create_lf_mask_inter, rav1d_create_lf_mask_intra,
+    Av1RestorationUnit,
+};
+use crate::log::Rav1dLog as _;
+use crate::lr_apply::LrRestorePlanes;
+use crate::pal::Rav1dPalDSPContext;
+use crate::picture::{rav1d_picture_alloc_copy, rav1d_thread_picture_alloc, Rav1dThreadPicture};
+use crate::recon::debug_block_info;
+use crate::refmvs::{
+    rav1d_refmvs_find, rav1d_refmvs_init_frame, rav1d_refmvs_tile_sbrow_init, RefMvsBlock,
+    RefMvsCandidate, RefMvsFrame, RefMvsMvPair, RefMvsRefPair,
+};
 use crate::thread_task::{
     rav1d_caller_task, rav1d_task_create_tile_sbrow, rav1d_task_frame_init, FRAME_ERROR, TILE_ERROR,
 };
 use crate::warpmv::{rav1d_find_affine_int, rav1d_get_shear_params, rav1d_set_affine_mv2d};
+use crate::Spawner;
 
 fn init_quant_tables(
     seq_hdr: &Rav1dSequenceHeader,
@@ -4277,9 +4277,8 @@ pub(crate) fn rav1d_decode_frame_init(c: &Rav1dContext, fc: &Rav1dFrameContext) 
     // TODO: Fallible allocation
     f.ts.resize_with(n_ts as usize, Default::default);
 
-    let a_sz = f.sb128w
-        * frame_hdr.tiling.rows as i32
-        * (1 + (c.fc.len() > 1 && c.tc.len() > 1) as i32);
+    let a_sz =
+        f.sb128w * frame_hdr.tiling.rows as i32 * (1 + (c.fc.len() > 1 && c.tc.len() > 1) as i32);
     // TODO: Fallible allocation
     f.a.resize_with(a_sz as usize, Default::default);
 
@@ -4462,10 +4461,12 @@ pub(crate) fn rav1d_decode_frame_init(c: &Rav1dContext, fc: &Rav1dFrameContext) 
     };
     f.lf.mask.clear();
     // TODO: Fallible allocation.
-    f.lf.mask.resize_with((mask_rows * f.sb128w) as usize, Default::default);
+    f.lf.mask
+        .resize_with((mask_rows * f.sb128w) as usize, Default::default);
     // over-allocate by 3 bytes since some of the SIMD implementations
     // index this from the level type and can thus over-read by up to 3 bytes.
-    f.lf.level.resize(4 * level_rows as usize * f.b4_stride as usize + 3, 0); // TODO: Fallible allocation
+    f.lf.level
+        .resize(4 * level_rows as usize * f.b4_stride as usize + 3, 0); // TODO: Fallible allocation
     if c.fc.len() > 1 {
         // TODO: Fallible allocation
         f.frame_thread
@@ -4894,7 +4895,9 @@ impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         let row = self.0;
         // Columns nobody took yet are taken here, so that none is left waited for.
-        let left = row.cols.saturating_sub(row.next.swap(row.cols, Ordering::AcqRel));
+        let left = row
+            .cols
+            .saturating_sub(row.next.swap(row.cols, Ordering::AcqRel));
         let mut done = row.done.lock();
         done.0 += left;
         while done.0 < row.cols {
@@ -4908,7 +4911,9 @@ impl Drop for Waiting<'_> {
 fn reuse_lf_rows(f: &mut Rav1dFrameData, sby: i32) {
     let row = 4 * f.b4_stride as usize;
     let last = f.sb_step as usize * row;
-    f.lf.level.index_mut(..last + row).copy_within(last..last + row, 0);
+    f.lf.level
+        .index_mut(..last + row)
+        .copy_within(last..last + row, 0);
     let sb128 = f.seq_hdr().sb128;
     if sby & (sb128 == 0) as i32 == 0 {
         let at = f.lf_mask_row(sby >> (sb128 == 0) as i32);
@@ -5017,12 +5022,19 @@ pub(crate) fn rav1d_filter_trials(
         let mut t = t.lock();
         let usable = !f.lf.ring
             && f.bitdepth_max == 0xff
-            && matches!(f.cur.p.layout, Rav1dPixelLayout::I444 | Rav1dPixelLayout::I400)
+            && matches!(
+                f.cur.p.layout,
+                Rav1dPixelLayout::I444 | Rav1dPixelLayout::I400
+            )
             && f.frame_hdr().delta.lf.present == 0
             && f.frame_hdr().segmentation.enabled == 0
             && f.frame_hdr().loopfilter.level_y != [0; 2];
         let mut sby = rows.sby;
-        let mut res = if usable { Ok(()) } else { Err(Rav1dError::InvalidArgument) };
+        let mut res = if usable {
+            Ok(())
+        } else {
+            Err(Rav1dError::InvalidArgument)
+        };
         while res.is_ok() {
             let Some(tile_row) = sbrow_tile_row(&f, sby) else {
                 break;
@@ -5044,7 +5056,11 @@ pub(crate) fn rav1d_filter_trials(
         let mut t = t.lock();
         let original = f.frame_hdr.clone().unwrap();
         let pic = f.cur.data.clone().unwrap();
-        let planes = if f.cur.p.layout == Rav1dPixelLayout::I400 { 1 } else { 3 };
+        let planes = if f.cur.p.layout == Rav1dPixelLayout::I400 {
+            1
+        } else {
+            3
+        };
         let unfiltered: Vec<Vec<u8>> = (0..planes).map(|p| pic.data[p].bytes()).collect();
         let (w, h) = (f.cur.p.w as usize, f.cur.p.h as usize);
         let mut trial = |edit: &dyn Fn(&mut Rav1dFrameHeader)| {
@@ -5053,9 +5069,12 @@ pub(crate) fn rav1d_filter_trials(
             assert!(
                 hdr.cdef.n_bits == original.cdef.n_bits
                     && hdr.loopfilter.sharpness == original.loopfilter.sharpness
-                    && hdr.loopfilter.mode_ref_delta_enabled == original.loopfilter.mode_ref_delta_enabled
-                    && hdr.loopfilter.mode_ref_deltas.mode_delta == original.loopfilter.mode_ref_deltas.mode_delta
-                    && hdr.loopfilter.mode_ref_deltas.ref_delta == original.loopfilter.mode_ref_deltas.ref_delta,
+                    && hdr.loopfilter.mode_ref_delta_enabled
+                        == original.loopfilter.mode_ref_delta_enabled
+                    && hdr.loopfilter.mode_ref_deltas.mode_delta
+                        == original.loopfilter.mode_ref_deltas.mode_delta
+                    && hdr.loopfilter.mode_ref_deltas.ref_delta
+                        == original.loopfilter.mode_ref_deltas.ref_delta,
                 "a trial changes the filter levels and strengths only"
             );
             set_filter_levels(f, &hdr);
@@ -5269,7 +5288,10 @@ fn drop_failed_frame(state: &mut Rav1dState, fc: &Rav1dFrameContext, refresh_fra
 
 /// Decodes the next superblock row of the frame `state.rows` holds: how many rows from the top of
 /// the picture are final, all of them once the frame is done.
-pub(crate) fn rav1d_decode_rows(c: &Rav1dContext, state: &mut Rav1dState) -> Result<i32, Rav1dError> {
+pub(crate) fn rav1d_decode_rows(
+    c: &Rav1dContext,
+    state: &mut Rav1dState,
+) -> Result<i32, Rav1dError> {
     let Some(rows) = state.rows.as_mut() else {
         return Err(Rav1dError::TryAgain);
     };
@@ -5279,7 +5301,10 @@ pub(crate) fn rav1d_decode_rows(c: &Rav1dContext, state: &mut Rav1dState) -> Res
     } = *rows;
     rows.sby += 1;
     let fc = &c.fc[0];
-    let columns = state.rows_spawner.as_ref().map(|s| (s, &state.rows_contexts));
+    let columns = state
+        .rows_spawner
+        .as_ref()
+        .map(|s| (s, &state.rows_contexts));
     match rav1d_decode_frame_rows(c, fc, sby, columns) {
         Ok((n, done)) => {
             if done {

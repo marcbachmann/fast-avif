@@ -65,7 +65,10 @@ impl TxOperations for I32X8 {
     #[inline]
     unsafe fn rshift1(self) -> Self {
         I32X8::new(_mm256_srai_epi32(
-            _mm256_sub_epi32(self.vec(), _mm256_cmpgt_epi32(_mm256_setzero_si256(), self.vec())),
+            _mm256_sub_epi32(
+                self.vec(),
+                _mm256_cmpgt_epi32(_mm256_setzero_si256(), self.vec()),
+            ),
             1,
         ))
     }
@@ -121,14 +124,30 @@ unsafe fn transpose_8x8(input: &[I32X8; 8], into: &mut [MaybeUninit<I32X8>; 8]) 
 
     const LO: i32 = 2 << 4;
     const HI: i32 = (3 << 4) | 1;
-    into[0].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.0, stage2.4)));
-    into[1].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.1, stage2.5)));
-    into[2].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.2, stage2.6)));
-    into[3].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.3, stage2.7)));
-    into[4].write(I32X8::new(_mm256_permute2x128_si256::<HI>(stage2.0, stage2.4)));
-    into[5].write(I32X8::new(_mm256_permute2x128_si256::<HI>(stage2.1, stage2.5)));
-    into[6].write(I32X8::new(_mm256_permute2x128_si256::<HI>(stage2.2, stage2.6)));
-    into[7].write(I32X8::new(_mm256_permute2x128_si256::<HI>(stage2.3, stage2.7)));
+    into[0].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.0, stage2.4,
+    )));
+    into[1].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.1, stage2.5,
+    )));
+    into[2].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.2, stage2.6,
+    )));
+    into[3].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.3, stage2.7,
+    )));
+    into[4].write(I32X8::new(_mm256_permute2x128_si256::<HI>(
+        stage2.0, stage2.4,
+    )));
+    into[5].write(I32X8::new(_mm256_permute2x128_si256::<HI>(
+        stage2.1, stage2.5,
+    )));
+    into[6].write(I32X8::new(_mm256_permute2x128_si256::<HI>(
+        stage2.2, stage2.6,
+    )));
+    into[7].write(I32X8::new(_mm256_permute2x128_si256::<HI>(
+        stage2.3, stage2.7,
+    )));
 }
 
 #[target_feature(enable = "avx2")]
@@ -156,10 +175,18 @@ unsafe fn transpose_8x4(input: &[I32X8; 8], into: &mut [MaybeUninit<I32X8>; 4]) 
     );
 
     const LO: i32 = 2 << 4;
-    into[0].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.0, stage2.4)));
-    into[1].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.1, stage2.5)));
-    into[2].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.2, stage2.6)));
-    into[3].write(I32X8::new(_mm256_permute2x128_si256::<LO>(stage2.3, stage2.7)));
+    into[0].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.0, stage2.4,
+    )));
+    into[1].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.1, stage2.5,
+    )));
+    into[2].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.2, stage2.6,
+    )));
+    into[3].write(I32X8::new(_mm256_permute2x128_si256::<LO>(
+        stage2.3, stage2.7,
+    )));
 }
 
 #[target_feature(enable = "avx2")]
@@ -182,10 +209,18 @@ unsafe fn transpose_4x8(input: &[I32X8; 4], into: &mut [MaybeUninit<I32X8>; 8]) 
     into[1].write(I32X8::new(stage2.1));
     into[2].write(I32X8::new(stage2.2));
     into[3].write(I32X8::new(stage2.3));
-    into[4].write(I32X8::new(_mm256_castsi128_si256(_mm256_extracti128_si256::<1>(stage2.0))));
-    into[5].write(I32X8::new(_mm256_castsi128_si256(_mm256_extracti128_si256::<1>(stage2.1))));
-    into[6].write(I32X8::new(_mm256_castsi128_si256(_mm256_extracti128_si256::<1>(stage2.2))));
-    into[7].write(I32X8::new(_mm256_castsi128_si256(_mm256_extracti128_si256::<1>(stage2.3))));
+    into[4].write(I32X8::new(_mm256_castsi128_si256(
+        _mm256_extracti128_si256::<1>(stage2.0),
+    )));
+    into[5].write(I32X8::new(_mm256_castsi128_si256(
+        _mm256_extracti128_si256::<1>(stage2.1),
+    )));
+    into[6].write(I32X8::new(_mm256_castsi128_si256(
+        _mm256_extracti128_si256::<1>(stage2.2),
+    )));
+    into[7].write(I32X8::new(_mm256_castsi128_si256(
+        _mm256_extracti128_si256::<1>(stage2.3),
+    )));
 }
 
 #[target_feature(enable = "avx2")]
@@ -231,11 +266,19 @@ pub(super) unsafe fn forward(residual: &[i16], stride: usize, coefs: &mut [i32],
 ///
 /// AVX2 is available, and `buf` holds this residual's column pass when `have`.
 #[target_feature(enable = "avx2")]
-pub(super) unsafe fn forward_rows(residual: &[i16], stride: usize, coefs: &mut [i32], cfg: &Config, buf: &mut ColumnBuf, have: bool) {
+pub(super) unsafe fn forward_rows(
+    residual: &[i16],
+    stride: usize,
+    coefs: &mut [i32],
+    cfg: &Config,
+    buf: &mut ColumnBuf,
+    have: bool,
+) {
     let &Config { w, h, .. } = cfg;
     let (cw, ch) = (w.min(32), h.min(32));
     // SAFETY: `I32X8` is 8 `i32`s, 32 bytes, and the buffer is aligned to 32.
-    let buf = &mut *(&mut buf.0 as *mut MaybeUninit<[[i32; 8]; 64 * 32 / 8]> as *mut [MaybeUninit<I32X8>; 64 * 32 / 8]);
+    let buf = &mut *(&mut buf.0 as *mut MaybeUninit<[[i32; 8]; 64 * 32 / 8]>
+        as *mut [MaybeUninit<I32X8>; 64 * 32 / 8]);
     if !have {
         let col_fn = get_func(cfg.col);
         let shift = _mm_cvtsi32_si128(cfg.shift[0] as i32);
@@ -249,7 +292,10 @@ pub(super) unsafe fn forward_rows(residual: &[i16], stride: usize, coefs: &mut [
                 } else {
                     _mm_loadu_si128(src[..8].as_ptr() as *const __m128i)
                 };
-                col[r].write(I32X8::new(_mm256_sll_epi32(_mm256_cvtepi16_epi32(v), shift)));
+                col[r].write(I32X8::new(_mm256_sll_epi32(
+                    _mm256_cvtepi16_epi32(v),
+                    shift,
+                )));
             }
             let col = assume_init_mut(&mut col[..h]);
             col_fn(col);
@@ -283,7 +329,10 @@ pub(super) unsafe fn forward_rows(residual: &[i16], stride: usize, coefs: &mut [
         for c in 0..cw {
             let dst = &mut coefs[c * ch + rg..];
             if ch == 4 {
-                _mm_storeu_si128(dst[..4].as_mut_ptr() as *mut __m128i, _mm256_castsi256_si128(row[c].vec()));
+                _mm_storeu_si128(
+                    dst[..4].as_mut_ptr() as *mut __m128i,
+                    _mm256_castsi256_si128(row[c].vec()),
+                );
             } else {
                 _mm256_storeu_si256(dst[..8].as_mut_ptr() as *mut __m256i, row[c].vec());
             }

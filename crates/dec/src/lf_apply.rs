@@ -2,15 +2,16 @@
 use std::{array, cmp};
 
 use rav1d_shared::align::{AlignedVec2, AlignedVec64};
-use rav1d_shared::disjoint_mut::DisjointMut;
 use rav1d_shared::bitdepth::BitDepth;
+use rav1d_shared::disjoint_mut::DisjointMut;
 use rav1d_shared::headers::{Rav1dFrameHeader, Rav1dPixelLayout};
 use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
-use crate::internal::{Rav1dBitDepthDSPContext, Rav1dContext, Rav1dFrameData};
-use crate::lr_apply::LrRestorePlanes;
 use rav1d_shared::relaxed_atomic::RelaxedAtomic;
 use rav1d_shared::strided::{Strided as _, WithStride};
 use rav1d_shared::with_offset::WithOffset;
+
+use crate::internal::{Rav1dBitDepthDSPContext, Rav1dContext, Rav1dFrameData};
+use crate::lr_apply::LrRestorePlanes;
 
 /// The loop filter buffer stores 12 rows of pixels.
 /// A superblock block will contain at most 2 stripes.

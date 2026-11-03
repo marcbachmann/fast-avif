@@ -1,9 +1,8 @@
 //! The AV1 still-image encoder and the decoder it is checked against, `rav1d_enc` and `rav1d_dec`.
 #![deny(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
 
-pub use rav1d_dec::rust_api;
 pub use rav1d_dec::rust_api::*;
-pub use rav1d_dec::rav1d_version;
+pub use rav1d_dec::{rav1d_version, rust_api};
 pub use rav1d_shared::error::{Rav1dError, Rav1dResult};
 pub use rav1d_shared::{align, cpu, headers, Spawner};
 
@@ -29,6 +28,13 @@ pub mod enc {
         options: &Options,
         spawner: Option<&crate::Spawner>,
     ) -> frame::Coded {
-        rav1d_enc::still_on(width, height, planes, options, spawner, &rav1d_dec::DecoderTrials)
+        rav1d_enc::still_on(
+            width,
+            height,
+            planes,
+            options,
+            spawner,
+            &rav1d_dec::DecoderTrials,
+        )
     }
 }

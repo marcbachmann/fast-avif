@@ -1,4 +1,3 @@
-
 #[inline]
 pub fn ctz(mask: u32) -> i32 {
     mask.trailing_zeros() as i32

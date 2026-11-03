@@ -3,8 +3,6 @@
 //! (Copyright (c) 2016, Alliance for Open Media, BSD-2). Same integer
 //! arithmetic as libaom's C code, so the same coefficients.
 
-use strum::EnumCount;
-
 use rav1d_shared::levels::{
     TxClass, TxfmSize, TxfmType, ADST_ADST, ADST_DCT, ADST_FLIPADST, DCT_ADST, DCT_DCT,
     DCT_FLIPADST, FLIPADST_ADST, FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST, H_DCT, H_FLIPADST, IDTX,
@@ -12,6 +10,7 @@ use rav1d_shared::levels::{
 };
 use rav1d_shared::scan::DAV1D_SCANS;
 use rav1d_shared::tables::{DAV1D_TXFM_DIMENSIONS, DAV1D_TX_TYPE_CLASS};
+use strum::EnumCount;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Kind {
@@ -1746,12 +1745,13 @@ fn fadst16(input: &[i32], output: &mut [i32], cos_bit: i8) {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::*;
     use rav1d_shared::align::Align64;
-    use rav1d_shared::cpu::CpuFlags;
     use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
-    use rav1d_shared::picture::Rav1dPictureDataComponent;
+    use rav1d_shared::cpu::CpuFlags;
     use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
+    use rav1d_shared::picture::Rav1dPictureDataComponent;
+
+    use super::*;
 
     pub(crate) struct Rng(pub u64);
 

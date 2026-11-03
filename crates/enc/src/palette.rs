@@ -56,7 +56,12 @@ pub fn write_colors<S: Sink>(s: &mut S, pal: &[u8], cache: &[u8], pl: bool) {
             used += 1;
         }
     }
-    let new: Vec<u32> = pal.iter().zip(reused).filter(|(_, r)| !r).map(|(&c, _)| c as u32).collect();
+    let new: Vec<u32> = pal
+        .iter()
+        .zip(reused)
+        .filter(|(_, r)| !r)
+        .map(|(&c, _)| c as u32)
+        .collect();
     let Some(&first) = new.first() else { return };
     s.bools(first, 8);
     if new.len() == 1 {
@@ -94,8 +99,16 @@ pub fn write_v<S: Sink>(s: &mut S, v: &[u8]) {
         })
         .collect();
     let min_bits = 8 - 4;
-    let bits = cmp::max(bits_for(deltas.iter().map(|d| d.unsigned_abs()).max().unwrap_or(0)), min_bits);
-    let delta_bits = 2 + 8 + deltas.iter().map(|&d| bits as usize + (d != 0) as usize).sum::<usize>();
+    let bits = cmp::max(
+        bits_for(deltas.iter().map(|d| d.unsigned_abs()).max().unwrap_or(0)),
+        min_bits,
+    );
+    let delta_bits = 2
+        + 8
+        + deltas
+            .iter()
+            .map(|&d| bits as usize + (d != 0) as usize)
+            .sum::<usize>();
     if bits <= min_bits + 3 && delta_bits < 8 * v.len() {
         s.bool_equi(true);
         s.bools((bits - min_bits) as u32, 2);
@@ -115,7 +128,15 @@ pub fn write_v<S: Sink>(s: &mut S, v: &[u8]) {
 }
 
 /// A block's colour indexes, `w`×`h` visible of a map `stride` wide, in wavefront order.
-pub fn write_indices<S: Sink>(s: &mut S, cdf: &mut [[u16; 8]; 5], map: &[u8], stride: usize, w: usize, h: usize, n: u8) {
+pub fn write_indices<S: Sink>(
+    s: &mut S,
+    cdf: &mut [[u16; 8]; 5],
+    map: &[u8],
+    stride: usize,
+    w: usize,
+    h: usize,
+    n: u8,
+) {
     s.uniform(map[0] as u32, n as u32);
     for i in 1..w + h - 1 {
         let first = cmp::min(i, w - 1);
@@ -246,23 +267,37 @@ pub fn candidates_uv(u: &[u8], v: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
         }
     }
     keys.sort_unstable();
-    let mut counts: Vec<((u8, u8), u32)> = keys.iter().map(|&k| (((k >> 8) as u8, k as u8), 0)).collect();
+    let mut counts: Vec<((u8, u8), u32)> = keys
+        .iter()
+        .map(|&k| (((k >> 8) as u8, k as u8), 0))
+        .collect();
     for (&a, &b) in u.iter().zip(v) {
         let k = (a as u16) << 8 | b as u16;
         counts[keys.binary_search(&k).unwrap()].1 += 1;
     }
-    let split = |c: &[(u8, u8)]| (c.iter().map(|p| p.0).collect(), c.iter().map(|p| p.1).collect());
+    let split = |c: &[(u8, u8)]| {
+        (
+            c.iter().map(|p| p.0).collect(),
+            c.iter().map(|p| p.1).collect(),
+        )
+    };
     match counts.len() {
         0 | 1 => vec![],
         2..=8 => vec![split(&counts.iter().map(|c| c.0).collect::<Vec<_>>())],
-        _ => [8, 4].iter().map(|&k| split(&kmeans2(&counts, k))).collect(),
+        _ => [8, 4]
+            .iter()
+            .map(|&k| split(&kmeans2(&counts, k)))
+            .collect(),
     }
 }
 
 fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
     let mut by_count = counts.to_vec();
     by_count.sort_by_key(|c| cmp::Reverse(c.1));
-    let mut centres: Vec<(f64, f64)> = by_count[..k].iter().map(|c| (c.0 .0 as f64, c.0 .1 as f64)).collect();
+    let mut centres: Vec<(f64, f64)> = by_count[..k]
+        .iter()
+        .map(|c| (c.0 .0 as f64, c.0 .1 as f64))
+        .collect();
     let dist = |a: (f64, f64), b: (u8, u8)| (a.0 - b.0 as f64).powi(2) + (a.1 - b.1 as f64).powi(2);
     for _ in 0..8 {
         let mut sum = [(0f64, 0f64, 0f64); 8];
@@ -279,7 +314,10 @@ fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
             }
         }
     }
-    let mut out: Vec<(u8, u8)> = centres.iter().map(|c| (c.0.round() as u8, c.1.round() as u8)).collect();
+    let mut out: Vec<(u8, u8)> = centres
+        .iter()
+        .map(|c| (c.0.round() as u8, c.1.round() as u8))
+        .collect();
     out.sort_unstable();
     out.dedup();
     out
@@ -287,8 +325,9 @@ fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rav1d_dec::decode::order_palette;
+
+    use super::*;
     use crate::frame::tests::Rng;
 
     /// The symbols and contexts are those of rav1d's `order_palette` in wavefront order.
@@ -296,7 +335,10 @@ mod tests {
     fn symbols_as_rav1d_orders() {
         let mut rng = Rng(0x5eed_9a1e);
         for _ in 0..3000 {
-            let (w, h) = (cmp::min(4usize << rng.below(5), 64), cmp::min(4usize << rng.below(5), 64));
+            let (w, h) = (
+                cmp::min(4usize << rng.below(5), 64),
+                cmp::min(4usize << rng.below(5), 64),
+            );
             let n = 2 + rng.below(7) as u8;
             let spread = 1 + rng.below(n as u32);
             let map: Vec<u8> = (0..w * h).map(|_| rng.below(spread) as u8).collect();
@@ -308,8 +350,15 @@ mod tests {
                 order_palette(&map, w, i, first, last, &mut order, &mut ctx);
                 for (m, j) in (last..=first).rev().enumerate() {
                     let idx = map[(i - j) * w + j];
-                    let want = (order[m].iter().position(|&o| o == idx).unwrap() as u8, ctx[m] as usize);
-                    assert_eq!(want, symbol(&map, w, (i - j) * w + j, j > 0, i > j), "{w}x{h} n {n} at {i},{j}");
+                    let want = (
+                        order[m].iter().position(|&o| o == idx).unwrap() as u8,
+                        ctx[m] as usize,
+                    );
+                    assert_eq!(
+                        want,
+                        symbol(&map, w, (i - j) * w + j, j > 0, i > j),
+                        "{w}x{h} n {n} at {i},{j}"
+                    );
                 }
             }
         }

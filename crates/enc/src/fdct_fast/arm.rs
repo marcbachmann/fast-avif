@@ -60,29 +60,47 @@ impl TxOperations for I32X8 {
     #[inline]
     unsafe fn rshift1(self) -> Self {
         I32X8::new(
-            vhsubq_s32(self.vec().0, vreinterpretq_s32_u32(vcltzq_s32(self.vec().0))),
-            vhsubq_s32(self.vec().1, vreinterpretq_s32_u32(vcltzq_s32(self.vec().1))),
+            vhsubq_s32(
+                self.vec().0,
+                vreinterpretq_s32_u32(vcltzq_s32(self.vec().0)),
+            ),
+            vhsubq_s32(
+                self.vec().1,
+                vreinterpretq_s32_u32(vcltzq_s32(self.vec().1)),
+            ),
         )
     }
 
     #[inline]
     unsafe fn add(self, b: Self) -> Self {
-        I32X8::new(vaddq_s32(self.vec().0, b.vec().0), vaddq_s32(self.vec().1, b.vec().1))
+        I32X8::new(
+            vaddq_s32(self.vec().0, b.vec().0),
+            vaddq_s32(self.vec().1, b.vec().1),
+        )
     }
 
     #[inline]
     unsafe fn sub(self, b: Self) -> Self {
-        I32X8::new(vsubq_s32(self.vec().0, b.vec().0), vsubq_s32(self.vec().1, b.vec().1))
+        I32X8::new(
+            vsubq_s32(self.vec().0, b.vec().0),
+            vsubq_s32(self.vec().1, b.vec().1),
+        )
     }
 
     #[inline]
     unsafe fn add_avg(self, b: Self) -> Self {
-        I32X8::new(vhaddq_s32(self.vec().0, b.vec().0), vhaddq_s32(self.vec().1, b.vec().1))
+        I32X8::new(
+            vhaddq_s32(self.vec().0, b.vec().0),
+            vhaddq_s32(self.vec().1, b.vec().1),
+        )
     }
 
     #[inline]
     unsafe fn sub_avg(self, b: Self) -> Self {
-        I32X8::new(vhsubq_s32(self.vec().0, b.vec().0), vhsubq_s32(self.vec().1, b.vec().1))
+        I32X8::new(
+            vhsubq_s32(self.vec().0, b.vec().0),
+            vhsubq_s32(self.vec().1, b.vec().1),
+        )
     }
 }
 
@@ -212,11 +230,19 @@ pub(super) unsafe fn forward(residual: &[i16], stride: usize, coefs: &mut [i32],
 /// # Safety
 ///
 /// NEON is available, and `buf` holds this residual's column pass when `have`.
-pub(super) unsafe fn forward_rows(residual: &[i16], stride: usize, coefs: &mut [i32], cfg: &Config, buf: &mut ColumnBuf, have: bool) {
+pub(super) unsafe fn forward_rows(
+    residual: &[i16],
+    stride: usize,
+    coefs: &mut [i32],
+    cfg: &Config,
+    buf: &mut ColumnBuf,
+    have: bool,
+) {
     let &Config { w, h, .. } = cfg;
     let (cw, ch) = (w.min(32), h.min(32));
     // SAFETY: `I32X8` is 8 `i32`s, 32 bytes aligned to 16, and the buffer is aligned to 32.
-    let buf = &mut *(&mut buf.0 as *mut MaybeUninit<[[i32; 8]; 64 * 32 / 8]> as *mut [MaybeUninit<I32X8>; 64 * 32 / 8]);
+    let buf = &mut *(&mut buf.0 as *mut MaybeUninit<[[i32; 8]; 64 * 32 / 8]>
+        as *mut [MaybeUninit<I32X8>; 64 * 32 / 8]);
     if !have {
         let col_fn = get_func(cfg.col);
         let shift = vdupq_n_s32(cfg.shift[0] as i32);

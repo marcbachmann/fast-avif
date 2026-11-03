@@ -1,6 +1,5 @@
-
-use rav1d_shared::intops::{apply_sign, apply_sign64, iclip, u64log2, ulog2};
 use rav1d_shared::headers::Rav1dWarpedMotionParams;
+use rav1d_shared::intops::{apply_sign, apply_sign64, iclip, u64log2, ulog2};
 use rav1d_shared::levels::Mv;
 
 static DIV_LUT: [u16; 257] = [

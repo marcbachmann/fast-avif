@@ -3,23 +3,19 @@ use std::ops::Add;
 use std::{cmp, iter, mem, slice};
 
 use bitflags::bitflags;
-use to_method::To;
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
-
 use rav1d_shared::align::AlignedVec64;
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow, ToPrimitive, BPC};
 use rav1d_shared::cpu::CpuFlags;
-use crate::cursor::CursorMut;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::bitdepth::{
-    AsPrimitive, BitDepth, DynPixel, LeftPixelRow, ToPrimitive, BPC,
-};
 use rav1d_shared::intops::iclip;
-use rav1d_shared::picture::{
-    Rav1dPictureDataComponentOffset,
-};
+use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::tables::DAV1D_SGR_X_BY_X;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use to_method::To;
+use zerocopy::{AsBytes, FromBytes, FromZeroes};
+
+use crate::cursor::CursorMut;
 
 bitflags! {
     #[derive(Clone, Copy)]
@@ -126,9 +122,7 @@ impl loop_restoration_filter::Fn {
         let left = left[..h as usize].as_ptr().cast();
         let bd = bd.into_max();
         // SAFETY: Fallbacks `fn wiener_rust`, `fn sgr_{3x3,5x5,mix}_rust` are safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(left, lpf_off, w, h, params, edges, bd, dst, lpf)
-        }
+        unsafe { self.get()(left, lpf_off, w, h, params, edges, bd, dst, lpf) }
     }
 }
 
@@ -880,10 +874,11 @@ fn sgr_mix_rust<BD: BitDepth>(
 
 /// The 8 bpc filters on [`I16x8`].
 mod rust_simd {
-    use super::*;
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::I16x16;
     use rav1d_shared::simd128::{I16x8, I32x4};
+
+    use super::*;
 
     const ROWS: usize = 64 + 3 + 3;
     /// A unit is at most 256 wide, the last of a row up to half as wide again.
@@ -1105,7 +1100,7 @@ mod rust_simd {
         _bitdepth_max: i32,
         p: Rav1dPictureDataComponentOffset,
         lpf: &DisjointMut<AlignedVec64<u8>>,
-) {
+    ) {
         let left = left.cast();
         let (w, h) = (w as usize, h as usize);
         // SAFETY: Length sliced in `loop_restoration_filter::Fn::call`.
@@ -1238,7 +1233,7 @@ mod rust_simd {
         bitdepth_max: i32,
         p: Rav1dPictureDataComponentOffset,
         lpf: &DisjointMut<AlignedVec64<u8>>,
-) {
+    ) {
         let left = left.cast();
         let (w, h) = (w as usize, h as usize);
         // SAFETY: Length sliced in `loop_restoration_filter::Fn::call`.
@@ -1632,7 +1627,7 @@ mod rust_simd {
         bitdepth_max: i32,
         p: Rav1dPictureDataComponentOffset,
         lpf: &DisjointMut<AlignedVec64<u8>>,
-) {
+    ) {
         let left = left.cast();
         let (w, h) = (w as usize, h as usize);
         // SAFETY: Length sliced in `loop_restoration_filter::Fn::call`.
@@ -1694,12 +1689,13 @@ impl Rav1dLoopRestorationDSPContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rav1d_shared::align::AlignedVec64;
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::picture::Rav1dPictureDataComponent;
     use rav1d_shared::with_offset::WithOffset;
+
+    use super::*;
 
     struct Rng(u64);
 

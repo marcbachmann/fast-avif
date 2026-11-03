@@ -1,23 +1,22 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 use std::{cmp, ptr};
+
 use strum::FromRepr;
 use zerocopy::{AsBytes, FromBytes};
 
+use crate::bitdepth::{AsPrimitive, BitDepth, DynPixel, BPC};
 use crate::cpu::CpuFlags;
 use crate::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use crate::bitdepth::{AsPrimitive, BitDepth, DynPixel, BPC};
-use crate::intops::{apply_sign, iclip};
 use crate::headers::Rav1dPixelLayoutSubSampled;
-use crate::picture::{
-    Rav1dPictureDataComponentOffset,
-};
+use crate::intops::{apply_sign, iclip};
 use crate::levels::{
     DC_128_PRED, DC_PRED, FILTER_PRED, HOR_PRED, LEFT_DC_PRED, N_IMPL_INTRA_PRED_MODES, PAETH_PRED,
     SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, TOP_DC_PRED, VERT_PRED, Z1_PRED, Z2_PRED, Z3_PRED,
 };
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::strided::Strided as _;
 use crate::tables::{
-    DAV1D_DR_INTRA_DERIVATIVE, DAV1D_FILTER_INTRA_TAPS, DAV1D_SM_WEIGHTS, filter_fn, FLT_INCR,
+    filter_fn, DAV1D_DR_INTRA_DERIVATIVE, DAV1D_FILTER_INTRA_TAPS, DAV1D_SM_WEIGHTS, FLT_INCR,
 };
 use crate::wrap_fn_ptr::wrap_fn_ptr;
 
@@ -122,18 +121,7 @@ impl cfl_pred::Fn {
         let topleft = ptr::from_ref(topleft).cast();
         let bd = bd.into_max();
         // SAFETY: Fallback `fn cfl_pred` is safe; the SIMD kernels read and write the same memory.
-        unsafe {
-            self.get()(
-                topleft,
-                width,
-                height,
-                ac,
-                alpha,
-                bd,
-                topleft_off,
-                dst,
-            )
-        }
+        unsafe { self.get()(topleft, width, height, ac, alpha, bd, topleft_off, dst) }
     }
 }
 
@@ -493,7 +481,11 @@ mod rust_simd {
 
         #[inline(always)]
         fn pairs<const HALF: bool>(s: &[Self]) -> (I16x8, I16x8) {
-            let v = if HALF { I16x8::from_bytes_half(s) } else { I16x8::from_bytes(s) };
+            let v = if HALF {
+                I16x8::from_bytes_half(s)
+            } else {
+                I16x8::from_bytes(s)
+            };
             (v.and(I16x8::splat(0xff)), v.shr_u(8))
         }
 
@@ -526,7 +518,11 @@ mod rust_simd {
 
         #[inline(always)]
         fn pairs<const HALF: bool>(s: &[Self]) -> (I16x8, I16x8) {
-            let hi = if HALF { I16x8::splat(0) } else { I16x8::load_u16(&s[8..]) };
+            let hi = if HALF {
+                I16x8::splat(0)
+            } else {
+                I16x8::load_u16(&s[8..])
+            };
             I16x8::load_u16(s).unzip(hi)
         }
 
@@ -603,7 +599,9 @@ mod rust_simd {
     impl<BD: BitDepth, P: Pix> Rows<P> for Block<'_, BD> {
         #[inline(always)]
         fn put(&mut self, y: usize, x: usize, px: &[P]) {
-            assert!(size_of::<P>() == size_of::<BD::Pixel>() && y < self.h && x + px.len() <= self.w);
+            assert!(
+                size_of::<P>() == size_of::<BD::Pixel>() && y < self.h && x + px.len() <= self.w
+            );
             #[cfg(debug_assertions)]
             {
                 let at = self.dst + (y as isize * self.stride + x as isize);
@@ -671,7 +669,9 @@ mod rust_simd {
             Some(DcGen::Top) => edge_sum::<P, W>(top) + (W >> 1) as u32 >> W.trailing_zeros(),
             Some(DcGen::Left) => edge_sum::<P, H>(left) + (H >> 1) as u32 >> H.trailing_zeros(),
             Some(DcGen::TopLeft) => {
-                let sum = if size_of::<P>() == 1 && cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+                let sum = if size_of::<P>() == 1
+                    && cfg!(any(target_arch = "x86", target_arch = "x86_64"))
+                {
                     edge_sum::<P, W>(top) + edge_sum::<P, H>(left)
                 } else {
                     // Up to 64 + 64 pixels fit the lanes as `u16` to 12 bpc.
@@ -679,8 +679,11 @@ mod rust_simd {
                 };
                 let dc = sum + ((W + H) >> 1) as u32 >> (W + H).trailing_zeros();
                 // 1/3 and 1/5 in fixed point, finer for the larger sums of `u16` pixels.
-                let (third, fifth, shift) =
-                    if size_of::<P>() == 1 { (0x5556, 0x3334, 16) } else { (0xaaab, 0x6667, 17) };
+                let (third, fifth, shift) = if size_of::<P>() == 1 {
+                    (0x5556, 0x3334, 16)
+                } else {
+                    (0xaaab, 0x6667, 17)
+                };
                 match () {
                     _ if W == H => dc,
                     _ if W > 2 * H || H > 2 * W => dc * fifth >> shift,
@@ -717,7 +720,9 @@ mod rust_simd {
     ) {
         with_px!(BD, |P| {
             let topleft = px::<P>(topleft.as_bytes());
-            by_size!(width, height, |W, H| dc::<BD, P, W, H, GEN>(dst, topleft, off, half))
+            by_size!(width, height, |W, H| dc::<BD, P, W, H, GEN>(
+                dst, topleft, off, half
+            ))
         })
     }
 
@@ -781,7 +786,11 @@ mod rust_simd {
         h: usize,
     ) {
         // The weights as `blend` takes them.
-        let k = if size_of::<P>() > 1 && MODE != SMOOTH { 7 } else { 0 };
+        let k = if size_of::<P>() > 1 && MODE != SMOOTH {
+            7
+        } else {
+            0
+        };
         let w_hor = &DAV1D_SM_WEIGHTS.0[W..][..W];
         let w_ver = &DAV1D_SM_WEIGHTS.0[h..][..h];
         let top = &topleft[off + 1..][..W];
@@ -888,7 +897,11 @@ mod rust_simd {
         let mut t = [I16x8::splat(0); 8];
         let mut ldiff = [I16x8::splat(0); 8];
         for i in 0..W.div_ceil(8) {
-            t[i] = if W == 4 { P::load4(&top) } else { P::load8(&top[8 * i..]) };
+            t[i] = if W == 4 {
+                P::load4(&top)
+            } else {
+                P::load8(&top[8 * i..])
+            };
             ldiff[i] = t[i].sub(tl).abs();
         }
         for y in 0..h {
@@ -950,7 +963,9 @@ mod rust_simd {
             }
         } else {
             for i in 0..7 {
-                tv[i] = I16x8::from_u8x8(&b[8 * i..]).mul(I16x8::splat(256)).shr_s::<8>();
+                tv[i] = I16x8::from_u8x8(&b[8 * i..])
+                    .mul(I16x8::splat(256))
+                    .shr_s::<8>();
             }
         }
         let mut top = [P::default(); W];
@@ -961,7 +976,15 @@ mod rust_simd {
             let (mut p5, mut p6): (u32, u32) =
                 (topleft[off - 1 - y].into(), topleft[off - 2 - y].into());
             for x in (0..W).step_by(4) {
-                let p = [p0, top[x].into(), top[x + 1].into(), top[x + 2].into(), top[x + 3].into(), p5, p6];
+                let p = [
+                    p0,
+                    top[x].into(),
+                    top[x + 1].into(),
+                    top[x + 2].into(),
+                    top[x + 3].into(),
+                    p5,
+                    p6,
+                ];
                 let mut acc = rnd;
                 for i in 0..7 {
                     acc = acc.add(tv[i].mul(I16x8::splat(p[i] as i16)));
@@ -1007,7 +1030,11 @@ mod rust_simd {
     fn cfl_px<P: Pix>(ac: I16x8, alpha: I16x8, neg: bool, dc: I16x8, max: I16x8) -> [P; 8] {
         let m = ac.abs().mulhrs(alpha).with_sign_of(ac);
         let p = if neg { dc.sub(m) } else { dc.add(m) };
-        P::px8(if size_of::<P>() == 1 { p } else { p.max(I16x8::splat(0)).min(max) })
+        P::px8(if size_of::<P>() == 1 {
+            p
+        } else {
+            p.max(I16x8::splat(0)).min(max)
+        })
     }
 
     /// `block` has a stride of at least `W`.
@@ -1284,7 +1311,9 @@ mod rust_simd {
             let (a, b) = (P::load8(&p[i..]), P::load8(&p[i + 1..]));
             let (c, d) = (P::load8(&p[i + 2..]), P::load8(&p[i + 3..]));
             let m = b.add(c);
-            let s = m.add(m.sub(a.add(d)).add(I16x8::splat(8)).shr_s::<3>()).shr_s::<1>();
+            let s = m
+                .add(m.sub(a.add(d)).add(I16x8::splat(8)).shr_s::<3>())
+                .shr_s::<1>();
             let s = s.max(I16x8::splat(0)).min(I16x8::splat(max));
             let n = (n_out - 2 * i).min(16);
             let mut o = [P::default(); 16];
@@ -1330,7 +1359,8 @@ mod rust_simd {
         to: i32,
         strength: i32,
     ) {
-        let [sz, lim_from, lim_to, strength] = [sz, lim_from, lim_to, strength].map(|v| v.max(0) as usize);
+        let [sz, lim_from, lim_to, strength] =
+            [sz, lim_from, lim_to, strength].map(|v| v.max(0) as usize);
         with_px!(BD, |P| filter_edge_px::<P>(
             px_mut(out.as_bytes_mut()),
             sz,
@@ -1423,7 +1453,10 @@ mod rust_simd {
         max: usize,
     ) {
         let mut t = [[P::default(); H]; W];
-        let mut s = Scratch { buf: t.as_flattened_mut(), stride: H };
+        let mut s = Scratch {
+            buf: t.as_flattened_mut(),
+            stride: H,
+        };
         dir_rows::<P, H, STEP, _>(&mut s, W, e, max, dy);
         transpose_cols::<P, W, H, H, _>(&t, W, block);
     }
@@ -1480,7 +1513,11 @@ mod rust_simd {
             let base = xpos(y) >> 6;
             // `-base` over `inc_x` rounded up, as a shift.
             let up = up_above as usize;
-            let s = if base >= 0 { 0 } else { ((-base) as usize + up >> up).min(W) };
+            let s = if base >= 0 {
+                0
+            } else {
+                ((-base) as usize + up >> up).min(W)
+            };
             for x in left_cols..s {
                 y0[x] = y;
             }
@@ -1562,7 +1599,19 @@ mod rust_simd {
         let block = &mut Block::<BD>::new(dst, width as usize, height as usize);
         with_px!(BD, |P| {
             let edge = edge_px::<P, Z2E>(edge.as_bytes_mut());
-            by_size!(width, height, |W, H| z2::<P, W, H, { if H > 8 { H } else { 8 } }, _>(
+            by_size!(width, height, |W, H| z2::<
+                P,
+                W,
+                H,
+                {
+                    if H > 8 {
+                        H
+                    } else {
+                        8
+                    }
+                },
+                _,
+            >(
                 block, edge, dx, dy, up_above, up_left
             ))
         })
@@ -1599,259 +1648,259 @@ mod rust_simd {
     }
 
     tiers! {
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_z1_erased / ipred_z1_avx2 [BD: BitDepth] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            angle: i32,
-            max_width: i32,
-            max_height: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            let bd = BD::from_max(bitdepth_max);
-            if dst.pixel_stride::<BD>() < width as isize {
-                return ipred_z1_rust::<BD>(
-                    dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
-                );
-            }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { z1_128::<BD>(dst, topleft, topleft_off, width, height, angle, bd) }
-        }
-    }
-
-    tiers! {
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_z2_erased / ipred_z2_avx2 [BD: BitDepth] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            angle: i32,
-            max_width: i32,
-            max_height: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            let bd = BD::from_max(bitdepth_max);
-            if dst.pixel_stride::<BD>() < width as isize {
-                return ipred_z2_rust::<BD>(
-                    dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
-                );
-            }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe {
-                z2_128::<BD>(
-                    dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
-                )
-            }
-        }
-    }
-
-    tiers! {
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_z3_erased / ipred_z3_avx2 [BD: BitDepth] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            angle: i32,
-            max_width: i32,
-            max_height: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            let bd = BD::from_max(bitdepth_max);
-            if dst.pixel_stride::<BD>() < width as isize {
-                return ipred_z3_rust::<BD>(
-                    dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
-                );
-            }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { z3_128::<BD>(dst, topleft, topleft_off, width, height, angle, bd) }
-        }
-    }
-
-    tiers! {
-        /// `GEN` is a [`DcGen`] or [`DC_128`].
-        ///
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_dc_erased / ipred_dc_avx2 [BD: BitDepth, const GEN: u8] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            _a: i32,
-            _max_width: i32,
-            _max_height: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            let half = (bitdepth_max + 1) as u32 >> 1;
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { dc_128::<BD, GEN>(dst, topleft, topleft_off, width, height, half) }
-        }
-    }
-
-    tiers! {
-        /// `MODE` is [`PRED_V`], [`PRED_H`] or [`PRED_PAETH`].
-        ///
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_copy_erased / ipred_copy_avx2 [BD: BitDepth, const MODE: u8] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            _a: i32,
-            _max_width: i32,
-            _max_height: i32,
-            _bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            if dst.pixel_stride::<BD>() < width as isize {
-                return match MODE {
-                    PRED_V => ipred_v_rust::<BD>(dst, topleft, topleft_off, width, height),
-                    PRED_H => ipred_h_rust::<BD>(dst, topleft, topleft_off, width, height),
-                    _ => ipred_paeth_rust::<BD>(dst, topleft, topleft_off, width, height),
-                };
-            }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { copy_rows_128::<BD, MODE>(dst, topleft, topleft_off, width, height as usize) }
-        }
-    }
-
-    tiers! {
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_filter_erased / ipred_filter_avx2 [BD: BitDepth] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            filt_idx: i32,
-            max_width: i32,
-            max_height: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            // Above 10 bpc the sums outgrow 16 bits.
-            if dst.pixel_stride::<BD>() < width as isize || bitdepth_max > 1023 {
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_z1_erased / ipred_z1_avx2 [BD: BitDepth] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                angle: i32,
+                max_width: i32,
+                max_height: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
                 let bd = BD::from_max(bitdepth_max);
-                return ipred_filter_rust::<BD>(
-                    dst, topleft, topleft_off, width, height, filt_idx, max_width, max_height, bd,
-                );
+                if dst.pixel_stride::<BD>() < width as isize {
+                    return ipred_z1_rust::<BD>(
+                        dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
+                    );
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { z1_128::<BD>(dst, topleft, topleft_off, width, height, angle, bd) }
             }
-            let (h, max) = (height as usize, bitdepth_max as i16);
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { filter_128::<BD>(dst, topleft, topleft_off, width, h, filt_idx, max) }
         }
-    }
 
     tiers! {
-        /// `MODE` is [`SMOOTH`], [`SMOOTH_V`] or [`SMOOTH_H`].
-        ///
-        /// # Safety
-        ///
-        /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_smooth_erased / ipred_smooth_avx2 [BD: BitDepth, const MODE: u8] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            _a: i32,
-            _max_width: i32,
-            _max_height: i32,
-            _bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            if dst.pixel_stride::<BD>() < width as isize {
-                return match MODE {
-                    SMOOTH => ipred_smooth_rust::<BD>(dst, topleft, topleft_off, width, height),
-                    SMOOTH_V => ipred_smooth_v_rust::<BD>(dst, topleft, topleft_off, width, height),
-                    _ => ipred_smooth_h_rust::<BD>(dst, topleft, topleft_off, width, height),
-                };
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_z2_erased / ipred_z2_avx2 [BD: BitDepth] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                angle: i32,
+                max_width: i32,
+                max_height: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                let bd = BD::from_max(bitdepth_max);
+                if dst.pixel_stride::<BD>() < width as isize {
+                    return ipred_z2_rust::<BD>(
+                        dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
+                    );
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe {
+                    z2_128::<BD>(
+                        dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
+                    )
+                }
             }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { smooth_128::<BD, MODE>(dst, topleft, topleft_off, width, height as usize) }
         }
-    }
 
     tiers! {
-        /// `GEN` is a [`DcGen`] or [`DC_128`].
-        ///
-        /// # Safety
-        ///
-        /// Must be called by [`cfl_pred::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn ipred_cfl_erased / ipred_cfl_avx2 [BD: BitDepth, const GEN: u8] (
-            topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
-            width: i32,
-            height: i32,
-            ac: &[i16; SCRATCH_AC_TXTP_LEN],
-            alpha: i32,
-            bitdepth_max: i32,
-            topleft_off: usize,
-            dst: Rav1dPictureDataComponentOffset,
-) {
-            // SAFETY: Undoing the cast in `fn cfl_pred::Fn::call`.
-            let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
-            if dst.pixel_stride::<BD>() < width as isize {
-                let dc = match DcGen::from_repr(GEN) {
-                    Some(g) => g.call::<BD>(topleft, topleft_off, width, height) as i32,
-                    None => (bitdepth_max + 1) >> 1,
-                };
-                return super::cfl_pred(dst, width, height, dc, ac, alpha, BD::from_max(bitdepth_max));
-            }
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe {
-                cfl_128::<BD, GEN>(dst, topleft, topleft_off, width, height, ac, alpha, bitdepth_max)
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_z3_erased / ipred_z3_avx2 [BD: BitDepth] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                angle: i32,
+                max_width: i32,
+                max_height: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                let bd = BD::from_max(bitdepth_max);
+                if dst.pixel_stride::<BD>() < width as isize {
+                    return ipred_z3_rust::<BD>(
+                        dst, topleft, topleft_off, width, height, angle, max_width, max_height, bd,
+                    );
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { z3_128::<BD>(dst, topleft, topleft_off, width, height, angle, bd) }
             }
         }
-    }
 
     tiers! {
-        /// # Safety
-        ///
-        /// Must be called by [`cfl_ac::Fn::call`], on x86 once the CPU flags hold SSE41.
-        fn cfl_ac_erased / cfl_ac_avx2 [BD: BitDepth, const SS_HOR: bool, const SS_VER: bool] (
-            ac: &mut [i16; SCRATCH_AC_TXTP_LEN],
-            w_pad: i32,
-            h_pad: i32,
-            cw: i32,
-            ch: i32,
-            y: Rav1dPictureDataComponentOffset,
-) {
-            let [w_pad, h_pad, ch] = [w_pad, h_pad, ch].map(|v| usize::try_from(v).unwrap());
-            // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
-            unsafe { cfl_ac_128::<BD, SS_HOR, SS_VER>(ac, y, w_pad, h_pad, cw, ch) }
+            /// `GEN` is a [`DcGen`] or [`DC_128`].
+            ///
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_dc_erased / ipred_dc_avx2 [BD: BitDepth, const GEN: u8] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                _a: i32,
+                _max_width: i32,
+                _max_height: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                let half = (bitdepth_max + 1) as u32 >> 1;
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { dc_128::<BD, GEN>(dst, topleft, topleft_off, width, height, half) }
+            }
         }
-    }
+
+    tiers! {
+            /// `MODE` is [`PRED_V`], [`PRED_H`] or [`PRED_PAETH`].
+            ///
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_copy_erased / ipred_copy_avx2 [BD: BitDepth, const MODE: u8] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                _a: i32,
+                _max_width: i32,
+                _max_height: i32,
+                _bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                if dst.pixel_stride::<BD>() < width as isize {
+                    return match MODE {
+                        PRED_V => ipred_v_rust::<BD>(dst, topleft, topleft_off, width, height),
+                        PRED_H => ipred_h_rust::<BD>(dst, topleft, topleft_off, width, height),
+                        _ => ipred_paeth_rust::<BD>(dst, topleft, topleft_off, width, height),
+                    };
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { copy_rows_128::<BD, MODE>(dst, topleft, topleft_off, width, height as usize) }
+            }
+        }
+
+    tiers! {
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_filter_erased / ipred_filter_avx2 [BD: BitDepth] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                filt_idx: i32,
+                max_width: i32,
+                max_height: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                // Above 10 bpc the sums outgrow 16 bits.
+                if dst.pixel_stride::<BD>() < width as isize || bitdepth_max > 1023 {
+                    let bd = BD::from_max(bitdepth_max);
+                    return ipred_filter_rust::<BD>(
+                        dst, topleft, topleft_off, width, height, filt_idx, max_width, max_height, bd,
+                    );
+                }
+                let (h, max) = (height as usize, bitdepth_max as i16);
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { filter_128::<BD>(dst, topleft, topleft_off, width, h, filt_idx, max) }
+            }
+        }
+
+    tiers! {
+            /// `MODE` is [`SMOOTH`], [`SMOOTH_V`] or [`SMOOTH_H`].
+            ///
+            /// # Safety
+            ///
+            /// Must be called by [`angular_ipred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_smooth_erased / ipred_smooth_avx2 [BD: BitDepth, const MODE: u8] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                _a: i32,
+                _max_width: i32,
+                _max_height: i32,
+                _bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn angular_ipred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                if dst.pixel_stride::<BD>() < width as isize {
+                    return match MODE {
+                        SMOOTH => ipred_smooth_rust::<BD>(dst, topleft, topleft_off, width, height),
+                        SMOOTH_V => ipred_smooth_v_rust::<BD>(dst, topleft, topleft_off, width, height),
+                        _ => ipred_smooth_h_rust::<BD>(dst, topleft, topleft_off, width, height),
+                    };
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { smooth_128::<BD, MODE>(dst, topleft, topleft_off, width, height as usize) }
+            }
+        }
+
+    tiers! {
+            /// `GEN` is a [`DcGen`] or [`DC_128`].
+            ///
+            /// # Safety
+            ///
+            /// Must be called by [`cfl_pred::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn ipred_cfl_erased / ipred_cfl_avx2 [BD: BitDepth, const GEN: u8] (
+                topleft: *const [DynPixel; SCRATCH_EDGE_LEN],
+                width: i32,
+                height: i32,
+                ac: &[i16; SCRATCH_AC_TXTP_LEN],
+                alpha: i32,
+                bitdepth_max: i32,
+                topleft_off: usize,
+                dst: Rav1dPictureDataComponentOffset,
+    ) {
+                // SAFETY: Undoing the cast in `fn cfl_pred::Fn::call`.
+                let topleft = unsafe { &*topleft.cast::<[BD::Pixel; SCRATCH_EDGE_LEN]>() };
+                if dst.pixel_stride::<BD>() < width as isize {
+                    let dc = match DcGen::from_repr(GEN) {
+                        Some(g) => g.call::<BD>(topleft, topleft_off, width, height) as i32,
+                        None => (bitdepth_max + 1) >> 1,
+                    };
+                    return super::cfl_pred(dst, width, height, dc, ac, alpha, BD::from_max(bitdepth_max));
+                }
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe {
+                    cfl_128::<BD, GEN>(dst, topleft, topleft_off, width, height, ac, alpha, bitdepth_max)
+                }
+            }
+        }
+
+    tiers! {
+            /// # Safety
+            ///
+            /// Must be called by [`cfl_ac::Fn::call`], on x86 once the CPU flags hold SSE41.
+            fn cfl_ac_erased / cfl_ac_avx2 [BD: BitDepth, const SS_HOR: bool, const SS_VER: bool] (
+                ac: &mut [i16; SCRATCH_AC_TXTP_LEN],
+                w_pad: i32,
+                h_pad: i32,
+                cw: i32,
+                ch: i32,
+                y: Rav1dPictureDataComponentOffset,
+    ) {
+                let [w_pad, h_pad, ch] = [w_pad, h_pad, ch].map(|v| usize::try_from(v).unwrap());
+                // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
+                unsafe { cfl_ac_128::<BD, SS_HOR, SS_VER>(ac, y, w_pad, h_pad, cw, ch) }
+            }
+        }
 }
 
 fn ipred_v_rust<BD: BitDepth>(
@@ -2235,7 +2284,9 @@ fn edge_filter<BD: BitDepth, const SIMD: bool>(
     strength: i32,
 ) {
     if SIMD {
-        rust_simd::filter_edge_simd::<BD>(out, sz, lim_from, lim_to, r#in, in_off, from, to, strength)
+        rust_simd::filter_edge_simd::<BD>(
+            out, sz, lim_from, lim_to, r#in, in_off, from, to, strength,
+        )
     } else {
         filter_edge::<BD>(out, sz, lim_from, lim_to, r#in, in_off, from, to, strength)
     }
@@ -2333,8 +2384,15 @@ fn ipred_z1_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let mut top = [0.into(); 64 + 64];
-    let (dx, max_base_x, upsample_above) =
-        z1_edge::<BD, false>(&mut top, topleft_in, topleft_in_off, width, height, angle, bd);
+    let (dx, max_base_x, upsample_above) = z1_edge::<BD, false>(
+        &mut top,
+        topleft_in,
+        topleft_in_off,
+        width,
+        height,
+        angle,
+        bd,
+    );
     let width = width as usize;
     let base_inc = 1 + upsample_above as usize;
     for y in 0..height {
@@ -2346,8 +2404,7 @@ fn ipred_z1_rust<BD: BitDepth>(
         for x in 0..width {
             let base = (xpos >> 6) as usize + base_inc * x;
             if base < max_base_x {
-                let v =
-                    top[base].as_::<i32>() * (64 - frac) + top[base + 1].as_::<i32>() * frac;
+                let v = top[base].as_::<i32>() * (64 - frac) + top[base + 1].as_::<i32>() * frac;
                 dst[x] = (v + 32 >> 6).as_::<BD::Pixel>();
             } else {
                 BD::pixel_set(&mut dst[x..], top[max_base_x], width - x);
@@ -2597,8 +2654,15 @@ fn ipred_z3_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let mut left = [0.into(); 64 + 64];
-    let (dy, left_off, max_base_y, upsample_left) =
-        z3_edge::<BD, false>(&mut left, topleft_in, topleft_in_off, width, height, angle, bd);
+    let (dy, left_off, max_base_y, upsample_left) = z3_edge::<BD, false>(
+        &mut left,
+        topleft_in,
+        topleft_in_off,
+        width,
+        height,
+        angle,
+        bd,
+    );
     let base_inc = 1 + upsample_left as usize;
     let width = width as usize;
     let height = height as usize;
@@ -2925,9 +2989,12 @@ impl Rav1dIntraPredDSPContext {
             return self;
         }
         let a = &mut self.intra_pred;
-        a[DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::TopLeft as u8 }>);
-        a[TOP_DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::Top as u8 }>);
-        a[LEFT_DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::Left as u8 }>);
+        a[DC_PRED as usize] =
+            angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::TopLeft as u8 }>);
+        a[TOP_DC_PRED as usize] =
+            angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::Top as u8 }>);
+        a[LEFT_DC_PRED as usize] =
+            angular_ipred::Fn::new(ipred_dc_erased::<BD, { DcGen::Left as u8 }>);
         a[DC_128_PRED as usize] = angular_ipred::Fn::new(ipred_dc_erased::<BD, DC_128>);
         a[VERT_PRED as usize] = angular_ipred::Fn::new(ipred_copy_erased::<BD, PRED_V>);
         a[HOR_PRED as usize] = angular_ipred::Fn::new(ipred_copy_erased::<BD, PRED_H>);
@@ -2953,9 +3020,12 @@ impl Rav1dIntraPredDSPContext {
         #[cfg(target_arch = "x86_64")]
         if flags.contains(CpuFlags::AVX2) {
             let a = &mut self.intra_pred;
-            a[DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::TopLeft as u8 }>);
-            a[TOP_DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::Top as u8 }>);
-            a[LEFT_DC_PRED as usize] = angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::Left as u8 }>);
+            a[DC_PRED as usize] =
+                angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::TopLeft as u8 }>);
+            a[TOP_DC_PRED as usize] =
+                angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::Top as u8 }>);
+            a[LEFT_DC_PRED as usize] =
+                angular_ipred::Fn::new(ipred_dc_avx2::<BD, { DcGen::Left as u8 }>);
             a[DC_128_PRED as usize] = angular_ipred::Fn::new(ipred_dc_avx2::<BD, DC_128>);
             a[VERT_PRED as usize] = angular_ipred::Fn::new(ipred_copy_avx2::<BD, PRED_V>);
             a[HOR_PRED as usize] = angular_ipred::Fn::new(ipred_copy_avx2::<BD, PRED_H>);
@@ -2970,7 +3040,8 @@ impl Rav1dIntraPredDSPContext {
             let c = &mut self.cfl_pred;
             c[DC_PRED as usize] = cfl_pred::Fn::new(ipred_cfl_avx2::<BD, { DcGen::TopLeft as u8 }>);
             c[TOP_DC_PRED as usize] = cfl_pred::Fn::new(ipred_cfl_avx2::<BD, { DcGen::Top as u8 }>);
-            c[LEFT_DC_PRED as usize] = cfl_pred::Fn::new(ipred_cfl_avx2::<BD, { DcGen::Left as u8 }>);
+            c[LEFT_DC_PRED as usize] =
+                cfl_pred::Fn::new(ipred_cfl_avx2::<BD, { DcGen::Left as u8 }>);
             c[DC_128_PRED as usize] = cfl_pred::Fn::new(ipred_cfl_avx2::<BD, DC_128>);
             self.cfl_ac = enum_map!(Rav1dPixelLayoutSubSampled => cfl_ac::Fn; match key {
                 I420 => cfl_ac::Fn::new(cfl_ac_avx2::<BD, true, true>),
@@ -2990,8 +3061,8 @@ impl Rav1dIntraPredDSPContext {
 mod tests {
     use super::*;
     use crate::align::AlignedVec64;
-    use crate::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use crate::bitdepth::{BitDepth16, BitDepth8};
+    use crate::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use crate::picture::Rav1dPictureDataComponent;
     use crate::with_offset::WithOffset;
 
@@ -3044,7 +3115,10 @@ mod tests {
         rav1d_init_cpu();
         let flags = rav1d_get_cpu_flags();
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        assert!(flags.contains(CpuFlags::SSE41), "the SIMD kernels need SSE4.1");
+        assert!(
+            flags.contains(CpuFlags::SSE41),
+            "the SIMD kernels need SSE4.1"
+        );
         Rav1dIntraPredDSPContext::default::<BD>().init::<BD>(flags)
     }
 
@@ -3116,7 +3190,17 @@ mod tests {
             data: &comp,
             offset: 4 * STRIDE + 16,
         };
-        f.call::<BD>(dst, &pixels::<BD>(edge), off, w, h, angle, w, h, BD::from_max(max));
+        f.call::<BD>(
+            dst,
+            &pixels::<BD>(edge),
+            off,
+            w,
+            h,
+            angle,
+            w,
+            h,
+            BD::from_max(max),
+        );
         drop(comp);
         buf.as_slice().as_bytes().to_vec()
     }
@@ -3137,7 +3221,16 @@ mod tests {
             offset: 4 * STRIDE + 16,
         };
         let off = SCRATCH_EDGE_LEN / 2;
-        f.call::<BD>(dst, &pixels::<BD>(edge), off, w, h, &ac.0, alpha, BD::from_max(max));
+        f.call::<BD>(
+            dst,
+            &pixels::<BD>(edge),
+            off,
+            w,
+            h,
+            &ac.0,
+            alpha,
+            BD::from_max(max),
+        );
         drop(comp);
         buf.as_slice().as_bytes().to_vec()
     }
@@ -3204,7 +3297,11 @@ mod tests {
                     _ => edge(&mut rng, max),
                 };
                 for (w, h) in SIZES {
-                    for mode in DCS.into_iter().chain(SMOOTHS).chain([VERT_PRED, HOR_PRED, PAETH_PRED]) {
+                    for mode in DCS
+                        .into_iter()
+                        .chain(SMOOTHS)
+                        .chain([VERT_PRED, HOR_PRED, PAETH_PRED])
+                    {
                         let want = run::<BD>(&scalar.intra_pred[mode as usize], &edge, w, h, max);
                         let got = run::<BD>(&rust.intra_pred[mode as usize], &edge, w, h, max);
                         assert_eq!(got, want, "{w}x{h} mode {mode} round {round}");
@@ -3214,12 +3311,24 @@ mod tests {
                     }
                     // Inter-intra predicts from an edge with the top-left pixel at 32.
                     for mode in DCS.into_iter().chain(SMOOTHS).chain([VERT_PRED, HOR_PRED]) {
-                        let want = run_at::<BD>(&scalar.intra_pred[mode as usize], &edge, 32, w, h, 0, max);
-                        let got = run_at::<BD>(&rust.intra_pred[mode as usize], &edge, 32, w, h, 0, max);
+                        let want = run_at::<BD>(
+                            &scalar.intra_pred[mode as usize],
+                            &edge,
+                            32,
+                            w,
+                            h,
+                            0,
+                            max,
+                        );
+                        let got =
+                            run_at::<BD>(&rust.intra_pred[mode as usize], &edge, 32, w, h, 0, max);
                         assert_eq!(got, want, "{w}x{h} mode {mode} round {round} at 32");
                     }
                     for filt in 0..5 {
-                        let (s, r) = (&scalar.intra_pred[FILTER_PRED as usize], &rust.intra_pred[FILTER_PRED as usize]);
+                        let (s, r) = (
+                            &scalar.intra_pred[FILTER_PRED as usize],
+                            &rust.intra_pred[FILTER_PRED as usize],
+                        );
                         let want = run_angle::<BD>(s, &edge, w, h, filt, max);
                         let got = run_angle::<BD>(r, &edge, w, h, filt, max);
                         assert_eq!(got, want, "{w}x{h} filter {filt} round {round}");
@@ -3266,7 +3375,14 @@ mod tests {
                             let a = angle | flags;
                             let f = &scalar.intra_pred[mode as usize];
                             let want = run_angle::<BD>(f, &edge, w, h, a, max);
-                            let got = run_angle::<BD>(&rust.intra_pred[mode as usize], &edge, w, h, a, max);
+                            let got = run_angle::<BD>(
+                                &rust.intra_pred[mode as usize],
+                                &edge,
+                                w,
+                                h,
+                                a,
+                                max,
+                            );
                             assert_eq!(got, want, "{w}x{h} mode {mode} angle {a:#x} round {round}");
                         }
                     }
@@ -3302,7 +3418,15 @@ mod tests {
                         };
                         let f = &scalar.cfl_pred[mode as usize];
                         let want = run_cfl::<BD>(f, &edge, w, h, &ac, alpha, max);
-                        let got = run_cfl::<BD>(&rust.cfl_pred[mode as usize], &edge, w, h, &ac, alpha, max);
+                        let got = run_cfl::<BD>(
+                            &rust.cfl_pred[mode as usize],
+                            &edge,
+                            w,
+                            h,
+                            &ac,
+                            alpha,
+                            max,
+                        );
                         assert_eq!(got, want, "{w}x{h} mode {mode} alpha {alpha} round {round}");
                     }
                 }
@@ -3320,15 +3444,21 @@ mod tests {
             for round in 0..12 {
                 let luma: Vec<u16> = match round {
                     0 => vec![max as u16; STRIDE * ROWS],
-                    _ => (0..STRIDE * ROWS).map(|i| edge(&mut rng, max)[i % 7]).collect(),
+                    _ => (0..STRIDE * ROWS)
+                        .map(|i| edge(&mut rng, max)[i % 7])
+                        .collect(),
                 };
                 for (l, layout) in LAYOUTS.into_iter().enumerate() {
                     for cw in [4, 8, 16, 32] {
                         for ch in [4, 8, 16, 32] {
-                            for pad in [(0, 0), (cw / 4 - 1, 0), (0, ch / 4 - 1), (cw / 8, ch / 8)] {
+                            for pad in [(0, 0), (cw / 4 - 1, 0), (0, ch / 4 - 1), (cw / 8, ch / 8)]
+                            {
                                 let want = run_ac::<BD>(&scalar.cfl_ac[layout], &luma, pad, cw, ch);
                                 let got = run_ac::<BD>(&rust.cfl_ac[layout], &luma, pad, cw, ch);
-                                assert_eq!(got, want, "layout {l} {cw}x{ch} pad {pad:?} round {round}");
+                                assert_eq!(
+                                    got, want,
+                                    "layout {l} {cw}x{ch} pad {pad:?} round {round}"
+                                );
                             }
                         }
                     }
@@ -3370,7 +3500,9 @@ mod tests {
         for a in ac.0.iter_mut() {
             *a = (rng.next() % 257) as i16 - 128;
         }
-        let luma: Vec<u16> = (0..STRIDE * ROWS).map(|_| rng.next() as u8 as u16).collect();
+        let luma: Vec<u16> = (0..STRIDE * ROWS)
+            .map(|_| rng.next() as u8 as u16)
+            .collect();
         let mut buf = plane::<BitDepth8>(&luma);
         let comp = Rav1dPictureDataComponent::wrap_buf::<BitDepth8>(buf.as_mut_slice(), STRIDE);
         let at = WithOffset {
@@ -3436,7 +3568,10 @@ mod tests {
             ("cfl_ac 420", Rav1dPixelLayoutSubSampled::I420, 16),
             ("cfl_ac 444", Rav1dPixelLayoutSubSampled::I444, 32),
         ] {
-            for (w, h) in [(4, 4), (8, 8), (16, 16), (32, 32)].into_iter().filter(|&(w, _)| w <= max) {
+            for (w, h) in [(4, 4), (8, 8), (16, 16), (32, 32)]
+                .into_iter()
+                .filter(|&(w, _)| w <= max)
+            {
                 line(name, w, h, &|dsp| {
                     let mut ac = Ac([0; SCRATCH_AC_TXTP_LEN]);
                     dsp.cfl_ac[layout].call::<BitDepth8>(&mut ac.0, at, 0, 0, w, h);

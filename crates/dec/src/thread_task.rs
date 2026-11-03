@@ -7,30 +7,30 @@ use std::time::Duration;
 use std::{cmp, mem, thread};
 
 use atomig::{Atom, Atomic};
-use rav1d_shared::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
-
-use rav1d_shared::cdf::rav1d_cdf_thread_update;
-use crate::decode::{
-    rav1d_decode_frame_exit, rav1d_decode_frame_init, rav1d_decode_frame_init_cdf,
-    rav1d_decode_tile_sbrow,
-};
-use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use crate::fg_apply::{rav1d_apply_grain_row, rav1d_prep_grain};
-use crate::filmgrain::FG_BLOCK_SIZE;
 #[cfg(feature = "bitdepth_16")]
 use rav1d_shared::bitdepth::BitDepth16;
 #[cfg(feature = "bitdepth_8")]
 use rav1d_shared::bitdepth::BitDepth8;
-use rav1d_shared::intops::iclip;
+use rav1d_shared::cdf::rav1d_cdf_thread_update;
+use rav1d_shared::error::{Rav1dError, Rav1dResult};
 use rav1d_shared::headers::Rav1dPixelLayout;
+use rav1d_shared::intops::iclip;
+use rav1d_shared::iter::wrapping_iter;
 use rav1d_shared::picture::Rav1dPicture;
+use rav1d_shared::relaxed_atomic::RelaxedAtomic;
+use rav1d_shared::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+
+use crate::decode::{
+    rav1d_decode_frame_exit, rav1d_decode_frame_init, rav1d_decode_frame_init_cdf,
+    rav1d_decode_tile_sbrow,
+};
+use crate::fg_apply::{rav1d_apply_grain_row, rav1d_prep_grain};
+use crate::filmgrain::FG_BLOCK_SIZE;
 use crate::internal::{
     Grain, Rav1dBitDepthDSPContext, Rav1dContext, Rav1dContextTaskType, Rav1dFrameContext,
     Rav1dFrameContextTaskThread, Rav1dFrameData, Rav1dTask, Rav1dTaskContext,
     Rav1dTaskContextTaskThread, TaskThreadData, TaskType,
 };
-use rav1d_shared::iter::wrapping_iter;
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
 
 pub const FRAME_ERROR: u32 = u32::MAX - 1;
 pub const TILE_ERROR: i32 = i32::MAX - 1;
@@ -299,7 +299,10 @@ impl Rav1dTasks {
     fn index<'a>(&'a self, index: Rav1dTaskIndex) -> impl Deref<Target = Rav1dTask> + 'a {
         if let Some(index) = index.raw_index() {
             let tasks = self.tasks.try_read().unwrap();
-            TaskRef { tasks, index: index as usize }
+            TaskRef {
+                tasks,
+                index: index as usize,
+            }
         } else {
             panic!("Cannot index with None");
         }
@@ -801,7 +804,11 @@ pub(crate) fn rav1d_helper_task(task_thread: Arc<Rav1dTaskContextTaskThread>) {
 }
 
 /// The calling thread works on the tasks of `fc` and any other until that frame is decoded.
-pub(crate) fn rav1d_caller_task(c: &Rav1dContext, tc: &mut Rav1dTaskContext, fc: &Rav1dFrameContext) {
+pub(crate) fn rav1d_caller_task(
+    c: &Rav1dContext,
+    tc: &mut Rav1dTaskContext,
+    fc: &Rav1dFrameContext,
+) {
     tc.task_thread.flushed.set(false);
     let _flushed = Flushed(Arc::clone(&tc.task_thread), false);
     work(c, tc, Some(fc));
@@ -822,7 +829,10 @@ impl Drop for Flushed {
 /// Wakes the thread that waits for `fc`, and a caller that works while it waits.
 fn frame_done(c: &Rav1dContext, fc: &Rav1dFrameContext) {
     fc.task_thread.cond.notify_one();
-    if matches!(c.tc.last().map(|tc| &tc.task), Some(Rav1dContextTaskType::Caller(_))) {
+    if matches!(
+        c.tc.last().map(|tc| &tc.task),
+        Some(Rav1dContextTaskType::Caller(_))
+    ) {
         c.task_thread.cond.notify_all();
     }
 }
@@ -854,7 +864,8 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
         ttd.cond_signaled.store(0, Ordering::SeqCst);
         // The caller looks again now and then: a frame that ends with nobody to tell it still ends.
         if caller {
-            ttd.cond.wait_for(task_thread_lock, Duration::from_millis(100));
+            ttd.cond
+                .wait_for(task_thread_lock, Duration::from_millis(100));
         } else {
             ttd.parked.fetch_add(1, Ordering::SeqCst);
             ttd.cond.wait(task_thread_lock);
@@ -1109,11 +1120,7 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
                         let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
                         if frame_hdr.refresh_context != 0 && !fc.task_thread.update_set.get() {
                             f.out_cdf.progress().unwrap().store(
-                                (if res_0.is_err() {
-                                    TILE_ERROR
-                                } else {
-                                    1 as i32
-                                }) as u32,
+                                (if res_0.is_err() { TILE_ERROR } else { 1 as i32 }) as u32,
                                 Ordering::SeqCst,
                             );
                         }
@@ -1138,8 +1145,7 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
                                     fc.task_thread.error.store(-(1 as i32), Ordering::SeqCst);
                                     let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
                                     fc.task_thread.task_counter.fetch_sub(
-                                        frame_hdr.tiling.cols as i32
-                                            * frame_hdr.tiling.rows as i32
+                                        frame_hdr.tiling.cols as i32 * frame_hdr.tiling.rows as i32
                                             + f.sbh,
                                         Ordering::SeqCst,
                                     );
@@ -1246,8 +1252,7 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
                                 }
                                 if let Some(progress) = f.out_cdf.progress() {
                                     progress.store(
-                                        (if error_0 != 0 { TILE_ERROR } else { 1 as i32 })
-                                            as u32,
+                                        (if error_0 != 0 { TILE_ERROR } else { 1 as i32 }) as u32,
                                         Ordering::SeqCst,
                                     );
                                 }

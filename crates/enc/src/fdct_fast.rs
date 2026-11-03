@@ -5,18 +5,18 @@
 
 use std::mem::MaybeUninit;
 
+use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
+use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
 use strum::EnumCount;
 
 use super::fdct::{self, dimensions, kinds, Kind};
-use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
-use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
 
 #[macro_use]
 mod kernels;
-#[cfg(test)]
-mod bounds;
 #[cfg(target_arch = "aarch64")]
 mod arm;
+#[cfg(test)]
+mod bounds;
 mod scalar;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
@@ -170,11 +170,21 @@ impl ColumnBuf {
 
 impl Columns {
     pub fn new() -> Self {
-        Self { key: None, buf: ColumnBuf::new() }
+        Self {
+            key: None,
+            buf: ColumnBuf::new(),
+        }
     }
 
     /// `forward` of `residual`, the same slice for every call on this cache.
-    pub fn forward(&mut self, residual: &[i16], stride: usize, coefs: &mut [i32], size: TxfmSize, ty: TxfmType) {
+    pub fn forward(
+        &mut self,
+        residual: &[i16],
+        stride: usize,
+        coefs: &mut [i32],
+        size: TxfmSize,
+        ty: TxfmType,
+    ) {
         if ty == WHT_WHT {
             return fdct::forward(residual, stride, coefs, size, ty);
         }
@@ -194,7 +204,9 @@ impl Columns {
             }
             #[cfg(target_arch = "aarch64")]
             // SAFETY: NEON is part of aarch64; the buffer holds a column pass of this residual when `have`.
-            Lane::Simd => unsafe { arm::forward_rows(residual, stride, coefs, &cfg, &mut self.buf, have) },
+            Lane::Simd => unsafe {
+                arm::forward_rows(residual, stride, coefs, &cfg, &mut self.buf, have)
+            },
             #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
             Lane::Simd => scalar::forward(residual, stride, coefs, &cfg),
         }
@@ -262,13 +274,14 @@ unsafe fn assume_init_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
 
 #[cfg(test)]
 mod tests {
+    use rav1d_shared::bitdepth::BitDepth8;
+    use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
+
     use super::*;
+    use crate::fdct::coded_dimensions;
     use crate::fdct::tests::{
         blocks, cpu_levels, decodable, max_error, sizes, Rng, ROUND_TRIP_BOUND,
     };
-    use crate::fdct::coded_dimensions;
-    use rav1d_shared::bitdepth::BitDepth8;
-    use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
 
     fn simd_available() -> bool {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -340,7 +353,11 @@ mod tests {
             for block in blocks(size, seed, 4, 255).into_iter().take(4) {
                 let n = cw_ch(size);
                 let mut columns = Columns::new();
-                for &ty in types.iter().chain(types.iter().rev()).chain(types.iter().step_by(2)) {
+                for &ty in types
+                    .iter()
+                    .chain(types.iter().rev())
+                    .chain(types.iter().step_by(2))
+                {
                     let (w, _) = dimensions(size);
                     let mut want = vec![i32::MIN; n];
                     let mut got = vec![i32::MAX; n];
@@ -482,9 +499,13 @@ mod tests {
             };
             let aom = time(&mut |c| fdct::forward(black_box(&block), w, c, size, 0));
             let scalar = time(&mut |c| forward_in(Lane::Scalar, black_box(&block), w, c, size, 0));
-            let simd = time(&mut |c| forward_in(*lanes().last().unwrap(), black_box(&block), w, c, size, 0));
+            let simd = time(&mut |c| {
+                forward_in(*lanes().last().unwrap(), black_box(&block), w, c, size, 0)
+            });
             coefs[0] = 0;
-            println!("{size:?}: libaom port {aom:8.0} ns, scalar {scalar:8.0} ns, simd {simd:8.0} ns");
+            println!(
+                "{size:?}: libaom port {aom:8.0} ns, scalar {scalar:8.0} ns, simd {simd:8.0} ns"
+            );
         }
     }
 }

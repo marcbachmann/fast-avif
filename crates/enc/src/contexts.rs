@@ -6,12 +6,12 @@
 use std::cmp;
 use std::mem::MaybeUninit;
 
-use strum::EnumCount;
-
-use super::fdct_fast::Lane;
 use rav1d_shared::levels::{TxClass, TxfmSize};
 use rav1d_shared::scan::DAV1D_SCANS;
 use rav1d_shared::tables::{DAV1D_LO_CTX_OFFSETS, DAV1D_TXFM_DIMENSIONS};
+use strum::EnumCount;
+
+use super::fdct_fast::Lane;
 
 pub const BUF: usize = 1280;
 
@@ -100,7 +100,17 @@ pub fn layout(tx: TxfmSize, class: TxClass) -> &'static Layout {
                         offset[off as usize] = 26 + if y > 1 { 10 } else { y * 5 };
                     }
                 }
-                Layout { reach: reach.collect(), scan, index, offset, br_offset, stride, rows, two_d, transposed: class == TxClass::H }
+                Layout {
+                    reach: reach.collect(),
+                    scan,
+                    index,
+                    offset,
+                    br_offset,
+                    stride,
+                    rows,
+                    two_d,
+                    transposed: class == TxClass::H,
+                }
             })
             .collect()
     });
@@ -120,7 +130,11 @@ pub struct Scratch {
 
 impl Scratch {
     pub fn new() -> Self {
-        Self { levels: [MaybeUninit::uninit(); BUF], base: [MaybeUninit::uninit(); BUF], br: [MaybeUninit::uninit(); BUF] }
+        Self {
+            levels: [MaybeUninit::uninit(); BUF],
+            base: [MaybeUninit::uninit(); BUF],
+            br: [MaybeUninit::uninit(); BUF],
+        }
     }
 }
 
@@ -130,11 +144,22 @@ fn pack(l: u32) -> u8 {
 
 /// The base context and the base-range context's magnitude part of every level buffer offset
 /// in the columns the end of block reaches.
-pub fn contexts<'a>(lay: &Layout, coefs: &[i32], eob: usize, s: &'a mut Scratch) -> (&'a [u8], &'a [u8]) {
+pub fn contexts<'a>(
+    lay: &Layout,
+    coefs: &[i32],
+    eob: usize,
+    s: &'a mut Scratch,
+) -> (&'a [u8], &'a [u8]) {
     contexts_in(Lane::detect(), lay, coefs, eob, s)
 }
 
-pub fn contexts_in<'a>(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, s: &'a mut Scratch) -> (&'a [u8], &'a [u8]) {
+pub fn contexts_in<'a>(
+    lane: Lane,
+    lay: &Layout,
+    coefs: &[i32],
+    eob: usize,
+    s: &'a mut Scratch,
+) -> (&'a [u8], &'a [u8]) {
     let cols = lay.reach[eob] as usize / lay.stride + 1;
     let done = ((cols * lay.stride - 1) | 15) + 1;
     let filled = cmp::min(BUF, done + 2 * lay.stride + 16);
@@ -143,7 +168,8 @@ pub fn contexts_in<'a>(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, s: &
     }
     if lay.transposed {
         for rc in 0..=eob {
-            s.levels[rc % lay.rows * lay.stride + rc / lay.rows].write(pack(coefs[rc].unsigned_abs()));
+            s.levels[rc % lay.rows * lay.stride + rc / lay.rows]
+                .write(pack(coefs[rc].unsigned_abs()));
         }
     } else {
         assert!(coefs.len() >= cols * lay.rows);
@@ -156,11 +182,14 @@ pub fn contexts_in<'a>(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, s: &
             }
             #[cfg(target_arch = "aarch64")]
             // SAFETY: NEON is part of aarch64; the columns fit `filled`.
-            Lane::Simd => unsafe { arm::fill(coefs, lay.rows, lay.stride, cols, &mut s.levels[..filled]) },
+            Lane::Simd => unsafe {
+                arm::fill(coefs, lay.rows, lay.stride, cols, &mut s.levels[..filled])
+            },
             _ => {
                 for x in 0..cols {
                     for y in 0..lay.rows {
-                        s.levels[x * lay.stride + y].write(pack(coefs[x * lay.rows + y].unsigned_abs()));
+                        s.levels[x * lay.stride + y]
+                            .write(pack(coefs[x * lay.rows + y].unsigned_abs()));
                     }
                 }
             }
@@ -168,7 +197,11 @@ pub fn contexts_in<'a>(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, s: &
     }
     // SAFETY: the first `filled` are written above.
     let levels = unsafe { &*(&s.levels[..filled] as *const [MaybeUninit<u8>] as *const [u8]) };
-    let near = if lay.two_d { [1, lay.stride, lay.stride + 1, 2, 2 * lay.stride] } else { [1, lay.stride, 2, 3, 4] };
+    let near = if lay.two_d {
+        [1, lay.stride, lay.stride + 1, 2, 2 * lay.stride]
+    } else {
+        [1, lay.stride, 2, 3, 4]
+    };
     match lane {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         Lane::Simd => {
@@ -177,7 +210,9 @@ pub fn contexts_in<'a>(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, s: &
         }
         #[cfg(target_arch = "aarch64")]
         // SAFETY: reads end below `filled`, writes below `done`.
-        Lane::Simd => unsafe { arm::contexts(levels, &lay.offset, near, done, &mut s.base, &mut s.br) },
+        Lane::Simd => unsafe {
+            arm::contexts(levels, &lay.offset, near, done, &mut s.base, &mut s.br)
+        },
         _ => {
             for off in 0..done {
                 let l = |d: usize| levels[off + d] as u32;
@@ -209,15 +244,41 @@ impl Layout {
 /// of 1 to the end of block (inclusive), with the sum of those levels. In raster order, the
 /// order the sum does not depend on.
 #[allow(clippy::too_many_arguments)]
-pub fn ac_bits(lay: &Layout, coefs: &[i32], eob: usize, base_ctx: &[u8], br_mag: &[u8], base: &[[u16; 4]; 41], br: &[[u32; 16]; 21]) -> (u32, u32) {
+pub fn ac_bits(
+    lay: &Layout,
+    coefs: &[i32],
+    eob: usize,
+    base_ctx: &[u8],
+    br_mag: &[u8],
+    base: &[[u16; 4]; 41],
+    br: &[[u32; 16]; 21],
+) -> (u32, u32) {
     ac_bits_in(Lane::detect(), lay, coefs, eob, base_ctx, br_mag, base, br)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn ac_bits_in(lane: Lane, lay: &Layout, coefs: &[i32], eob: usize, base_ctx: &[u8], br_mag: &[u8], base: &[[u16; 4]; 41], br: &[[u32; 16]; 21]) -> (u32, u32) {
+pub fn ac_bits_in(
+    lane: Lane,
+    lay: &Layout,
+    coefs: &[i32],
+    eob: usize,
+    base_ctx: &[u8],
+    br_mag: &[u8],
+    base: &[[u16; 4]; 41],
+    br: &[[u32; 16]; 21],
+) -> (u32, u32) {
     assert!(lay.by_column() && eob < lay.scan.len());
     let cols = lay.reach[eob] as usize / lay.stride + 1;
-    let ctx = Ctx { lay, coefs: &coefs[..lay.scan.len()], eob, base_ctx, br_mag, base, br, cols };
+    let ctx = Ctx {
+        lay,
+        coefs: &coefs[..lay.scan.len()],
+        eob,
+        base_ctx,
+        br_mag,
+        base,
+        br,
+        cols,
+    };
     match lane {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         Lane::Simd => {
@@ -264,9 +325,14 @@ fn ac_bits_scalar(c: &Ctx) -> (u32, u32) {
             bits = bits.wrapping_add(tail_bits(lv));
             if i < c.eob {
                 let off = x * lay.stride + y;
-                bits = bits.wrapping_add(c.base[c.base_ctx[off] as usize][cmp::min(lv, 3) as usize] as u32);
+                bits = bits.wrapping_add(
+                    c.base[c.base_ctx[off] as usize][cmp::min(lv, 3) as usize] as u32,
+                );
                 if lv >= 3 {
-                    bits = bits.wrapping_add(c.br[(lay.br_offset[off] + c.br_mag[off]) as usize][cmp::min(lv, 15) as usize]);
+                    bits = bits.wrapping_add(
+                        c.br[(lay.br_offset[off] + c.br_mag[off]) as usize]
+                            [cmp::min(lv, 15) as usize],
+                    );
                 }
             }
         }
@@ -298,7 +364,11 @@ mod x86 {
         let v = if lay.rows >= 8 {
             _mm_loadl_epi64(p[off..][..8].as_ptr().cast())
         } else {
-            let hi = if x + 1 < cols { word(p, off + lay.stride) } else { 0 };
+            let hi = if x + 1 < cols {
+                word(p, off + lay.stride)
+            } else {
+                0
+            };
             _mm_set_epi32(0, 0, hi, word(p, off))
         };
         _mm256_cvtepu8_epi32(v)
@@ -320,13 +390,25 @@ mod x86 {
         let mut golomb = 0u32;
         for rc in (0..n).step_by(8) {
             let i = _mm256_cvtepu16_epi32(_mm_loadu_si128(lay.index[rc..][..8].as_ptr().cast()));
-            let tail = _mm256_andnot_si256(_mm256_cmpeq_epi32(i, _mm256_setzero_si256()), _mm256_xor_si256(_mm256_cmpgt_epi32(i, eob), _mm256_set1_epi32(-1)));
+            let tail = _mm256_andnot_si256(
+                _mm256_cmpeq_epi32(i, _mm256_setzero_si256()),
+                _mm256_xor_si256(_mm256_cmpgt_epi32(i, eob), _mm256_set1_epi32(-1)),
+            );
             let tok = _mm256_and_si256(tail, _mm256_cmpgt_epi32(eob, i));
-            let lv = _mm256_and_si256(_mm256_abs_epi32(_mm256_loadu_si256(c.coefs[rc..][..8].as_ptr().cast())), tail);
+            let lv = _mm256_and_si256(
+                _mm256_abs_epi32(_mm256_loadu_si256(c.coefs[rc..][..8].as_ptr().cast())),
+                tail,
+            );
             sum = _mm256_add_epi32(sum, lv);
-            let nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(lv, _mm256_setzero_si256()), _mm256_set1_epi32(-1));
+            let nonzero = _mm256_xor_si256(
+                _mm256_cmpeq_epi32(lv, _mm256_setzero_si256()),
+                _mm256_set1_epi32(-1),
+            );
             bits = _mm256_add_epi32(bits, _mm256_and_si256(nonzero, _mm256_set1_epi32(512)));
-            let big = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(_mm256_min_epu32(lv, _mm256_set1_epi32(15)), _mm256_set1_epi32(14))));
+            let big = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+                _mm256_min_epu32(lv, _mm256_set1_epi32(15)),
+                _mm256_set1_epi32(14),
+            )));
             if big != 0 {
                 let mut l = [0u32; 8];
                 _mm256_storeu_si256(l.as_mut_ptr().cast(), lv);
@@ -339,14 +421,36 @@ mod x86 {
             let m3 = _mm256_min_epu32(lv, _mm256_set1_epi32(3));
             let ctx = at8(c.base_ctx, lay, rc, c.cols);
             let pair = _mm256_add_epi32(_mm256_slli_epi32::<1>(ctx), _mm256_srli_epi32::<1>(m3));
-            let word = _mm256_mask_i32gather_epi32::<4>(_mm256_setzero_si256(), c.base.as_ptr().cast(), pair, tok);
+            let word = _mm256_mask_i32gather_epi32::<4>(
+                _mm256_setzero_si256(),
+                c.base.as_ptr().cast(),
+                pair,
+                tok,
+            );
             let half = _mm256_slli_epi32::<4>(_mm256_and_si256(m3, _mm256_set1_epi32(1)));
-            bits = _mm256_add_epi32(bits, _mm256_and_si256(_mm256_srlv_epi32(word, half), _mm256_set1_epi32(0xffff)));
+            bits = _mm256_add_epi32(
+                bits,
+                _mm256_and_si256(_mm256_srlv_epi32(word, half), _mm256_set1_epi32(0xffff)),
+            );
             let wide = _mm256_and_si256(tok, _mm256_cmpgt_epi32(m3, _mm256_set1_epi32(2)));
             if _mm256_testz_si256(wide, wide) == 0 {
-                let ctx = _mm256_add_epi32(at8(&lay.br_offset, lay, rc, c.cols), at8(c.br_mag, lay, rc, c.cols));
-                let at = _mm256_add_epi32(_mm256_slli_epi32::<4>(ctx), _mm256_min_epu32(lv, _mm256_set1_epi32(15)));
-                bits = _mm256_add_epi32(bits, _mm256_mask_i32gather_epi32::<4>(_mm256_setzero_si256(), c.br.as_ptr().cast(), at, wide));
+                let ctx = _mm256_add_epi32(
+                    at8(&lay.br_offset, lay, rc, c.cols),
+                    at8(c.br_mag, lay, rc, c.cols),
+                );
+                let at = _mm256_add_epi32(
+                    _mm256_slli_epi32::<4>(ctx),
+                    _mm256_min_epu32(lv, _mm256_set1_epi32(15)),
+                );
+                bits = _mm256_add_epi32(
+                    bits,
+                    _mm256_mask_i32gather_epi32::<4>(
+                        _mm256_setzero_si256(),
+                        c.br.as_ptr().cast(),
+                        at,
+                        wide,
+                    ),
+                );
             }
         }
         (fold(bits).wrapping_add(golomb), fold(sum))
@@ -356,15 +460,27 @@ mod x86 {
     #[inline(always)]
     unsafe fn pack4(c: __m128i) -> __m128i {
         let a = _mm_abs_epi32(c);
-        let v = _mm_or_si128(_mm_slli_epi32::<6>(_mm_min_epu32(a, _mm_set1_epi32(3))), _mm_min_epu32(a, _mm_set1_epi32(15)));
+        let v = _mm_or_si128(
+            _mm_slli_epi32::<6>(_mm_min_epu32(a, _mm_set1_epi32(3))),
+            _mm_min_epu32(a, _mm_set1_epi32(15)),
+        );
         let v = _mm_packus_epi32(v, v);
         _mm_packus_epi16(v, v)
     }
 
     #[target_feature(enable = "avx2")]
-    pub unsafe fn fill(coefs: &[i32], rows: usize, stride: usize, cols: usize, levels: &mut [MaybeUninit<u8>]) {
+    pub unsafe fn fill(
+        coefs: &[i32],
+        rows: usize,
+        stride: usize,
+        cols: usize,
+        levels: &mut [MaybeUninit<u8>],
+    ) {
         for x in 0..cols {
-            let (src, dst) = (&coefs[x * rows..][..rows], &mut levels[x * stride..][..rows]);
+            let (src, dst) = (
+                &coefs[x * rows..][..rows],
+                &mut levels[x * stride..][..rows],
+            );
             for y in (0..rows).step_by(4) {
                 let v = pack4(_mm_loadu_si128(src[y..][..4].as_ptr().cast()));
                 let b = (_mm_cvtsi128_si32(v) as u32).to_le_bytes();
@@ -386,14 +502,33 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2")]
-    pub unsafe fn contexts(levels: &[u8], offset: &[u8], near: [usize; 5], done: usize, base: &mut [MaybeUninit<u8>], br: &mut [MaybeUninit<u8>]) {
+    pub unsafe fn contexts(
+        levels: &[u8],
+        offset: &[u8],
+        near: [usize; 5],
+        done: usize,
+        base: &mut [MaybeUninit<u8>],
+        br: &mut [MaybeUninit<u8>],
+    ) {
         for off in (0..done).step_by(16) {
-            let hi = _mm256_add_epi16(_mm256_add_epi16(load(levels, off + near[0]), load(levels, off + near[1])), load(levels, off + near[2]));
-            let mag = _mm256_add_epi16(hi, _mm256_add_epi16(load(levels, off + near[3]), load(levels, off + near[4])));
-            let step = _mm256_min_epi16(_mm256_srli_epi16::<7>(_mm256_add_epi16(mag, _mm256_set1_epi16(64))), _mm256_set1_epi16(4));
+            let hi = _mm256_add_epi16(
+                _mm256_add_epi16(load(levels, off + near[0]), load(levels, off + near[1])),
+                load(levels, off + near[2]),
+            );
+            let mag = _mm256_add_epi16(
+                hi,
+                _mm256_add_epi16(load(levels, off + near[3]), load(levels, off + near[4])),
+            );
+            let step = _mm256_min_epi16(
+                _mm256_srli_epi16::<7>(_mm256_add_epi16(mag, _mm256_set1_epi16(64))),
+                _mm256_set1_epi16(4),
+            );
             let b = _mm256_add_epi16(step, load(offset, off));
             let m = _mm256_and_si256(hi, _mm256_set1_epi16(63));
-            let m = _mm256_min_epi16(_mm256_srli_epi16::<1>(_mm256_add_epi16(m, _mm256_set1_epi16(1))), _mm256_set1_epi16(6));
+            let m = _mm256_min_epi16(
+                _mm256_srli_epi16::<1>(_mm256_add_epi16(m, _mm256_set1_epi16(1))),
+                _mm256_set1_epi16(6),
+            );
             _mm_storeu_si128(base[off..][..16].as_mut_ptr().cast(), narrow(b));
             _mm_storeu_si128(br[off..][..16].as_mut_ptr().cast(), narrow(m));
         }
@@ -407,12 +542,24 @@ mod arm {
     use std::arch::aarch64::*;
     use std::mem::MaybeUninit;
 
-    pub unsafe fn fill(coefs: &[i32], rows: usize, stride: usize, cols: usize, levels: &mut [MaybeUninit<u8>]) {
+    pub unsafe fn fill(
+        coefs: &[i32],
+        rows: usize,
+        stride: usize,
+        cols: usize,
+        levels: &mut [MaybeUninit<u8>],
+    ) {
         for x in 0..cols {
-            let (src, dst) = (&coefs[x * rows..][..rows], &mut levels[x * stride..][..rows]);
+            let (src, dst) = (
+                &coefs[x * rows..][..rows],
+                &mut levels[x * stride..][..rows],
+            );
             for y in (0..rows).step_by(4) {
                 let a = vreinterpretq_u32_s32(vabsq_s32(vld1q_s32(src[y..][..4].as_ptr())));
-                let v = vorrq_u32(vshlq_n_u32::<6>(vminq_u32(a, vdupq_n_u32(3))), vminq_u32(a, vdupq_n_u32(15)));
+                let v = vorrq_u32(
+                    vshlq_n_u32::<6>(vminq_u32(a, vdupq_n_u32(3))),
+                    vminq_u32(a, vdupq_n_u32(15)),
+                );
                 let v = vmovn_u16(vcombine_u16(vmovn_u32(v), vdup_n_u16(0)));
                 let b = vget_lane_u32::<0>(vreinterpret_u32_u8(v)).to_le_bytes();
                 for (d, b) in dst[y..][..4].iter_mut().zip(b) {
@@ -423,22 +570,49 @@ mod arm {
     }
 
     #[inline(always)]
-    unsafe fn half(levels: &[u8], offset: &[u8], near: [usize; 5], at: usize) -> (uint16x8_t, uint16x8_t) {
+    unsafe fn half(
+        levels: &[u8],
+        offset: &[u8],
+        near: [usize; 5],
+        at: usize,
+    ) -> (uint16x8_t, uint16x8_t) {
         let load = |d: usize| vmovl_u8(vld1_u8(levels[at + d..][..8].as_ptr()));
         let hi = vaddq_u16(vaddq_u16(load(near[0]), load(near[1])), load(near[2]));
         let mag = vaddq_u16(hi, vaddq_u16(load(near[3]), load(near[4])));
-        let step = vminq_u16(vshrq_n_u16::<7>(vaddq_u16(mag, vdupq_n_u16(64))), vdupq_n_u16(4));
+        let step = vminq_u16(
+            vshrq_n_u16::<7>(vaddq_u16(mag, vdupq_n_u16(64))),
+            vdupq_n_u16(4),
+        );
         let b = vaddq_u16(step, vmovl_u8(vld1_u8(offset[at..][..8].as_ptr())));
         let m = vandq_u16(hi, vdupq_n_u16(63));
-        (b, vminq_u16(vshrq_n_u16::<1>(vaddq_u16(m, vdupq_n_u16(1))), vdupq_n_u16(6)))
+        (
+            b,
+            vminq_u16(
+                vshrq_n_u16::<1>(vaddq_u16(m, vdupq_n_u16(1))),
+                vdupq_n_u16(6),
+            ),
+        )
     }
 
-    pub unsafe fn contexts(levels: &[u8], offset: &[u8], near: [usize; 5], done: usize, base: &mut [MaybeUninit<u8>], br: &mut [MaybeUninit<u8>]) {
+    pub unsafe fn contexts(
+        levels: &[u8],
+        offset: &[u8],
+        near: [usize; 5],
+        done: usize,
+        base: &mut [MaybeUninit<u8>],
+        br: &mut [MaybeUninit<u8>],
+    ) {
         for off in (0..done).step_by(16) {
             let (b0, m0) = half(levels, offset, near, off);
             let (b1, m1) = half(levels, offset, near, off + 8);
-            vst1q_u8(base[off..][..16].as_mut_ptr().cast(), vcombine_u8(vmovn_u16(b0), vmovn_u16(b1)));
-            vst1q_u8(br[off..][..16].as_mut_ptr().cast(), vcombine_u8(vmovn_u16(m0), vmovn_u16(m1)));
+            vst1q_u8(
+                base[off..][..16].as_mut_ptr().cast(),
+                vcombine_u8(vmovn_u16(b0), vmovn_u16(b1)),
+            );
+            vst1q_u8(
+                br[off..][..16].as_mut_ptr().cast(),
+                vcombine_u8(vmovn_u16(m0), vmovn_u16(m1)),
+            );
         }
     }
 }
@@ -466,8 +640,16 @@ mod tests {
                         .map(|_| match rng.below(64) {
                             0 => i32::MIN,
                             k if k < 8 * density => {
-                                let v = if k % 3 == 0 { rng.below(1 << 20) } else { rng.below(20) } as i32;
-                                if rng.below(2) == 0 { -v } else { v }
+                                let v = if k % 3 == 0 {
+                                    rng.below(1 << 20)
+                                } else {
+                                    rng.below(20)
+                                } as i32;
+                                if rng.below(2) == 0 {
+                                    -v
+                                } else {
+                                    v
+                                }
                             }
                             _ => 0,
                         })
@@ -478,7 +660,8 @@ mod tests {
                     }
                     let (mut a, mut b) = (Scratch::new(), Scratch::new());
                     let want = contexts_in(Lane::Scalar, lay, &coefs, eob, &mut a);
-                    let got = contexts_in(*Lane::testable().last().unwrap(), lay, &coefs, eob, &mut b);
+                    let got =
+                        contexts_in(*Lane::testable().last().unwrap(), lay, &coefs, eob, &mut b);
                     assert!(want == got, "{tx:?} {class:?} eob {eob}");
                 }
             }
@@ -486,9 +669,19 @@ mod tests {
     }
 
     /// rav1d's `get_lo_ctx` on its unpadded buffer, levels decoded one by one.
-    fn decoded_one_by_one(lay: &Layout, tx: TxfmSize, class: TxClass, coefs: &[i32], eob: usize) -> Vec<(usize, u8, u8)> {
+    fn decoded_one_by_one(
+        lay: &Layout,
+        tx: TxfmSize,
+        class: TxClass,
+        coefs: &[i32],
+        eob: usize,
+    ) -> Vec<(usize, u8, u8)> {
         let t_dim = &DAV1D_TXFM_DIMENSIONS[tx as usize];
-        let stride = if class == TxClass::TwoD { 4 << cmp::min(t_dim.lh, TxfmSize::S32x32 as u8) } else { 16 };
+        let stride = if class == TxClass::TwoD {
+            4 << cmp::min(t_dim.lh, TxfmSize::S32x32 as u8)
+        } else {
+            16
+        };
         let offsets = (class == TxClass::TwoD).then(|| {
             let is_rect = tx.is_rect() as usize;
             &DAV1D_LO_CTX_OFFSETS[is_rect + (tx as usize & is_rect)]
@@ -515,7 +708,12 @@ mod tests {
                         (hi, 26 + if y > 1 { 10 } else { y * 5 })
                     }
                 };
-                let base = offset + if mag > 512 { 4 } else { ((mag + 64) >> 7) as u8 };
+                let base = offset
+                    + if mag > 512 {
+                        4
+                    } else {
+                        ((mag + 64) >> 7) as u8
+                    };
                 let br = cmp::min(((hi & 63) + 1) >> 1, 6) as u8;
                 out.push((i, if i == 0 && offsets.is_some() { 0 } else { base }, br));
             }
@@ -541,7 +739,15 @@ mod tests {
                 let n = lay.scan.len();
                 for _ in 0..200 {
                     let density = 1 + rng.below(8);
-                    let mut coefs: Vec<i32> = (0..n).map(|_| if rng.below(8) < density { rng.below(20) as i32 } else { 0 }).collect();
+                    let mut coefs: Vec<i32> = (0..n)
+                        .map(|_| {
+                            if rng.below(8) < density {
+                                rng.below(20) as i32
+                            } else {
+                                0
+                            }
+                        })
+                        .collect();
                     let eob = rng.below(n as u32) as usize;
                     for &(rc, ..) in &lay.scan[eob + 1..] {
                         coefs[rc as usize] = 0;
@@ -552,8 +758,16 @@ mod tests {
                         let (base, br) = contexts_in(lane, lay, &coefs, eob, &mut s);
                         for &(i, want_base, want_br) in &want {
                             let off = lay.scan[i].3 as usize;
-                            let got_base = if i == 0 && class == TxClass::TwoD { 0 } else { base[off] };
-                            assert_eq!((want_base, want_br), (got_base, br[off]), "{lane:?} {tx:?} {class:?} eob {eob} at {i}");
+                            let got_base = if i == 0 && class == TxClass::TwoD {
+                                0
+                            } else {
+                                base[off]
+                            };
+                            assert_eq!(
+                                (want_base, want_br),
+                                (got_base, br[off]),
+                                "{lane:?} {tx:?} {class:?} eob {eob} at {i}"
+                            );
                             reads += 1;
                         }
                     }
@@ -590,8 +804,16 @@ mod tests {
                         .map(|_| match rng.below(64) {
                             0 => i32::MIN,
                             k if k < 8 * density => {
-                                let v = if k % 3 == 0 { rng.below(1 << 20) } else { rng.below(20) } as i32;
-                                if rng.below(2) == 0 { -v } else { v }
+                                let v = if k % 3 == 0 {
+                                    rng.below(1 << 20)
+                                } else {
+                                    rng.below(20)
+                                } as i32;
+                                if rng.below(2) == 0 {
+                                    -v
+                                } else {
+                                    v
+                                }
                             }
                             _ => 0,
                         })
@@ -610,15 +832,28 @@ mod tests {
                         sum = sum.wrapping_add(lv);
                         bits = bits.wrapping_add(tail_bits(lv));
                         if i < eob {
-                            bits = bits.wrapping_add(base[bc[off] as usize][cmp::min(lv, 3) as usize] as u32);
+                            bits = bits.wrapping_add(
+                                base[bc[off] as usize][cmp::min(lv, 3) as usize] as u32,
+                            );
                             if lv >= 3 {
-                                let far = if class == TxClass::TwoD { (x | y) > 1 } else { y > 0 };
-                                bits = bits.wrapping_add(br[(if far { 14 } else { 7 }) + bm[off] as usize][cmp::min(lv, 15) as usize]);
+                                let far = if class == TxClass::TwoD {
+                                    (x | y) > 1
+                                } else {
+                                    y > 0
+                                };
+                                bits = bits.wrapping_add(
+                                    br[(if far { 14 } else { 7 }) + bm[off] as usize]
+                                        [cmp::min(lv, 15) as usize],
+                                );
                             }
                         }
                     }
                     for lane in Lane::testable() {
-                        assert_eq!((bits, sum), ac_bits_in(lane, lay, &coefs, eob, bc, bm, &base, &br), "{lane:?} {tx:?} {class:?} eob {eob}");
+                        assert_eq!(
+                            (bits, sum),
+                            ac_bits_in(lane, lay, &coefs, eob, bc, bm, &base, &br),
+                            "{lane:?} {tx:?} {class:?} eob {eob}"
+                        );
                     }
                 }
             }

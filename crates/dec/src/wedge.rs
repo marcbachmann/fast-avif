@@ -1,11 +1,10 @@
 use std::cmp::Ordering;
 
 use paste::paste;
-use strum::EnumCount;
-
 use rav1d_shared::align::{Align16, Align32, Align64};
 use rav1d_shared::const_fn::{const_for, const_min};
 use rav1d_shared::levels::{BlockSize, InterIntraPredMode};
+use strum::EnumCount;
 
 #[derive(Clone, Copy, EnumCount)]
 enum WedgeDirectionType {

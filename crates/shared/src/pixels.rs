@@ -1,8 +1,8 @@
 use std::mem;
 use std::ops::Deref;
 
-use crate::disjoint_mut::{AsMutPtr, DisjointMut};
 use crate::bitdepth::BitDepth;
+use crate::disjoint_mut::{AsMutPtr, DisjointMut};
 use crate::strided::WithStride;
 
 pub trait Pixels {

@@ -2,16 +2,13 @@
 use std::{cmp, ptr};
 
 use bitflags::bitflags;
-
 use rav1d_shared::align::AlignedVec64;
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
 use rav1d_shared::intops::{apply_sign, iclip};
-use rav1d_shared::picture::{
-    Rav1dPictureDataComponentOffset,
-};
 use rav1d_shared::pic_or_buf::PicOrBuf;
+use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::tables::DAV1D_CDEF_DIRECTIONS;
 use rav1d_shared::with_offset::WithOffset;
@@ -289,8 +286,8 @@ fn cdef_filter_block_rust<BD: BitDepth>(
                         min = cmp::min(s3 as u32, min as u32) as i32;
                         max = cmp::max(s3, max);
                     }
-                    dst[x] = iclip(px + (sum - (sum < 0) as i32 + 8 >> 4), min, max)
-                        .as_::<BD::Pixel>();
+                    dst[x] =
+                        iclip(px + (sum - (sum < 0) as i32 + 8 >> 4), min, max).as_::<BD::Pixel>();
                 }
             }
         } else {
@@ -358,11 +355,8 @@ unsafe fn cdef_filter_block_c_erased<BD: BitDepth, const W: usize, const H: usiz
     top: WithOffset<&DisjointMut<AlignedVec64<u8>>>,
     bottom: WithOffset<&PicOrBuf<'_, AlignedVec64<u8>>>,
 ) {
-
     // SAFETY: Reverse of cast in `cdef::Fn::call`.
     let left = unsafe { &*left.cast() };
-
-
 
     let bd = BD::from_max(bitdepth_max);
     cdef_filter_block_rust(
@@ -475,13 +469,13 @@ fn cdef_find_dir_rust<BD: BitDepth>(
 mod rust_simd {
     use std::mem;
 
-    use zerocopy::AsBytes;
-
-    use super::*;
     use rav1d_shared::bitdepth::BPC;
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::I16x16;
     use rav1d_shared::simd128::{I16x8, I32x4};
+    use zerocopy::AsBytes;
+
+    use super::*;
 
     /// The `i16` lanes [`filter`] runs on: [`I16x8`], and [`I16x16`] in the AVX2 kernels, each
     /// holding `N / W` rows of a `W`-wide block.
@@ -1095,7 +1089,7 @@ mod rust_simd {
         variance: &mut u32,
         bitdepth_max: i32,
         img: Rav1dPictureDataComponentOffset,
-) -> i32 {
+    ) -> i32 {
         // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
         unsafe {
             match (BD::BPC, BD::from_max(bitdepth_max).bitdepth()) {
@@ -1127,7 +1121,7 @@ mod rust_simd {
         dst: Rav1dPictureDataComponentOffset,
         top: WithOffset<&DisjointMut<AlignedVec64<u8>>>,
         bottom: WithOffset<&PicOrBuf<'_, AlignedVec64<u8>>>,
-) {
+    ) {
         // SAFETY: Reverse of cast in `cdef::Fn::call`.
         let left = unsafe { &*left.cast() };
         let bd = BD::from_max(bitdepth_max);
@@ -1198,10 +1192,11 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use super::*;
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::picture::Rav1dPictureDataComponent;
+
+    use super::*;
 
     const STRIDE: usize = 64;
     const ROWS: usize = 32;

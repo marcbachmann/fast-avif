@@ -3,20 +3,16 @@ use std::{cmp, slice};
 
 use strum::EnumCount;
 
+use crate::bitdepth::{AsPrimitive, BitDepth, DynCoef};
 use crate::cpu::CpuFlags;
 use crate::enum_map::DefaultValue;
-use crate::bitdepth::{AsPrimitive, BitDepth, DynCoef};
 use crate::intops::iclip;
-use crate::picture::{
-    Rav1dPictureDataComponentOffset,
-};
-use crate::itx_1d::rav1d_inv_wht4_1d_c;
 use crate::itx_1d::{
     rav1d_inv_adst16_1d_c, rav1d_inv_adst4_1d_c, rav1d_inv_adst8_1d_c, rav1d_inv_dct16_1d_c,
     rav1d_inv_dct32_1d_c, rav1d_inv_dct4_1d_c, rav1d_inv_dct64_1d_c, rav1d_inv_dct8_1d_c,
     rav1d_inv_flipadst16_1d_c, rav1d_inv_flipadst4_1d_c, rav1d_inv_flipadst8_1d_c,
     rav1d_inv_identity16_1d_c, rav1d_inv_identity32_1d_c, rav1d_inv_identity4_1d_c,
-    rav1d_inv_identity8_1d_c,
+    rav1d_inv_identity8_1d_c, rav1d_inv_wht4_1d_c,
 };
 use crate::itx_simd;
 use crate::levels::{
@@ -24,6 +20,7 @@ use crate::levels::{
     FLIPADST_ADST, FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST, H_DCT, H_FLIPADST, IDTX,
     N_TX_TYPES_PLUS_LL, V_ADST, V_DCT, V_FLIPADST, WHT_WHT,
 };
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::strided::Strided as _;
 use crate::wrap_fn_ptr::wrap_fn_ptr;
 
@@ -709,8 +706,8 @@ impl Rav1dInvTxfmDSPContext {
 mod tests {
     use super::*;
     use crate::align::AlignedVec64;
-    use crate::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use crate::bitdepth::{BitDepth16, BitDepth8};
+    use crate::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use crate::picture::Rav1dPictureDataComponent;
     use crate::with_offset::WithOffset;
 
@@ -795,7 +792,14 @@ mod tests {
     /// this does in the sums of 32) matches the C or the asm.
     fn simd_matches_scalar(tx: TxfmSize, w: usize, h: usize) {
         let scalar = || Rav1dInvTxfmDSPContext::default::<BitDepth16>();
-        matches::<BitDepth8>(tx, w, h, 255, &[&Rav1dInvTxfmDSPContext::default::<BitDepth8>()], 1);
+        matches::<BitDepth8>(
+            tx,
+            w,
+            h,
+            255,
+            &[&Rav1dInvTxfmDSPContext::default::<BitDepth8>()],
+            1,
+        );
         matches::<BitDepth16>(tx, w, h, 1023, &[&scalar()], 1);
     }
 
@@ -836,11 +840,7 @@ mod tests {
                     (8, 8) => t == DCT_DCT && eob < 10,
                     _ => false,
                 };
-                let (nw, nh) = if quarter {
-                    (cw / 2, ch / 2)
-                } else {
-                    (cw, ch)
-                };
+                let (nw, nh) = if quarter { (cw / 2, ch / 2) } else { (cw, ch) };
                 let coef = |rng: &mut Rng| (rng.next() % (2 * range + 1) as u32) as i32 - range;
                 for _ in 0..n {
                     if rng.next() % 2 == 0 {

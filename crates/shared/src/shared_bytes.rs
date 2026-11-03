@@ -25,7 +25,9 @@ struct Owner<T>(ManuallyDrop<T>);
 impl<T> Drop for Owner<T> {
     fn drop(&mut self) {
         // SAFETY: dropped only here, once.
-        let _ = catch_unwind(AssertUnwindSafe(|| unsafe { ManuallyDrop::drop(&mut self.0) }));
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            ManuallyDrop::drop(&mut self.0)
+        }));
     }
 }
 
@@ -33,7 +35,10 @@ impl SharedBytes {
     pub fn new<T: AsRef<[u8]> + Send + Sync + 'static>(owner: T) -> Self {
         let owner = Arc::new(Owner(ManuallyDrop::new(owner)));
         let view = NonNull::from((*owner.0).as_ref());
-        Self { _owner: owner, view }
+        Self {
+            _owner: owner,
+            view,
+        }
     }
 
     #[inline]

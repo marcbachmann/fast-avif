@@ -1,4 +1,3 @@
-
 use crate::attributes::{clz, clzll};
 use crate::bitdepth::{AsPrimitive, ToPrimitive};
 

@@ -8,11 +8,11 @@
 use zerocopy::{AsBytes, FromBytes};
 
 use crate::bitdepth::BitDepth;
-use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::levels::{
     TxfmType, ADST_ADST, ADST_DCT, ADST_FLIPADST, DCT_ADST, DCT_DCT, DCT_FLIPADST, FLIPADST_ADST,
     FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST, H_DCT, H_FLIPADST, IDTX, V_ADST, V_DCT, V_FLIPADST,
 };
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::simd128::{transpose8x8, I16x8, I32x4, Lanes};
 use crate::strided::Strided as _;
 
@@ -320,7 +320,11 @@ fn round<V: Lanes, const N: usize>(v: &mut [V; N], k: i32, negated: u32) {
     }
     let (pos, neg) = (V::splat(k as i16), V::splat(-k as i16));
     for i in 0..N {
-        v[i] = v[i].mulhrs(if (negated as u64) >> i & 1 != 0 { neg } else { pos });
+        v[i] = v[i].mulhrs(if (negated as u64) >> i & 1 != 0 {
+            neg
+        } else {
+            pos
+        });
     }
 }
 
@@ -1513,7 +1517,11 @@ mod packed {
             )
         } else {
             (
-                x[0].madd2x(x[1], [[2896, -2896], [799, -4017]], [[2896, 2896], [4017, 799]]),
+                x[0].madd2x(
+                    x[1],
+                    [[2896, -2896], [799, -4017]],
+                    [[2896, 2896], [4017, 799]],
+                ),
                 x[2].madd2x(
                     x[3],
                     [[1567, -3784], [3406, -2276]],

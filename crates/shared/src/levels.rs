@@ -10,8 +10,8 @@ use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
 use crate::align::ArrayDefault;
 use crate::enum_map::{DefaultValue, EnumKey};
-use crate::in_range::InRange;
 use crate::headers::Rav1dFilterMode;
+use crate::in_range::InRange;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
 pub enum ObuMetaType {

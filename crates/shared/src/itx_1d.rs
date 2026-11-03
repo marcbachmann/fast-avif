@@ -41,13 +41,7 @@ use std::num::NonZeroUsize;
 use crate::intops::iclip;
 
 #[inline(never)]
-fn inv_dct4_1d_internal_c(
-    c: &mut [i32],
-    stride: NonZeroUsize,
-    min: i32,
-    max: i32,
-    tx64: i32,
-) {
+fn inv_dct4_1d_internal_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i32, tx64: i32) {
     let clip = |v| iclip(v, min, max);
     let stride = stride.get();
 
@@ -84,13 +78,7 @@ pub fn rav1d_inv_dct4_1d_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i
 }
 
 #[inline(never)]
-fn inv_dct8_1d_internal_c(
-    c: &mut [i32],
-    stride: NonZeroUsize,
-    min: i32,
-    max: i32,
-    tx64: i32,
-) {
+fn inv_dct8_1d_internal_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i32, tx64: i32) {
     let clip = |v| iclip(v, min, max);
     let stride = stride.get();
 
@@ -146,13 +134,7 @@ pub fn rav1d_inv_dct8_1d_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i
 }
 
 #[inline(never)]
-fn inv_dct16_1d_internal_c(
-    c: &mut [i32],
-    stride: NonZeroUsize,
-    min: i32,
-    max: i32,
-    tx64: i32,
-) {
+fn inv_dct16_1d_internal_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i32, tx64: i32) {
     let clip = |v| iclip(v, min, max);
     let stride = stride.get();
 
@@ -255,13 +237,7 @@ pub fn rav1d_inv_dct16_1d_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: 
 }
 
 #[inline(never)]
-fn inv_dct32_1d_internal_c(
-    c: &mut [i32],
-    stride: NonZeroUsize,
-    min: i32,
-    max: i32,
-    tx64: i32,
-) {
+fn inv_dct32_1d_internal_c(c: &mut [i32], stride: NonZeroUsize, min: i32, max: i32, tx64: i32) {
     let clip = |v| iclip(v, min, max);
     let stride = stride.get();
 

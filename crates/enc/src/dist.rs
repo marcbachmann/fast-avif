@@ -49,7 +49,10 @@ fn satd_scalar(src: &[u8], rec: &[u8], stride: usize, w: usize, h: usize) -> u64
             }
             let rows = d.map(h4);
             for c in 0..4 {
-                total += h4([rows[0][c], rows[1][c], rows[2][c], rows[3][c]]).iter().map(|v| v.unsigned_abs() as u64).sum::<u64>();
+                total += h4([rows[0][c], rows[1][c], rows[2][c], rows[3][c]])
+                    .iter()
+                    .map(|v| v.unsigned_abs() as u64)
+                    .sum::<u64>();
             }
         }
     }
@@ -95,17 +98,38 @@ fn sse_scalar(a: &[u8], sa: usize, b: &[u8], sb: usize, w: usize, h: usize) -> u
 }
 
 /// `out[r * w + c] = src[r * ss + c] - pred[r * ps + c]` for a block of `w` (4 to 64) by `h`.
-pub fn residual(out: &mut [i16], src: &[u8], ss: usize, pred: &[u8], ps: usize, w: usize, h: usize) {
+pub fn residual(
+    out: &mut [i16],
+    src: &[u8],
+    ss: usize,
+    pred: &[u8],
+    ps: usize,
+    w: usize,
+    h: usize,
+) {
     residual_in(Lane::detect(), out, src, ss, pred, ps, w, h)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn residual_in(lane: Lane, out: &mut [i16], src: &[u8], ss: usize, pred: &[u8], ps: usize, w: usize, h: usize) {
+pub fn residual_in(
+    lane: Lane,
+    out: &mut [i16],
+    src: &[u8],
+    ss: usize,
+    pred: &[u8],
+    ps: usize,
+    w: usize,
+    h: usize,
+) {
     assert!(w <= ss && w <= ps && w <= 64 && w % 4 == 0);
     if h == 0 || w == 0 {
         return;
     }
-    let (out, src, pred) = (&mut out[..w * h], &src[..(h - 1) * ss + w], &pred[..(h - 1) * ps + w]);
+    let (out, src, pred) = (
+        &mut out[..w * h],
+        &src[..(h - 1) * ss + w],
+        &pred[..(h - 1) * ps + w],
+    );
     match lane {
         Lane::Scalar => residual_scalar(out, src, ss, pred, ps, w, h),
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -121,9 +145,21 @@ pub fn residual_in(lane: Lane, out: &mut [i16], src: &[u8], ss: usize, pred: &[u
     }
 }
 
-fn residual_scalar(out: &mut [i16], src: &[u8], ss: usize, pred: &[u8], ps: usize, w: usize, h: usize) {
+fn residual_scalar(
+    out: &mut [i16],
+    src: &[u8],
+    ss: usize,
+    pred: &[u8],
+    ps: usize,
+    w: usize,
+    h: usize,
+) {
     for r in 0..h {
-        for ((o, &s), &p) in out[r * w..][..w].iter_mut().zip(&src[r * ss..][..w]).zip(&pred[r * ps..][..w]) {
+        for ((o, &s), &p) in out[r * w..][..w]
+            .iter_mut()
+            .zip(&src[r * ss..][..w])
+            .zip(&pred[r * ps..][..w])
+        {
             *o = s as i16 - p as i16;
         }
     }
@@ -140,16 +176,34 @@ mod x86 {
 
     /// Rows of 16 pixels widened to i16 lanes and subtracted; 8 and 4 wide rows by half a vector.
     #[target_feature(enable = "avx2")]
-    pub unsafe fn residual(out: &mut [i16], src: &[u8], ss: usize, pred: &[u8], ps: usize, w: usize, h: usize) {
+    pub unsafe fn residual(
+        out: &mut [i16],
+        src: &[u8],
+        ss: usize,
+        pred: &[u8],
+        ps: usize,
+        w: usize,
+        h: usize,
+    ) {
         for r in 0..h {
-            let (o, s, p) = (out.as_mut_ptr().add(r * w), src.as_ptr().add(r * ss), pred.as_ptr().add(r * ps));
+            let (o, s, p) = (
+                out.as_mut_ptr().add(r * w),
+                src.as_ptr().add(r * ss),
+                pred.as_ptr().add(r * ps),
+            );
             match w {
                 4 => {
-                    let d = _mm_sub_epi16(_mm_cvtepu8_epi16(_mm_cvtsi32_si128((s as *const i32).read_unaligned())), _mm_cvtepu8_epi16(_mm_cvtsi32_si128((p as *const i32).read_unaligned())));
+                    let d = _mm_sub_epi16(
+                        _mm_cvtepu8_epi16(_mm_cvtsi32_si128((s as *const i32).read_unaligned())),
+                        _mm_cvtepu8_epi16(_mm_cvtsi32_si128((p as *const i32).read_unaligned())),
+                    );
                     (o as *mut i64).write_unaligned(_mm_cvtsi128_si64(d));
                 }
                 8 => {
-                    let d = _mm_sub_epi16(_mm_cvtepu8_epi16(_mm_loadl_epi64(s as *const __m128i)), _mm_cvtepu8_epi16(_mm_loadl_epi64(p as *const __m128i)));
+                    let d = _mm_sub_epi16(
+                        _mm_cvtepu8_epi16(_mm_loadl_epi64(s as *const __m128i)),
+                        _mm_cvtepu8_epi16(_mm_loadl_epi64(p as *const __m128i)),
+                    );
                     _mm_storeu_si128(o as *mut __m128i, d);
                 }
                 _ => {
@@ -171,14 +225,25 @@ mod x86 {
     unsafe fn hadamard8(d: [__m128i; 4]) -> __m128i {
         let (a, b) = (_mm_add_epi16(d[0], d[1]), _mm_sub_epi16(d[0], d[1]));
         let (c, e) = (_mm_add_epi16(d[2], d[3]), _mm_sub_epi16(d[2], d[3]));
-        let v = [_mm_add_epi16(a, c), _mm_add_epi16(b, e), _mm_sub_epi16(a, c), _mm_sub_epi16(b, e)];
+        let v = [
+            _mm_add_epi16(a, c),
+            _mm_add_epi16(b, e),
+            _mm_sub_epi16(a, c),
+            _mm_sub_epi16(b, e),
+        ];
         let mut sum = _mm_setzero_si128();
         for k in [0, 2] {
             let s = _mm_hadd_epi16(v[k], v[k + 1]);
             let t = _mm_hsub_epi16(v[k], v[k + 1]);
             let ones = _mm_set1_epi16(1);
-            sum = _mm_add_epi32(sum, _mm_madd_epi16(_mm_abs_epi16(_mm_hadd_epi16(s, t)), ones));
-            sum = _mm_add_epi32(sum, _mm_madd_epi16(_mm_abs_epi16(_mm_hsub_epi16(s, t)), ones));
+            sum = _mm_add_epi32(
+                sum,
+                _mm_madd_epi16(_mm_abs_epi16(_mm_hadd_epi16(s, t)), ones),
+            );
+            sum = _mm_add_epi32(
+                sum,
+                _mm_madd_epi16(_mm_abs_epi16(_mm_hsub_epi16(s, t)), ones),
+            );
         }
         sum
     }
@@ -187,14 +252,25 @@ mod x86 {
     unsafe fn hadamard16(d: [__m256i; 4]) -> __m256i {
         let (a, b) = (_mm256_add_epi16(d[0], d[1]), _mm256_sub_epi16(d[0], d[1]));
         let (c, e) = (_mm256_add_epi16(d[2], d[3]), _mm256_sub_epi16(d[2], d[3]));
-        let v = [_mm256_add_epi16(a, c), _mm256_add_epi16(b, e), _mm256_sub_epi16(a, c), _mm256_sub_epi16(b, e)];
+        let v = [
+            _mm256_add_epi16(a, c),
+            _mm256_add_epi16(b, e),
+            _mm256_sub_epi16(a, c),
+            _mm256_sub_epi16(b, e),
+        ];
         let mut sum = _mm256_setzero_si256();
         for k in [0, 2] {
             let s = _mm256_hadd_epi16(v[k], v[k + 1]);
             let t = _mm256_hsub_epi16(v[k], v[k + 1]);
             let ones = _mm256_set1_epi16(1);
-            sum = _mm256_add_epi32(sum, _mm256_madd_epi16(_mm256_abs_epi16(_mm256_hadd_epi16(s, t)), ones));
-            sum = _mm256_add_epi32(sum, _mm256_madd_epi16(_mm256_abs_epi16(_mm256_hsub_epi16(s, t)), ones));
+            sum = _mm256_add_epi32(
+                sum,
+                _mm256_madd_epi16(_mm256_abs_epi16(_mm256_hadd_epi16(s, t)), ones),
+            );
+            sum = _mm256_add_epi32(
+                sum,
+                _mm256_madd_epi16(_mm256_abs_epi16(_mm256_hsub_epi16(s, t)), ones),
+            );
         }
         sum
     }
@@ -237,12 +313,22 @@ mod x86 {
             let row = |r: usize| (by + r) * stride;
             let mut x = 0;
             while x + 16 <= w {
-                let d = [diff16(src, rec, row(0) + x), diff16(src, rec, row(1) + x), diff16(src, rec, row(2) + x), diff16(src, rec, row(3) + x)];
+                let d = [
+                    diff16(src, rec, row(0) + x),
+                    diff16(src, rec, row(1) + x),
+                    diff16(src, rec, row(2) + x),
+                    diff16(src, rec, row(3) + x),
+                ];
                 sum = _mm256_add_epi32(sum, hadamard16(d));
                 x += 16;
             }
             if x + 8 <= w {
-                let d = [diff8(src, rec, row(0) + x), diff8(src, rec, row(1) + x), diff8(src, rec, row(2) + x), diff8(src, rec, row(3) + x)];
+                let d = [
+                    diff8(src, rec, row(0) + x),
+                    diff8(src, rec, row(1) + x),
+                    diff8(src, rec, row(2) + x),
+                    diff8(src, rec, row(3) + x),
+                ];
                 sum8 = _mm_add_epi32(sum8, hadamard8(d));
             }
         }
@@ -251,11 +337,22 @@ mod x86 {
             for by in (0..h).step_by(8) {
                 let at = |r: usize| (by + r) * stride + x;
                 let at2 = |r: usize| (by + 4 < h).then_some((by + 4 + r) * stride + x);
-                let d = [diff4x2(src, rec, at(0), at2(0)), diff4x2(src, rec, at(1), at2(1)), diff4x2(src, rec, at(2), at2(2)), diff4x2(src, rec, at(3), at2(3))];
+                let d = [
+                    diff4x2(src, rec, at(0), at2(0)),
+                    diff4x2(src, rec, at(1), at2(1)),
+                    diff4x2(src, rec, at(2), at2(2)),
+                    diff4x2(src, rec, at(3), at2(3)),
+                ];
                 sum8 = _mm_add_epi32(sum8, hadamard8(d));
             }
         }
-        let s = _mm_add_epi32(sum8, _mm_add_epi32(_mm256_castsi256_si128(sum), _mm256_extracti128_si256::<1>(sum)));
+        let s = _mm_add_epi32(
+            sum8,
+            _mm_add_epi32(
+                _mm256_castsi256_si128(sum),
+                _mm256_extracti128_si256::<1>(sum),
+            ),
+        );
         let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b01_00_11_10>(s));
         let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b10_11_00_01>(s));
         _mm_cvtsi128_si32(s) as u32 as u64
@@ -300,9 +397,21 @@ mod arm {
     use std::arch::aarch64::*;
 
     /// `x86::residual`'s twin: 16 pixels widened by `vmovl` and subtracted; 8 and 4 wide rows by half.
-    pub fn residual(out: &mut [i16], src: &[u8], ss: usize, pred: &[u8], ps: usize, w: usize, h: usize) {
+    pub fn residual(
+        out: &mut [i16],
+        src: &[u8],
+        ss: usize,
+        pred: &[u8],
+        ps: usize,
+        w: usize,
+        h: usize,
+    ) {
         for r in 0..h {
-            let (o, s, p) = (&mut out[r * w..][..w], &src[r * ss..][..w], &pred[r * ps..][..w]);
+            let (o, s, p) = (
+                &mut out[r * w..][..w],
+                &src[r * ss..][..w],
+                &pred[r * ps..][..w],
+            );
             match w {
                 4 => {
                     for c in 0..4 {
@@ -312,7 +421,10 @@ mod arm {
                 8 => {
                     // SAFETY: the slices are 8 bytes and 8 lanes long.
                     unsafe {
-                        let d = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vld1_u8(s.as_ptr()))), vreinterpretq_s16_u16(vmovl_u8(vld1_u8(p.as_ptr()))));
+                        let d = vsubq_s16(
+                            vreinterpretq_s16_u16(vmovl_u8(vld1_u8(s.as_ptr()))),
+                            vreinterpretq_s16_u16(vmovl_u8(vld1_u8(p.as_ptr()))),
+                        );
                         vst1q_s16(o.as_mut_ptr(), d);
                     }
                 }
@@ -321,8 +433,14 @@ mod arm {
                         // SAFETY: w is a multiple of 16 here and the slices hold the row.
                         unsafe {
                             let (a, b) = (vld1q_u8(s.as_ptr().add(c)), vld1q_u8(p.as_ptr().add(c)));
-                            let lo = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(a))), vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(b))));
-                            let hi = vsubq_s16(vreinterpretq_s16_u16(vmovl_high_u8(a)), vreinterpretq_s16_u16(vmovl_high_u8(b)));
+                            let lo = vsubq_s16(
+                                vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(a))),
+                                vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(b))),
+                            );
+                            let hi = vsubq_s16(
+                                vreinterpretq_s16_u16(vmovl_high_u8(a)),
+                                vreinterpretq_s16_u16(vmovl_high_u8(b)),
+                            );
                             vst1q_s16(o.as_mut_ptr().add(c), lo);
                             vst1q_s16(o.as_mut_ptr().add(c + 8), hi);
                         }
@@ -342,7 +460,12 @@ mod arm {
     unsafe fn hadamard8(d: [int16x8_t; 4], sum: uint32x4_t) -> uint32x4_t {
         let (a, b) = (vaddq_s16(d[0], d[1]), vsubq_s16(d[0], d[1]));
         let (c, e) = (vaddq_s16(d[2], d[3]), vsubq_s16(d[2], d[3]));
-        let v = [vaddq_s16(a, c), vaddq_s16(b, e), vsubq_s16(a, c), vsubq_s16(b, e)];
+        let v = [
+            vaddq_s16(a, c),
+            vaddq_s16(b, e),
+            vsubq_s16(a, c),
+            vsubq_s16(b, e),
+        ];
         let mut sum = sum;
         for k in [0, 2] {
             let s = vpaddq_s16(v[k], v[k + 1]);
@@ -380,7 +503,12 @@ mod arm {
         for by in (0..h).step_by(4) {
             let row = |r: usize| (by + r) * stride;
             for x in (0..w - w % 8).step_by(8) {
-                let d = [diff8(src, rec, row(0) + x), diff8(src, rec, row(1) + x), diff8(src, rec, row(2) + x), diff8(src, rec, row(3) + x)];
+                let d = [
+                    diff8(src, rec, row(0) + x),
+                    diff8(src, rec, row(1) + x),
+                    diff8(src, rec, row(2) + x),
+                    diff8(src, rec, row(3) + x),
+                ];
                 sum = hadamard8(d, sum);
             }
         }
@@ -389,7 +517,12 @@ mod arm {
             for by in (0..h).step_by(8) {
                 let at = |r: usize| (by + r) * stride + x;
                 let at2 = |r: usize| (by + 4 < h).then_some((by + 4 + r) * stride + x);
-                let d = [diff4x2(src, rec, at(0), at2(0)), diff4x2(src, rec, at(1), at2(1)), diff4x2(src, rec, at(2), at2(2)), diff4x2(src, rec, at(3), at2(3))];
+                let d = [
+                    diff4x2(src, rec, at(0), at2(0)),
+                    diff4x2(src, rec, at(1), at2(1)),
+                    diff4x2(src, rec, at(2), at2(2)),
+                    diff4x2(src, rec, at(3), at2(3)),
+                ];
                 sum = hadamard8(d, sum);
             }
         }
@@ -403,7 +536,10 @@ mod arm {
             let mut row = vdupq_n_u32(0);
             let mut x = 0;
             while x + 8 <= w {
-                let d = vabdl_u8(vld1_u8(ra[x..][..8].as_ptr()), vld1_u8(rb[x..][..8].as_ptr()));
+                let d = vabdl_u8(
+                    vld1_u8(ra[x..][..8].as_ptr()),
+                    vld1_u8(rb[x..][..8].as_ptr()),
+                );
                 row = vmlal_u16(row, vget_low_u16(d), vget_low_u16(d));
                 row = vmlal_high_u16(row, d, d);
                 x += 8;
@@ -430,9 +566,16 @@ mod tests {
         for round in 0..4000 {
             let w = [4, 8, 16, 32, 64][round % 5];
             let h = 4 * (1 + rng.below(16) as usize);
-            let (ss, ps) = (w + rng.below(3) as usize * 8, w + rng.below(2) as usize * 16);
-            let src: Vec<u8> = (0..(h - 1) * ss + w).map(|_| rng.below(256) as u8).collect();
-            let pred: Vec<u8> = (0..(h - 1) * ps + w).map(|_| rng.below(256) as u8).collect();
+            let (ss, ps) = (
+                w + rng.below(3) as usize * 8,
+                w + rng.below(2) as usize * 16,
+            );
+            let src: Vec<u8> = (0..(h - 1) * ss + w)
+                .map(|_| rng.below(256) as u8)
+                .collect();
+            let pred: Vec<u8> = (0..(h - 1) * ps + w)
+                .map(|_| rng.below(256) as u8)
+                .collect();
             let (mut want, mut got) = (vec![0i16; w * h], vec![0i16; w * h]);
             residual_in(lanes[0], &mut want, &src, ss, &pred, ps, w, h);
             residual_in(*lanes.last().unwrap(), &mut got, &src, ss, &pred, ps, w, h);
@@ -450,8 +593,24 @@ mod tests {
             let stride = w + rng.below(3) as usize * 4 + rng.below(2) as usize;
             let len = (h - 1) * stride + w;
             let spread = [255, 255, 8, 0][rng.below(4) as usize];
-            let src: Vec<u8> = (0..len).map(|_| if spread == 255 && rng.below(2) == 0 { 255 } else { rng.below(spread + 1) as u8 }).collect();
-            let rec: Vec<u8> = (0..len).map(|i| if spread == 255 && rng.below(2) == 0 { 255 - src[i] } else { rng.below(spread + 1) as u8 }).collect();
+            let src: Vec<u8> = (0..len)
+                .map(|_| {
+                    if spread == 255 && rng.below(2) == 0 {
+                        255
+                    } else {
+                        rng.below(spread + 1) as u8
+                    }
+                })
+                .collect();
+            let rec: Vec<u8> = (0..len)
+                .map(|i| {
+                    if spread == 255 && rng.below(2) == 0 {
+                        255 - src[i]
+                    } else {
+                        rng.below(spread + 1) as u8
+                    }
+                })
+                .collect();
             let want = satd_in(lanes[0], &src, &rec, stride, w, h);
             let got = satd_in(*lanes.last().unwrap(), &src, &rec, stride, w, h);
             assert_eq!(want, got, "{w}x{h} stride {stride}");
@@ -467,10 +626,18 @@ mod tests {
             let h = 1 + rng.below(64) as usize;
             let (sa, sb) = (w + rng.below(9) as usize, w + rng.below(70) as usize);
             let extreme = rng.below(3) == 0;
-            let a: Vec<u8> = (0..(h - 1) * sa + w).map(|_| if extreme { 255 } else { rng.below(256) as u8 }).collect();
-            let b: Vec<u8> = (0..(h - 1) * sb + w).map(|_| if extreme { 0 } else { rng.below(256) as u8 }).collect();
+            let a: Vec<u8> = (0..(h - 1) * sa + w)
+                .map(|_| if extreme { 255 } else { rng.below(256) as u8 })
+                .collect();
+            let b: Vec<u8> = (0..(h - 1) * sb + w)
+                .map(|_| if extreme { 0 } else { rng.below(256) as u8 })
+                .collect();
             let want = sse_in(lanes[0], &a, sa, &b, sb, w, h);
-            assert_eq!(want, sse_in(*lanes.last().unwrap(), &a, sa, &b, sb, w, h), "{w}x{h}");
+            assert_eq!(
+                want,
+                sse_in(*lanes.last().unwrap(), &a, sa, &b, sb, w, h),
+                "{w}x{h}"
+            );
         }
     }
 }

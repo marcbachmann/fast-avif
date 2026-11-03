@@ -783,9 +783,8 @@ mod debug {
     use std::thread;
     use std::thread::ThreadId;
 
-    use crate::sync::Mutex;
-
     use super::*;
+    use crate::sync::Mutex;
 
     #[derive(Debug)]
     pub struct DisjointMutBounds {

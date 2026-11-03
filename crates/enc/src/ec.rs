@@ -227,9 +227,10 @@ fn recenter(r: u32, v: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rav1d_shared::shared_bytes::SharedBytes;
     use rav1d_shared::msac::*;
+    use rav1d_shared::shared_bytes::SharedBytes;
+
+    use super::*;
 
     struct Rng(u64);
 
@@ -281,22 +282,39 @@ mod tests {
                 0 => {
                     let n = 1 + rng.below(15) as u8;
                     let s = rng.below(n as u32 + 1) as u8;
-                    Op::Symbol { s, n, cdf: random_cdf(rng, n, skewed) }
+                    Op::Symbol {
+                        s,
+                        n,
+                        cdf: random_cdf(rng, n, skewed),
+                    }
                 }
                 1 => {
                     let n = 1 + rng.below(15) as u8;
                     let s = rng.below(n as u32 + 1) as u8;
-                    Op::Fixed { s, n, cdf: random_cdf(rng, n, skewed) }
+                    Op::Fixed {
+                        s,
+                        n,
+                        cdf: random_cdf(rng, n, skewed),
+                    }
                 }
                 2 => {
                     let p = random_cdf(rng, 1, skewed)[0];
-                    Op::BoolAdapt { bit: rng.below(2) == 1, cdf: [p, rng.below(33) as u16] }
+                    Op::BoolAdapt {
+                        bit: rng.below(2) == 1,
+                        cdf: [p, rng.below(33) as u16],
+                    }
                 }
-                3 => Op::Bool { bit: rng.below(2) == 1, f: 1 + rng.below(32_767) },
+                3 => Op::Bool {
+                    bit: rng.below(2) == 1,
+                    f: 1 + rng.below(32_767),
+                },
                 4 => Op::Equi(rng.below(2) == 1),
                 5 => {
                     let n = rng.below(25) as u8;
-                    Op::Bools { v: rng.next() & ((1u64 << n) - 1) as u32, n }
+                    Op::Bools {
+                        v: rng.next() & ((1u64 << n) - 1) as u32,
+                        n,
+                    }
                 }
                 6 => {
                     let n = 2 + rng.below(1000);
@@ -305,12 +323,20 @@ mod tests {
                 7 => {
                     let k = rng.below(6) as u8;
                     let n = 8 << k;
-                    Op::Subexp { v: rng.below(n), r#ref: rng.below(n), n, k }
+                    Op::Subexp {
+                        v: rng.below(n),
+                        r#ref: rng.below(n),
+                        n,
+                        k,
+                    }
                 }
                 _ => {
                     let mut cdf = [0u16; 4];
                     cdf[..4].copy_from_slice(&random_cdf(rng, 3, skewed)[..4]);
-                    Op::HiTok { tok: 3 + rng.below(13) as u8, cdf }
+                    Op::HiTok {
+                        tok: 3 + rng.below(13) as u8,
+                        cdf,
+                    }
                 }
             })
             .collect()
@@ -377,7 +403,11 @@ mod tests {
                     let mut ours = cdf;
                     adapt(s, &mut ours, n);
                     assert_eq!(decode_symbol(&mut d, &mut cdf, n), s, "op {i}");
-                    assert_eq!(cdf[..=n as usize], ours[..=n as usize], "op {i}: adaptation");
+                    assert_eq!(
+                        cdf[..=n as usize],
+                        ours[..=n as usize],
+                        "op {i}: adaptation"
+                    );
                 }
                 Op::Fixed { s, n, mut cdf } => {
                     assert_eq!(decode_symbol(&mut d, &mut cdf, n), s, "op {i}")
@@ -395,7 +425,11 @@ mod tests {
                     assert_eq!(rav1d_msac_decode_uniform(&mut d, n), v as i32, "op {i}")
                 }
                 Op::Subexp { v, r#ref, n, k } => {
-                    assert_eq!(rav1d_msac_decode_subexp(&mut d, r#ref, n, k), v as i32, "op {i}")
+                    assert_eq!(
+                        rav1d_msac_decode_subexp(&mut d, r#ref, n, k),
+                        v as i32,
+                        "op {i}"
+                    )
                 }
                 Op::HiTok { tok, mut cdf } => {
                     assert_eq!(decode_hi_tok(&mut d, &mut cdf), tok, "op {i}")
@@ -443,7 +477,9 @@ mod tests {
         let mut rng = Rng(7);
         let mut cdf = random_cdf(&mut rng, 12, false);
         cdf[12] = 0;
-        let symbols: Vec<u8> = (0..100_000).map(|_| (rng.below(13) * rng.below(2)) as u8).collect();
+        let symbols: Vec<u8> = (0..100_000)
+            .map(|_| (rng.below(13) * rng.below(2)) as u8)
+            .collect();
         let mut w = Writer::default();
         let mut ours = cdf;
         for &s in &symbols {

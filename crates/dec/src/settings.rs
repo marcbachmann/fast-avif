@@ -1,9 +1,8 @@
-
 use bitflags::bitflags;
-use strum::FromRepr;
-
 use rav1d_shared::in_range::InRange;
 use rav1d_shared::picture::Rav1dPicAllocator;
+use strum::FromRepr;
+
 use crate::log::Rav1dLogger;
 
 pub const RAV1D_MAX_THREADS: usize = 256;

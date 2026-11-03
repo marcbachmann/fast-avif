@@ -3,12 +3,13 @@
 use std::cmp;
 
 use rav1d_shared::align::ArrayDefault;
-use crate::filmgrain::{Rav1dFilmGrainDSPContext, FG_BLOCK_SIZE};
 use rav1d_shared::bitdepth::{BitDepth, BPC};
 use rav1d_shared::headers::{Rav1dMatrixCoefficients, Rav1dPixelLayout};
 use rav1d_shared::picture::Rav1dPicture;
-use crate::internal::GrainBD;
 use rav1d_shared::strided::Strided as _;
+
+use crate::filmgrain::{Rav1dFilmGrainDSPContext, FG_BLOCK_SIZE};
+use crate::internal::GrainBD;
 
 fn generate_scaling<BD: BitDepth>(bd: BD, points: &[[u8; 2]]) -> BD::Scaling {
     let mut scaling_array = ArrayDefault::default();

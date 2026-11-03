@@ -10,8 +10,25 @@ use super::fdct_fast::Lane;
 /// levels in the coefficients' scale, and the count of levels up to the last nonzero one in
 /// raster order, 0 for none, which is all a dequantization needs to read.
 #[allow(clippy::too_many_arguments)]
-pub fn quantize(coefs: &[i32], levels: &mut [i32], dq: [u32; 2], qm: Option<&[u8]>, shift: u32, rounding: u32, index: &[u16]) -> (i32, u64, usize) {
-    quantize_in(Lane::detect(), coefs, levels, dq, qm, shift, rounding, index)
+pub fn quantize(
+    coefs: &[i32],
+    levels: &mut [i32],
+    dq: [u32; 2],
+    qm: Option<&[u8]>,
+    shift: u32,
+    rounding: u32,
+    index: &[u16],
+) -> (i32, u64, usize) {
+    quantize_in(
+        Lane::detect(),
+        coefs,
+        levels,
+        dq,
+        qm,
+        shift,
+        rounding,
+        index,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -43,7 +60,15 @@ pub fn quantize_in(
     }
 }
 
-fn quantize_scalar(coefs: &[i32], levels: &mut [i32], dq: [u32; 2], qm: Option<&[u8]>, shift: u32, rounding: u32, index: &[u16]) -> (i32, u64, usize) {
+fn quantize_scalar(
+    coefs: &[i32],
+    levels: &mut [i32],
+    dq: [u32; 2],
+    qm: Option<&[u8]>,
+    shift: u32,
+    rounding: u32,
+    index: &[u16],
+) -> (i32, u64, usize) {
     let mut eob = -1;
     let mut err = 0u64;
     let mut last = 0;
@@ -70,7 +95,14 @@ pub fn dequantize(levels: &[i32], cf: &mut [i16], dq: [u32; 2], qm: Option<&[u8]
     dequantize_in(Lane::detect(), levels, cf, dq, qm, shift)
 }
 
-pub fn dequantize_in(lane: Lane, levels: &[i32], cf: &mut [i16], dq: [u32; 2], qm: Option<&[u8]>, shift: u32) {
+pub fn dequantize_in(
+    lane: Lane,
+    levels: &[i32],
+    cf: &mut [i16],
+    dq: [u32; 2],
+    qm: Option<&[u8]>,
+    shift: u32,
+) {
     let n = levels.len();
     assert!(n % 8 == 0 && cf.len() == n && qm.is_none_or(|m| m.len() >= n));
     match lane {
@@ -124,7 +156,10 @@ mod x86 {
         }
         if let Some(qm) = qm {
             let m = _mm256_cvtepu8_epi32(_mm_loadl_epi64(qm[rc..][..8].as_ptr().cast()));
-            q = _mm256_srli_epi32::<5>(_mm256_add_epi32(_mm256_mullo_epi32(q, m), _mm256_set1_epi32(16)));
+            q = _mm256_srli_epi32::<5>(_mm256_add_epi32(
+                _mm256_mullo_epi32(q, m),
+                _mm256_set1_epi32(16),
+            ));
         }
         q
     }
@@ -134,13 +169,24 @@ mod x86 {
     unsafe fn divide(a: __m128i, q: __m128i, round: __m256d) -> __m128i {
         let k128 = _mm256_set1_pd(128.0);
         let qd = _mm256_cvtepi32_pd(q);
-        let num = _mm256_add_pd(_mm256_mul_pd(_mm256_cvtepi32_pd(a), k128), _mm256_mul_pd(qd, round));
+        let num = _mm256_add_pd(
+            _mm256_mul_pd(_mm256_cvtepi32_pd(a), k128),
+            _mm256_mul_pd(qd, round),
+        );
         _mm256_cvttpd_epi32(_mm256_div_pd(num, _mm256_mul_pd(qd, k128)))
     }
 
     #[target_feature(enable = "avx2")]
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn quantize(coefs: &[i32], levels: &mut [i32], dq: [u32; 2], qm: Option<&[u8]>, shift: u32, rounding: u32, index: &[u16]) -> (i32, u64, usize) {
+    pub unsafe fn quantize(
+        coefs: &[i32],
+        levels: &mut [i32],
+        dq: [u32; 2],
+        qm: Option<&[u8]>,
+        shift: u32,
+        rounding: u32,
+        index: &[u16],
+    ) -> (i32, u64, usize) {
         let count = _mm_cvtsi32_si128(shift as i32);
         let mut last = 0;
         let round = _mm256_set1_pd(rounding as f64);
@@ -152,18 +198,31 @@ mod x86 {
             let q = steps(dq, qm, rc);
             let a = _mm256_sll_epi32(_mm256_abs_epi32(c), count);
             // A level is 0 where 128a < q(128 - rounding): eight such coefficients skip the division.
-            let live = _mm256_cmpgt_epi32(_mm256_slli_epi32::<7>(a), _mm256_sub_epi32(_mm256_mullo_epi32(q, dead), _mm256_set1_epi32(1)));
+            let live = _mm256_cmpgt_epi32(
+                _mm256_slli_epi32::<7>(a),
+                _mm256_sub_epi32(_mm256_mullo_epi32(q, dead), _mm256_set1_epi32(1)),
+            );
             if _mm256_testz_si256(live, live) != 0 {
-                _mm256_storeu_si256(levels[rc..][..8].as_mut_ptr().cast(), _mm256_setzero_si256());
+                _mm256_storeu_si256(
+                    levels[rc..][..8].as_mut_ptr().cast(),
+                    _mm256_setzero_si256(),
+                );
                 err = _mm256_add_epi64(err, _mm256_mul_epi32(a, a));
                 let odd = _mm256_srli_epi64::<32>(a);
                 err = _mm256_add_epi64(err, _mm256_mul_epi32(odd, odd));
                 continue;
             }
             let lo = divide(_mm256_castsi256_si128(a), _mm256_castsi256_si128(q), round);
-            let hi = divide(_mm256_extracti128_si256::<1>(a), _mm256_extracti128_si256::<1>(q), round);
+            let hi = divide(
+                _mm256_extracti128_si256::<1>(a),
+                _mm256_extracti128_si256::<1>(q),
+                round,
+            );
             let v = _mm256_set_m128i(hi, lo);
-            _mm256_storeu_si256(levels[rc..][..8].as_mut_ptr().cast(), _mm256_sign_epi32(v, c));
+            _mm256_storeu_si256(
+                levels[rc..][..8].as_mut_ptr().cast(),
+                _mm256_sign_epi32(v, c),
+            );
             let zero = _mm256_cmpeq_epi32(v, _mm256_setzero_si256());
             let i = _mm256_cvtepu16_epi32(_mm_loadu_si128(index[rc..][..8].as_ptr().cast()));
             eob = _mm256_max_epi32(eob, _mm256_or_si256(i, zero));
@@ -176,26 +235,45 @@ mod x86 {
             let odd = _mm256_srli_epi64::<32>(d);
             err = _mm256_add_epi64(err, _mm256_mul_epi32(odd, odd));
         }
-        let m = _mm_max_epi32(_mm256_castsi256_si128(eob), _mm256_extracti128_si256::<1>(eob));
+        let m = _mm_max_epi32(
+            _mm256_castsi256_si128(eob),
+            _mm256_extracti128_si256::<1>(eob),
+        );
         let m = _mm_max_epi32(m, _mm_shuffle_epi32::<0b01_00_11_10>(m));
         let m = _mm_max_epi32(m, _mm_shuffle_epi32::<0b10_11_00_01>(m));
-        let e = _mm_add_epi64(_mm256_castsi256_si128(err), _mm256_extracti128_si256::<1>(err));
+        let e = _mm_add_epi64(
+            _mm256_castsi256_si128(err),
+            _mm256_extracti128_si256::<1>(err),
+        );
         let mut e2 = [0u64; 2];
         _mm_storeu_si128(e2.as_mut_ptr().cast(), e);
         (_mm_cvtsi128_si32(m), e2[0] + e2[1], last)
     }
 
     #[target_feature(enable = "avx2")]
-    pub unsafe fn dequantize(levels: &[i32], cf: &mut [i16], dq: [u32; 2], qm: Option<&[u8]>, shift: u32) {
+    pub unsafe fn dequantize(
+        levels: &[i32],
+        cf: &mut [i16],
+        dq: [u32; 2],
+        qm: Option<&[u8]>,
+        shift: u32,
+    ) {
         let count = _mm_cvtsi32_si128(shift as i32);
         for rc in (0..levels.len()).step_by(8) {
             let l = _mm256_loadu_si256(levels[rc..][..8].as_ptr().cast());
             let q = steps(dq, qm, rc);
             let tok = _mm256_and_si256(_mm256_abs_epi32(l), _mm256_set1_epi32(0xfffff));
-            let v = _mm256_srl_epi32(_mm256_and_si256(_mm256_mullo_epi32(q, tok), _mm256_set1_epi32(0xffffff)), count);
-            let limit = _mm256_sub_epi32(_mm256_set1_epi32(0x7fff), _mm256_cmpgt_epi32(_mm256_setzero_si256(), l));
+            let v = _mm256_srl_epi32(
+                _mm256_and_si256(_mm256_mullo_epi32(q, tok), _mm256_set1_epi32(0xffffff)),
+                count,
+            );
+            let limit = _mm256_sub_epi32(
+                _mm256_set1_epi32(0x7fff),
+                _mm256_cmpgt_epi32(_mm256_setzero_si256(), l),
+            );
             let v = _mm256_sign_epi32(_mm256_min_epi32(v, limit), l);
-            let packed = _mm_packs_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
+            let packed =
+                _mm_packs_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
             _mm_storeu_si128(cf[rc..][..8].as_mut_ptr().cast(), packed);
         }
     }
@@ -216,7 +294,9 @@ mod arm {
         }
         if let Some(qm) = qm {
             let m = &qm[rc..][..4];
-            let m = vreinterpretq_s32_u32(vld1q_u32([m[0] as u32, m[1] as u32, m[2] as u32, m[3] as u32].as_ptr()));
+            let m = vreinterpretq_s32_u32(vld1q_u32(
+                [m[0] as u32, m[1] as u32, m[2] as u32, m[3] as u32].as_ptr(),
+            ));
             q = vshrq_n_s32::<5>(vaddq_s32(vmulq_s32(q, m), vdupq_n_s32(16)));
         }
         q
@@ -226,12 +306,23 @@ mod arm {
     unsafe fn divide(a: int32x2_t, q: int32x2_t, round: float64x2_t) -> int32x2_t {
         let k128 = vdupq_n_f64(128.0);
         let qd = vcvtq_f64_s64(vmovl_s32(q));
-        let num = vaddq_f64(vmulq_f64(vcvtq_f64_s64(vmovl_s32(a)), k128), vmulq_f64(qd, round));
+        let num = vaddq_f64(
+            vmulq_f64(vcvtq_f64_s64(vmovl_s32(a)), k128),
+            vmulq_f64(qd, round),
+        );
         vmovn_s64(vcvtq_s64_f64(vdivq_f64(num, vmulq_f64(qd, k128))))
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn quantize(coefs: &[i32], levels: &mut [i32], dq: [u32; 2], qm: Option<&[u8]>, shift: u32, rounding: u32, index: &[u16]) -> (i32, u64, usize) {
+    pub unsafe fn quantize(
+        coefs: &[i32],
+        levels: &mut [i32],
+        dq: [u32; 2],
+        qm: Option<&[u8]>,
+        shift: u32,
+        rounding: u32,
+        index: &[u16],
+    ) -> (i32, u64, usize) {
         let count = vdupq_n_s32(shift as i32);
         let mut last = 0;
         let round = vdupq_n_f64(rounding as f64);
@@ -250,8 +341,14 @@ mod arm {
                 err = vmlal_high_s32(err, a, a);
                 continue;
             }
-            let v = vcombine_s32(divide(vget_low_s32(a), vget_low_s32(q), round), divide(vget_high_s32(a), vget_high_s32(q), round));
-            vst1q_s32(levels[rc..][..4].as_mut_ptr(), vbslq_s32(vcltzq_s32(c), vnegq_s32(v), v));
+            let v = vcombine_s32(
+                divide(vget_low_s32(a), vget_low_s32(q), round),
+                divide(vget_high_s32(a), vget_high_s32(q), round),
+            );
+            vst1q_s32(
+                levels[rc..][..4].as_mut_ptr(),
+                vbslq_s32(vcltzq_s32(c), vnegq_s32(v), v),
+            );
             let i = vreinterpretq_s32_u32(vmovl_u16(vld1_u16(index[rc..][..4].as_ptr())));
             let zero = vceqzq_s32(v);
             eob = vmaxq_s32(eob, vbslq_s32(zero, vdupq_n_s32(-1), i));
@@ -267,7 +364,13 @@ mod arm {
         (vmaxvq_s32(eob), vaddvq_s64(err) as u64, last)
     }
 
-    pub unsafe fn dequantize(levels: &[i32], cf: &mut [i16], dq: [u32; 2], qm: Option<&[u8]>, shift: u32) {
+    pub unsafe fn dequantize(
+        levels: &[i32],
+        cf: &mut [i16],
+        dq: [u32; 2],
+        qm: Option<&[u8]>,
+        shift: u32,
+    ) {
         let count = vdupq_n_s32(-(shift as i32));
         for rc in (0..levels.len()).step_by(4) {
             let l = vld1q_s32(levels[rc..][..4].as_ptr());
@@ -300,7 +403,11 @@ mod tests {
                     3 => rng.below(1 << 20) as i32,
                     _ => rng.below(4096) as i32,
                 };
-                if rng.below(2) == 0 { -v } else { v }
+                if rng.below(2) == 0 {
+                    -v
+                } else {
+                    v
+                }
             })
             .collect()
     }
@@ -312,7 +419,8 @@ mod tests {
         for round in 0..20000 {
             let n = [16, 32, 64, 128, 256, 512, 1024][round % 7];
             let dq = [4 + rng.below(1400), 4 + rng.below(1900)];
-            let qm: Option<Vec<u8>> = (rng.below(2) == 0).then(|| (0..n).map(|_| 32 + rng.below(224) as u8).collect());
+            let qm: Option<Vec<u8>> =
+                (rng.below(2) == 0).then(|| (0..n).map(|_| 32 + rng.below(224) as u8).collect());
             let shift = rng.below(3);
             let rounding = [48, 64, rng.below(128)][rng.below(3) as usize];
             let mut c = coefs(&mut rng, n, dq[1]);
@@ -323,11 +431,23 @@ mod tests {
             for i in (1..n).rev() {
                 index.swap(i, rng.below(i as u32 + 1) as usize);
             }
-            let wild = (rng.below(n as u32) as usize, [i32::MIN, i32::MAX, -(1 << 20) - 3, 1 << 24][rng.below(4) as usize]);
+            let wild = (
+                rng.below(n as u32) as usize,
+                [i32::MIN, i32::MAX, -(1 << 20) - 3, 1 << 24][rng.below(4) as usize],
+            );
             let mut want = None;
             for &lane in &lanes {
                 let mut levels = vec![i32::MAX; n];
-                let r = quantize_in(lane, &c, &mut levels, dq, qm.as_deref(), shift, rounding, &index);
+                let r = quantize_in(
+                    lane,
+                    &c,
+                    &mut levels,
+                    dq,
+                    qm.as_deref(),
+                    shift,
+                    rounding,
+                    &index,
+                );
                 let mut cf = vec![i16::MAX; n];
                 let mut odd = levels.clone();
                 odd[wild.0] = wild.1;
@@ -337,9 +457,22 @@ mod tests {
                     None => want = Some(got),
                     Some(w) => {
                         let at = |a: &[i32], b: &[i32]| a.iter().zip(b).position(|(x, y)| x != y);
-                        assert!(w.0 == got.0, "{lane:?} n {n}: eob and error {:?} vs {:?}", w.0, got.0);
-                        assert!(w.1 == got.1, "{lane:?} n {n} shift {shift} rounding {rounding}: level {:?}", at(&w.1, &got.1));
-                        assert!(w.2 == got.2, "{lane:?} n {n} shift {shift}: dequantized {:?}", w.2.iter().zip(&got.2).position(|(x, y)| x != y));
+                        assert!(
+                            w.0 == got.0,
+                            "{lane:?} n {n}: eob and error {:?} vs {:?}",
+                            w.0,
+                            got.0
+                        );
+                        assert!(
+                            w.1 == got.1,
+                            "{lane:?} n {n} shift {shift} rounding {rounding}: level {:?}",
+                            at(&w.1, &got.1)
+                        );
+                        assert!(
+                            w.2 == got.2,
+                            "{lane:?} n {n} shift {shift}: dequantized {:?}",
+                            w.2.iter().zip(&got.2).position(|(x, y)| x != y)
+                        );
                     }
                 }
             }

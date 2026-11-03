@@ -2,9 +2,9 @@
 use std::ops::{Deref, DerefMut, Range};
 use std::{mem, ptr};
 
-use crate::shared_bytes::SharedBytes;
 use crate::attributes::clz;
 use crate::intops::{inv_recenter, ulog2};
+use crate::shared_bytes::SharedBytes;
 use crate::simd128::I16x8;
 
 pub type EcWin = usize;

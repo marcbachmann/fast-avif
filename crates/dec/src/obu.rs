@@ -3,35 +3,35 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::{array, cmp, fmt, mem};
 
-use rav1d_shared::shared_bytes::SharedBytes;
-use crate::decode::rav1d_submit_frame;
+use rav1d_shared::data::Rav1dData;
 use rav1d_shared::env::get_poc_diff;
 use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use crate::getbits::GetBits;
-use rav1d_shared::intops::{clip_u8, ulog2};
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::data::Rav1dData;
-use crate::settings::Rav1dDecodeFrameType;
 use rav1d_shared::headers::{
-    Rav1dAdaptiveBoolean, Rav1dChromaSamplePosition,
-    Rav1dColorPrimaries, Rav1dColorRange, Rav1dContentLightLevel, Rav1dFilmGrainData,
-    Rav1dFilterMode, Rav1dFrameHeader, Rav1dFrameHeaderCdef, Rav1dFrameHeaderDelta,
-    Rav1dFrameHeaderDeltaLF, Rav1dFrameHeaderDeltaQ, Rav1dFrameHeaderFilmGrain,
-    Rav1dFrameHeaderLoopFilter, Rav1dFrameHeaderOperatingPoint, Rav1dFrameHeaderQuant,
-    Rav1dFrameHeaderRestoration, Rav1dFrameHeaderSegmentation, Rav1dFrameHeaderSuperRes,
-    Rav1dFrameHeaderTiling, Rav1dFrameSize, Rav1dFrameSkipMode, Rav1dFrameType, Rav1dITUTT35,
-    Rav1dLoopfilterModeRefDeltas, Rav1dMasteringDisplay, Rav1dMatrixCoefficients, Rav1dObuType,
-    Rav1dPixelLayout, Rav1dProfile, Rav1dRestorationType, Rav1dSegmentationData,
-    Rav1dSegmentationDataSet, Rav1dSequenceHeader, Rav1dSequenceHeaderOperatingParameterInfo,
-    Rav1dSequenceHeaderOperatingPoint, Rav1dTransferCharacteristics, Rav1dTxfmMode,
-    Rav1dWarpedMotionParams, Rav1dWarpedMotionType, RAV1D_MAX_CDEF_STRENGTHS,
-    RAV1D_MAX_OPERATING_POINTS, RAV1D_MAX_TILE_COLS, RAV1D_MAX_TILE_ROWS, RAV1D_PRIMARY_REF_NONE,
-    RAV1D_REFS_PER_FRAME,
+    Rav1dAdaptiveBoolean, Rav1dChromaSamplePosition, Rav1dColorPrimaries, Rav1dColorRange,
+    Rav1dContentLightLevel, Rav1dFilmGrainData, Rav1dFilterMode, Rav1dFrameHeader,
+    Rav1dFrameHeaderCdef, Rav1dFrameHeaderDelta, Rav1dFrameHeaderDeltaLF, Rav1dFrameHeaderDeltaQ,
+    Rav1dFrameHeaderFilmGrain, Rav1dFrameHeaderLoopFilter, Rav1dFrameHeaderOperatingPoint,
+    Rav1dFrameHeaderQuant, Rav1dFrameHeaderRestoration, Rav1dFrameHeaderSegmentation,
+    Rav1dFrameHeaderSuperRes, Rav1dFrameHeaderTiling, Rav1dFrameSize, Rav1dFrameSkipMode,
+    Rav1dFrameType, Rav1dITUTT35, Rav1dLoopfilterModeRefDeltas, Rav1dMasteringDisplay,
+    Rav1dMatrixCoefficients, Rav1dObuType, Rav1dPixelLayout, Rav1dProfile, Rav1dRestorationType,
+    Rav1dSegmentationData, Rav1dSegmentationDataSet, Rav1dSequenceHeader,
+    Rav1dSequenceHeaderOperatingParameterInfo, Rav1dSequenceHeaderOperatingPoint,
+    Rav1dTransferCharacteristics, Rav1dTxfmMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType,
+    RAV1D_MAX_CDEF_STRENGTHS, RAV1D_MAX_OPERATING_POINTS, RAV1D_MAX_TILE_COLS, RAV1D_MAX_TILE_ROWS,
+    RAV1D_PRIMARY_REF_NONE, RAV1D_REFS_PER_FRAME,
 };
-use crate::internal::{Rav1dContext, Rav1dState, Rav1dTileGroup, Rav1dTileGroupHeader};
+use rav1d_shared::intops::{clip_u8, ulog2};
 use rav1d_shared::levels::ObuMetaType;
+use rav1d_shared::props::Rav1dDataProps;
+use rav1d_shared::shared_bytes::SharedBytes;
+
+use crate::decode::rav1d_submit_frame;
+use crate::getbits::GetBits;
+use crate::internal::{Rav1dContext, Rav1dState, Rav1dTileGroup, Rav1dTileGroupHeader};
 use crate::log::Rav1dLog as _;
 use crate::picture::{rav1d_picture_copy_props, PictureFlags};
+use crate::settings::Rav1dDecodeFrameType;
 use crate::thread_task::FRAME_ERROR;
 
 struct Debug {
@@ -515,9 +515,7 @@ fn parse_seq_hdr(
     })
 }
 
-pub(crate) fn rav1d_parse_sequence_header(
-    mut data: &[u8],
-) -> Rav1dResult<Rav1dSequenceHeader> {
+pub(crate) fn rav1d_parse_sequence_header(mut data: &[u8]) -> Rav1dResult<Rav1dSequenceHeader> {
     let mut res = Err(Rav1dError::NoEntity);
 
     while !data.is_empty() {
@@ -1427,11 +1425,7 @@ fn parse_skip_mode(
                 }
             } else if diff < 0
                 && (off_before == 0xffffffff
-                    || get_poc_diff(
-                        seqhdr.order_hint_n_bits,
-                        refpoc as i32,
-                        off_before as i32,
-                    ) > 0)
+                    || get_poc_diff(seqhdr.order_hint_n_bits, refpoc as i32, off_before as i32) > 0)
             {
                 off_before = refpoc;
                 off_before_idx = i;
@@ -1455,18 +1449,10 @@ fn parse_skip_mode(
                     .as_ref()
                     .ok_or(Rav1dError::InvalidArgument)?
                     .frame_offset as u32;
-                if get_poc_diff(
-                    seqhdr.order_hint_n_bits,
-                    refpoc as i32,
-                    off_before as i32,
-                ) < 0
-                {
+                if get_poc_diff(seqhdr.order_hint_n_bits, refpoc as i32, off_before as i32) < 0 {
                     if off_before2 == 0xffffffff
-                        || get_poc_diff(
-                            seqhdr.order_hint_n_bits,
-                            refpoc as i32,
-                            off_before2 as i32,
-                        ) > 0
+                        || get_poc_diff(seqhdr.order_hint_n_bits, refpoc as i32, off_before2 as i32)
+                            > 0
                     {
                         off_before2 = refpoc;
                         off_before2_idx = i;
@@ -2087,11 +2073,7 @@ fn parse_frame_hdr(
 
 fn parse_tile_hdr(tiling: &Rav1dFrameHeaderTiling, gb: &mut GetBits) -> Rav1dTileGroupHeader {
     let n_tiles = tiling.cols as i32 * tiling.rows as i32;
-    let have_tile_pos = if n_tiles > 1 {
-        gb.get_bit() as i32
-    } else {
-        0
-    };
+    let have_tile_pos = if n_tiles > 1 { gb.get_bit() as i32 } else { 0 };
 
     if have_tile_pos != 0 {
         let n_bits = tiling.log2_cols + tiling.log2_rows;

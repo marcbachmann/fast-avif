@@ -1,22 +1,20 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::cmp;
-use strum::FromRepr;
 
 use rav1d_shared::align::{Align16, AlignedVec2};
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth};
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutGuard};
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth};
 use rav1d_shared::intops::iclip;
-use rav1d_shared::picture::{
-    Rav1dPictureDataComponentInner,
-    Rav1dPictureDataComponentOffset,
-};
-use crate::internal::Rav1dFrameData;
-use crate::lf_mask::Av1FilterLUT;
+use rav1d_shared::picture::{Rav1dPictureDataComponentInner, Rav1dPictureDataComponentOffset};
 use rav1d_shared::strided::Strided as _;
 use rav1d_shared::with_offset::WithOffset;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use strum::FromRepr;
+
+use crate::internal::Rav1dFrameData;
+use crate::lf_mask::Av1FilterLUT;
 
 wrap_fn_ptr!(pub unsafe fn loopfilter_sb(
     mask: &[u32; 3],
@@ -260,12 +258,12 @@ fn loop_filter<BD: BitDepth>(
 /// C's branches would. Along a vertical edge the lines are rows, turned into lanes by transposes;
 /// along a horizontal one they are columns, loaded as they lie.
 mod rust_simd {
-    use zerocopy::{AsBytes, FromBytes};
-
-    use super::*;
     use rav1d_shared::simd128::{rows_fit, transpose8x8, Bytes, I16x8, Lanes, U8x16};
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::{I16x16, U8x32};
+    use zerocopy::{AsBytes, FromBytes};
+
+    use super::*;
 
     /// A lane type with its pixel loads and stores.
     pub trait Px: Lanes {
@@ -320,7 +318,12 @@ mod rust_simd {
     fn transpose4<V: Lanes>(c: &[V; 4]) -> [V; 4] {
         let (a0, a1) = (c[0].zip_lo16(c[1]), c[0].zip_hi16(c[1]));
         let (b0, b1) = (c[2].zip_lo16(c[3]), c[2].zip_hi16(c[3]));
-        [a0.zip_lo32(b0), a0.zip_hi32(b0), a1.zip_lo32(b1), a1.zip_hi32(b1)]
+        [
+            a0.zip_lo32(b0),
+            a0.zip_hi32(b0),
+            a1.zip_lo32(b1),
+            a1.zip_hi32(b1),
+        ]
     }
 
     /// Rows `r` and `r + 1` from the halves of `v`.
@@ -345,7 +348,12 @@ mod rust_simd {
         let (b0, b1) = (c[2].zip_lo16(c[3]), c[2].zip_hi16(c[3]));
         let (o0, o1) = (a0.zip_lo32(b0), a0.zip_hi32(b0));
         let (o2, o3) = (a1.zip_lo32(b1), a1.zip_hi32(b1));
-        [o0.zip_lo64(o2), o0.zip_hi64(o2), o1.zip_lo64(o3), o1.zip_hi64(o3)]
+        [
+            o0.zip_lo64(o2),
+            o0.zip_hi64(o2),
+            o1.zip_lo64(o3),
+            o1.zip_hi64(o3),
+        ]
     }
 
     impl Px for I16x8 {
@@ -1555,7 +1563,11 @@ mod rust_simd {
         let l = levels8::<B>(at.lvl.data, at.lvl.offset, sa, n);
         // A level of 0 takes the one across the edge, read only if some segment needs it.
         let l = if l.le(zero).and(filtered).any() {
-            B::select(l.le(zero), levels8(at.lvl.data, at.lvl.offset - sb, sa, n), l)
+            B::select(
+                l.le(zero),
+                levels8(at.lvl.data, at.lvl.offset - sb, sa, n),
+                l,
+            )
         } else {
             l
         };
@@ -1717,7 +1729,7 @@ mod rust_simd {
         bitdepth_max: i32,
         dst: Rav1dPictureDataComponentOffset,
         lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
-) {
+    ) {
         let b4_stride = b4_stride as usize;
         let bd = BD::from_max(bitdepth_max);
         // Above 10 bits the flat filters' sums leave `i16`.
@@ -1897,11 +1909,12 @@ impl Rav1dLoopFilterDSPContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rav1d_shared::align::AlignedVec64;
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
     use rav1d_shared::picture::Rav1dPictureDataComponent;
+
+    use super::*;
     use crate::lf_mask::rav1d_calc_eih;
 
     struct Rng(u64);
@@ -2029,7 +2042,9 @@ mod tests {
             *l = 8 + (rng.next() % 40) as u8;
         }
         let lvl = DisjointMut::new(lvl);
-        let origs: Vec<_> = (0..N).map(|_| plane::<BD>(&mut rng, bitdepth_max)).collect();
+        let origs: Vec<_> = (0..N)
+            .map(|_| plane::<BD>(&mut rng, bitdepth_max))
+            .collect();
         let mut bufs: Vec<_> = (0..N)
             .map(|_| {
                 let mut b = AlignedVec64::<BD::Pixel>::new();
@@ -2058,7 +2073,8 @@ mod tests {
                             HV::V => c.v,
                         };
                         let mut best = f64::MAX;
-                        let n: usize = std::env::var("TIME_LF_N").map_or(20, |n| n.parse().unwrap());
+                        let n: usize =
+                            std::env::var("TIME_LF_N").map_or(20, |n| n.parse().unwrap());
                         for _ in 0..n {
                             for (b, o) in bufs.iter_mut().zip(&origs) {
                                 b.as_mut_slice().copy_from_slice(o);
@@ -2073,8 +2089,14 @@ mod tests {
                                     HV::H => 8 * STRIDE + 32,
                                     HV::V => 32 * STRIDE,
                                 };
-                                let dst = WithOffset { data: &comp, offset };
-                                let l = WithOffset { data: &lvl, offset: 8 * B4_STRIDE };
+                                let dst = WithOffset {
+                                    data: &comp,
+                                    offset,
+                                };
+                                let l = WithOffset {
+                                    data: &lvl,
+                                    offset: 8 * B4_STRIDE,
+                                };
                                 // SAFETY: The arguments are what `loopfilter_sb::Fn::call` passes.
                                 unsafe {
                                     f.get()(

@@ -53,14 +53,7 @@ enum PalIdx<'a> {
 ///
 /// Must be called by [`pal_idx_finish::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe fn pal_idx_finish_c(
-    dst: *mut u8,
-    src: *const u8,
-    bw: i32,
-    bh: i32,
-    w: i32,
-    h: i32,
-) {
+unsafe fn pal_idx_finish_c(dst: *mut u8, src: *const u8, bw: i32, bh: i32, w: i32, h: i32) {
     let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as usize);
 
     assert!(bw >= 4 && bw <= 64 && bw.is_power_of_two());
@@ -133,15 +126,18 @@ fn pal_idx_finish_rust(idx: PalIdx, bw: usize, bh: usize, w: usize, h: usize) {
 /// [`pal_idx_finish_rust`] sixteen indices at a time: `lo | hi << 4` of each pair from their
 /// `u16` lanes.
 mod rust_simd {
-    use super::*;
     use rav1d_shared::simd128::I16x8;
+
+    use super::*;
 
     #[inline(always)]
     fn pack_row(src: &[u8], dst: &mut [u8], w: usize, dst_bw: usize) {
         let mut x = 0;
         while x + 16 <= w {
             let v = I16x8::from_bytes(&src[x..]);
-            let v = v.and(I16x8::splat(0xff)).or(v.shr_u(4).and(I16x8::splat(0xf0)));
+            let v = v
+                .and(I16x8::splat(0xff))
+                .or(v.shr_u(4).and(I16x8::splat(0xf0)));
             dst[x / 2..][..8].copy_from_slice(&v.pack_u8());
             x += 16;
         }
@@ -170,7 +166,12 @@ mod rust_simd {
             }
             PalIdx::Idx { dst, src } => {
                 for y in 0..h {
-                    pack_row(&src[y * bw..][..bw], &mut dst[y * dst_bw..][..dst_bw], w, dst_bw);
+                    pack_row(
+                        &src[y * bw..][..bw],
+                        &mut dst[y * dst_bw..][..dst_bw],
+                        w,
+                        dst_bw,
+                    );
                 }
                 dst
             }
@@ -253,9 +254,10 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use super::*;
     use rav1d_shared::align::AlignedVec64;
     use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+
+    use super::*;
 
     fn contexts() -> Vec<(&'static str, Rav1dPalDSPContext)> {
         rav1d_init_cpu();
