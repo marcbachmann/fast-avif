@@ -206,7 +206,7 @@ fn cfl_pred<BD: BitDepth>(
         let dst = &mut *dst.slice_mut::<BD>(width);
         for x in 0..width {
             let diff = alpha * ac[x] as i32;
-            dst[x] = bd.iclip_pixel(dc + apply_sign(diff.abs() + 32 >> 6, diff));
+            dst[x] = bd.iclip_pixel(dc + apply_sign((diff.abs() + 32) >> 6, diff));
         }
         ac = &ac[width..];
     }
@@ -221,7 +221,7 @@ fn dc_gen_top<BD: BitDepth>(
     for i in 0..width as usize {
         dc += topleft[offset + 1 + i].as_::<u32>();
     }
-    return dc >> width.trailing_zeros();
+    dc >> width.trailing_zeros()
 }
 
 fn dc_gen_left<BD: BitDepth>(
@@ -233,7 +233,7 @@ fn dc_gen_left<BD: BitDepth>(
     for i in 0..height as usize {
         dc += topleft[offset - (1 + i)].as_::<u32>();
     }
-    return dc >> height.trailing_zeros();
+    dc >> height.trailing_zeros()
 }
 
 fn dc_gen<BD: BitDepth>(
@@ -247,7 +247,7 @@ fn dc_gen<BD: BitDepth>(
         BPC::BPC16 => (0xAAAB, 0x6667, 17),
     };
 
-    let mut dc = (width + height >> 1) as u32;
+    let mut dc = ((width + height) >> 1) as u32;
     for i in 0..width as usize {
         dc += topleft[offset + i + 1].as_::<u32>();
     }
@@ -264,7 +264,7 @@ fn dc_gen<BD: BitDepth>(
         };
         dc >>= base_shift;
     }
-    return dc;
+    dc
 }
 
 #[derive(FromRepr)]
@@ -354,7 +354,7 @@ unsafe fn ipred_dc_128_c_erased<BD: BitDepth>(
     dst: Rav1dPictureDataComponentOffset,
 ) {
     let bd = BD::from_max(bitdepth_max);
-    let dc = bd.bitdepth_max().as_::<i32>() + 1 >> 1;
+    let dc = (bd.bitdepth_max().as_::<i32>() + 1) >> 1;
     splat_dc(dst, width, height, dc, bd)
 }
 
@@ -373,7 +373,7 @@ unsafe fn ipred_cfl_128_c_erased<BD: BitDepth>(
     dst: Rav1dPictureDataComponentOffset,
 ) {
     let bd = BD::from_max(bitdepth_max);
-    let dc = bd.bitdepth_max().as_::<i32>() + 1 >> 1;
+    let dc = (bd.bitdepth_max().as_::<i32>() + 1) >> 1;
     cfl_pred(dst, width, height, dc, ac, alpha, bd)
 }
 
@@ -666,8 +666,8 @@ mod rust_simd {
         let (top, left) = (&topleft[off + 1..][..W], &topleft[off - H..][..H]);
         // No closures for the edges: they would not inherit the kernel's target features.
         let dc = match DcGen::from_repr(GEN) {
-            Some(DcGen::Top) => edge_sum::<P, W>(top) + (W >> 1) as u32 >> W.trailing_zeros(),
-            Some(DcGen::Left) => edge_sum::<P, H>(left) + (H >> 1) as u32 >> H.trailing_zeros(),
+            Some(DcGen::Top) => (edge_sum::<P, W>(top) + (W >> 1) as u32) >> W.trailing_zeros(),
+            Some(DcGen::Left) => (edge_sum::<P, H>(left) + (H >> 1) as u32) >> H.trailing_zeros(),
             Some(DcGen::TopLeft) => {
                 let sum = if size_of::<P>() == 1
                     && cfg!(any(target_arch = "x86", target_arch = "x86_64"))
@@ -677,7 +677,7 @@ mod rust_simd {
                     // Up to 64 + 64 pixels fit the lanes as `u16` to 12 bpc.
                     lanes::<P, W>(top).add(lanes::<P, H>(left)).hsum_u()
                 };
-                let dc = sum + ((W + H) >> 1) as u32 >> (W + H).trailing_zeros();
+                let dc = (sum + ((W + H) >> 1) as u32) >> (W + H).trailing_zeros();
                 // 1/3 and 1/5 in fixed point, finer for the larger sums of `u16` pixels.
                 let (third, fifth, shift) = if size_of::<P>() == 1 {
                     (0x5556, 0x3334, 16)
@@ -686,8 +686,8 @@ mod rust_simd {
                 };
                 match () {
                     _ if W == H => dc,
-                    _ if W > 2 * H || H > 2 * W => dc * fifth >> shift,
-                    _ => dc * third >> shift,
+                    _ if W > 2 * H || H > 2 * W => (dc * fifth) >> shift,
+                    _ => (dc * third) >> shift,
                 }
             }
             None => half,
@@ -1142,7 +1142,7 @@ mod rust_simd {
         let mut wide = [I32x4::splat(0); 2];
         let mut pad = 0;
         for (y, row) in ac.chunks_exact_mut(W).take(hv).enumerate() {
-            let src = y_src + (y as isize * stride << SS_VER as u8);
+            let src = y_src + ((y as isize * stride) << SS_VER as u8);
             let r0 = src.slice::<BD>(lw);
             let r1 = SS_VER.then(|| (src + stride).slice::<BD>(lw));
             let r0 = px::<P>(r0.as_bytes());
@@ -1174,7 +1174,7 @@ mod rust_simd {
         wide[0].add(wide[1]).store(&mut lanes);
         let sum = lanes.iter().sum::<i32>() as u32 + pad;
         let log2sz = W.trailing_zeros() + h.trailing_zeros();
-        let mean = I16x8::splat((sum + (1 << log2sz >> 1) >> log2sz) as i16);
+        let mean = I16x8::splat(((sum + (1 << log2sz >> 1)) >> log2sz) as i16);
         for c in ac.chunks_exact_mut(8) {
             I16x8::load(c).sub(mean).store(c);
         }
@@ -1516,7 +1516,7 @@ mod rust_simd {
             let s = if base >= 0 {
                 0
             } else {
-                ((-base) as usize + up >> up).min(W)
+                (((-base) as usize + up) >> up).min(W)
             };
             for x in left_cols..s {
                 y0[x] = y;
@@ -1916,7 +1916,7 @@ fn ipred_v_rust<BD: BitDepth>(
     for y in 0..height {
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
         BD::pixel_copy(
-            &mut *dst.slice_mut::<BD>(width),
+            &mut dst.slice_mut::<BD>(width),
             &topleft[topleft_off + 1..][..width],
             width,
         );
@@ -1956,7 +1956,7 @@ fn ipred_h_rust<BD: BitDepth>(
     for y in 0..height {
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
         BD::pixel_set(
-            &mut *dst.slice_mut::<BD>(width),
+            &mut dst.slice_mut::<BD>(width),
             topleft[topleft_off - (1 + y)],
             width,
         );
@@ -2059,7 +2059,7 @@ fn ipred_smooth_rust<BD: BitDepth>(
                 + (256 - weights_ver[y] as i32) * bottom
                 + weights_hor[x] as i32 * topleft[topleft_off - (1 + y)].as_::<i32>()
                 + (256 - weights_hor[x] as i32) * right;
-            dst[x] = (pred + 256 >> 9).as_::<BD::Pixel>();
+            dst[x] = ((pred + 256) >> 9).as_::<BD::Pixel>();
         }
     }
 }
@@ -2102,7 +2102,7 @@ fn ipred_smooth_v_rust<BD: BitDepth>(
         for x in 0..width {
             let pred = weights_ver[y] as i32 * topleft[topleft_off + 1 + x].as_::<i32>()
                 + (256 - weights_ver[y] as i32) * bottom;
-            dst[x] = (pred + 128 >> 8).as_::<BD::Pixel>();
+            dst[x] = ((pred + 128) >> 8).as_::<BD::Pixel>();
         }
     }
 }
@@ -2145,7 +2145,7 @@ fn ipred_smooth_h_rust<BD: BitDepth>(
         for x in 0..width {
             let pred = weights_hor[x] as i32 * topleft[topleft_off - (y + 1)].as_::<i32>()
                 + (256 - weights_hor[x] as i32) * right;
-            dst[x] = (pred + 128 >> 8).as_::<BD::Pixel>();
+            dst[x] = ((pred + 128) >> 8).as_::<BD::Pixel>();
         }
     }
 }
@@ -2182,7 +2182,7 @@ fn get_filter_strength(wh: i32, angle: i32, is_sm: bool) -> i32 {
             (..=16, ..) => 0,
             (..=24, 4..) => 3,
             (..=24, ..) => 0,
-            (.., _) => 3,
+            (..) => 3,
         }
     } else {
         match (wh, angle) {
@@ -2197,7 +2197,7 @@ fn get_filter_strength(wh: i32, angle: i32, is_sm: bool) -> i32 {
             (..=32, 32..) => 3,
             (..=32, 4..) => 2,
             (..=32, ..) => 1,
-            (.., _) => 3,
+            (..) => 3,
         }
     }
 }
@@ -2229,7 +2229,7 @@ fn filter_edge<BD: BitDepth>(
                 .as_::<i32>()
                 * KERNEL[(strength - 1) as usize][j as usize] as i32;
         }
-        out[i as usize] = (s + 8 >> 4).as_::<BD::Pixel>();
+        out[i as usize] = ((s + 8) >> 4).as_::<BD::Pixel>();
         i += 1;
     }
     while i < sz {
@@ -2263,7 +2263,7 @@ fn upsample_edge<BD: BitDepth>(
                 * KERNEL[j as usize] as i32;
         }
         out[(i * 2 + 1) as usize] =
-            iclip(s + 8 >> 4, 0, bd.bitdepth_max().as_::<i32>()).as_::<BD::Pixel>();
+            iclip((s + 8) >> 4, 0, bd.bitdepth_max().as_::<i32>()).as_::<BD::Pixel>();
     }
     let i = hsz - 1;
     out[(i * 2) as usize] = r#in[in_off + iclip(i, from, to - 1) as usize];
@@ -2405,7 +2405,7 @@ fn ipred_z1_rust<BD: BitDepth>(
             let base = (xpos >> 6) as usize + base_inc * x;
             if base < max_base_x {
                 let v = top[base].as_::<i32>() * (64 - frac) + top[base + 1].as_::<i32>() * frac;
-                dst[x] = (v + 32 >> 6).as_::<BD::Pixel>();
+                dst[x] = ((v + 32) >> 6).as_::<BD::Pixel>();
             } else {
                 BD::pixel_set(&mut dst[x..], top[max_base_x], width - x);
                 break;
@@ -2432,8 +2432,8 @@ fn z2_edge<BD: BitDepth, const SIMD: bool>(
     let enable_intra_edge_filter = angle >> 10;
     angle &= 511;
     assert!(angle > 90 && angle < 180);
-    let mut dy = DAV1D_DR_INTRA_DERIVATIVE[(angle - 90 >> 1) as usize] as i32;
-    let mut dx = DAV1D_DR_INTRA_DERIVATIVE[(180 - angle >> 1) as usize] as i32;
+    let mut dy = DAV1D_DR_INTRA_DERIVATIVE[((angle - 90) >> 1) as usize] as i32;
+    let mut dx = DAV1D_DR_INTRA_DERIVATIVE[((180 - angle) >> 1) as usize] as i32;
     let upsample_left = if enable_intra_edge_filter != 0 {
         get_upsample(width + height, 180 - angle, is_sm)
     } else {
@@ -2555,14 +2555,14 @@ fn ipred_z2_rust<BD: BitDepth>(
     let left = topleft - (1 + upsample_left as usize);
     let width = width as usize;
     for y in 0..height {
-        let xpos = (1 + (upsample_above as i32) << 6) - (dx * (y + 1));
+        let xpos = ((1 + (upsample_above as i32)) << 6) - (dx * (y + 1));
         let base_x = xpos >> 6;
         let frac_x = xpos & 0x3e;
 
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
         let dst = &mut *dst.slice_mut::<BD>(width);
         for x in 0..width {
-            let ypos = (y << 6 + upsample_left as i32) - (dy * (x + 1) as i32);
+            let ypos = (y << (6 + upsample_left as i32)) - (dy * (x + 1) as i32);
             let base_x = base_x + (base_inc_x * x) as i32;
             let v = if base_x >= 0 {
                 edge[topleft + base_x as usize].as_::<i32>() * (64 - frac_x)
@@ -2574,7 +2574,7 @@ fn ipred_z2_rust<BD: BitDepth>(
                 edge[left.wrapping_add_signed(-base_y as isize)].as_::<i32>() * (64 - frac_y)
                     + edge[left.wrapping_add_signed(-(base_y + 1) as isize)].as_::<i32>() * frac_y
             };
-            dst[x] = (v + 32 >> 6).as_::<BD::Pixel>();
+            dst[x] = ((v + 32) >> 6).as_::<BD::Pixel>();
         }
     }
 }
@@ -2595,7 +2595,7 @@ fn z3_edge<BD: BitDepth, const SIMD: bool>(
     let enable_intra_edge_filter = angle >> 10;
     angle &= 511;
     assert!(angle > 180);
-    let mut dy = DAV1D_DR_INTRA_DERIVATIVE[(270 - angle >> 1) as usize] as usize;
+    let mut dy = DAV1D_DR_INTRA_DERIVATIVE[((270 - angle) >> 1) as usize] as usize;
     let upsample_left = if enable_intra_edge_filter != 0 {
         get_upsample(width + height, angle - 180, is_sm)
     } else {
@@ -2676,7 +2676,7 @@ fn ipred_z3_rust<BD: BitDepth>(
                 let v = left[left_off - base].as_::<i32>() * (64 - frac)
                     + left[left_off - (base + 1)].as_::<i32>() * frac;
                 *(dst + y as isize * dst.pixel_stride::<BD>() + x).index_mut::<BD>() =
-                    (v + 32 >> 6).as_::<BD::Pixel>();
+                    ((v + 32) >> 6).as_::<BD::Pixel>();
             } else {
                 for y in y..height {
                     *(dst + y as isize * dst.pixel_stride::<BD>() + x).index_mut::<BD>() =
@@ -2745,17 +2745,13 @@ fn ipred_filter_rust<BD: BitDepth>(
         for x in (0..width).step_by(4) {
             let p0 = topleft;
             let [p1, p2, p3, p4] = top[x..][..4].try_into().unwrap();
-            let p5;
-            let p6;
-            if x == 0 {
+            let (p5, p6) = if x == 0 {
                 let left = &topleft_in[topleft_off - 1 - 1..][..2];
-                p5 = left[1];
-                p6 = left[0];
+                (left[1], left[0])
             } else {
                 let left = dst + (x - 1);
-                p5 = *left.index::<BD>();
-                p6 = *(left + stride).index::<BD>();
-            }
+                (*left.index::<BD>(), *(left + stride).index::<BD>())
+            };
             let p = [p0, p1, p2, p3, p4, p5, p6].map(|p| p.as_::<i32>());
             let mut ptr = dst + x;
             let mut flt_ptr = filter.0.as_slice();
@@ -2764,7 +2760,7 @@ fn ipred_filter_rust<BD: BitDepth>(
                 let ptr_slice = &mut *ptr.slice_mut::<BD>(4);
                 for xx in ptr_slice {
                     let acc = filter_fn(flt_ptr, p);
-                    *xx = bd.iclip_pixel(acc + 8 >> 4);
+                    *xx = bd.iclip_pixel((acc + 8) >> 4);
                     flt_ptr = &flt_ptr[FLT_INCR..];
                 }
                 ptr += stride;
@@ -2824,7 +2820,7 @@ fn cfl_ac_rust<BD: BitDepth>(
     let y_pxstride = y_src.pixel_stride::<BD>();
 
     for y in 0..height - h_pad {
-        let y_src = y_src + (y as isize * y_pxstride << ss_ver);
+        let y_src = y_src + ((y as isize * y_pxstride) << ss_ver);
         let aci = y * width;
         let y_src = |i: isize| (*(y_src + i).index::<BD>()).as_::<i32>();
         for x in 0..width - w_pad {
@@ -2839,7 +2835,7 @@ fn cfl_ac_rust<BD: BitDepth>(
                     ac_sum += y_src(sx + y_pxstride + 1);
                 }
             }
-            ac[aci + x] = (ac_sum << 1 + !is_ss_ver as u8 + !is_ss_hor as u8) as i16;
+            ac[aci + x] = (ac_sum << (1 + !is_ss_ver as u8 + !is_ss_hor as u8)) as i16;
         }
         for x in width - w_pad..width {
             ac[aci + x] = ac[aci + x - 1];

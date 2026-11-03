@@ -140,7 +140,7 @@ fn put_8tap_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let intermediate_bits = bd.get_intermediate_bits();
-    let intermediate_rnd = 32 + (1 << 6 - intermediate_bits >> 1);
+    let intermediate_rnd = 32 + (1 << (6 - intermediate_bits) >> 1);
 
     let fh = get_filter(mx, w, h_filter_type);
     let fv = get_filter(my, h, v_filter_type);
@@ -211,7 +211,7 @@ fn put_8tap_scaled_rust<BD: BitDepth>(
 ) {
     let intermediate_bits = bd.get_intermediate_bits();
     let intermediate_rnd = (1 << intermediate_bits) >> 1;
-    let tmp_h = ((h - 1) * dy + my >> 10) + 8;
+    let tmp_h = (((h - 1) * dy + my) >> 10) + 8;
     let mut mid = [[0i16; MID_STRIDE]; 256 + 7]; // Default::default()
 
     for y in 0..tmp_h {
@@ -332,7 +332,7 @@ fn prep_8tap_scaled_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let intermediate_bits = bd.get_intermediate_bits();
-    let tmp_h = ((h - 1) * dy + my >> 10) + 8;
+    let tmp_h = (((h - 1) * dy + my) >> 10) + 8;
     let mut mid = [[0i16; MID_STRIDE]; 256 + 7]; // Default::default()
 
     for y in 0..tmp_h {
@@ -467,7 +467,7 @@ fn put_bilin_scaled_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let intermediate_bits = bd.get_intermediate_bits();
-    let tmp_h = ((h - 1) * dy + my >> 10) + 2;
+    let tmp_h = (((h - 1) * dy + my) >> 10) + 2;
     let mut mid = [[0i16; MID_STRIDE]; 256 + 1];
 
     for y in 0..tmp_h {
@@ -569,7 +569,7 @@ fn prep_bilin_scaled_rust<BD: BitDepth>(
     bd: BD,
 ) {
     let intermediate_bits = bd.get_intermediate_bits();
-    let tmp_h = ((h - 1) * dy + my >> 10) + 2;
+    let tmp_h = (((h - 1) * dy + my) >> 10) + 2;
     let mut mid = [[0i16; MID_STRIDE]; 256 + 1];
 
     for y in 0..tmp_h {
@@ -710,7 +710,7 @@ fn blend_v_rust<BD: BitDepth>(
     let tmp = &tmp[..w * h];
     for y in 0..h {
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
-        let dst_w = w * 3 >> 2;
+        let dst_w = (w * 3) >> 2;
         let dst = &mut *dst.slice_mut::<BD>(dst_w);
         for x in 0..dst_w {
             dst[x] = blend_px::<BD>(dst[x], tmp[y * w + x], mask[x]);
@@ -725,7 +725,7 @@ fn blend_h_rust<BD: BitDepth>(
     h: usize,
 ) {
     let mask = &DAV1D_OBMC_MASKS.0[h..];
-    let h = h * 3 >> 2;
+    let h = (h * 3) >> 2;
     let tmp = &tmp[..w * h];
     for y in 0..h {
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
@@ -824,14 +824,14 @@ fn warp_affine_8x8_rust<BD: BitDepth>(
         let mx = mx + y as i32 * abcd[1] as i32;
         for x in 0..W {
             let tmx = mx + x as i32 * abcd[0] as i32;
-            let filter = &DAV1D_MC_WARP_FILTER[(64 + (tmx + 512 >> 10)) as usize];
+            let filter = &DAV1D_MC_WARP_FILTER[(64 + ((tmx + 512) >> 10)) as usize];
             let n = filter.len();
             let src = &*(src + x - 3usize).slice::<BD>(n);
-            mid[y][x] = ((0..n)
+            mid[y][x] = (((0..n)
                 .map(|i| filter[i] as i32 * src[i].as_::<i32>())
                 .sum::<i32>()
-                + (1 << 7 - intermediate_bits >> 1)
-                >> 7 - intermediate_bits) as i16;
+                + (1 << (7 - intermediate_bits) >> 1))
+                >> (7 - intermediate_bits)) as i16;
         }
     }
 
@@ -841,15 +841,15 @@ fn warp_affine_8x8_rust<BD: BitDepth>(
         let dst = &mut *dst.slice_mut::<BD>(W);
         for x in 0..W {
             let tmy = my + x as i32 * abcd[2] as i32;
-            let filter = &DAV1D_MC_WARP_FILTER[(64 + (tmy + 512 >> 10)) as usize];
+            let filter = &DAV1D_MC_WARP_FILTER[(64 + ((tmy + 512) >> 10)) as usize];
             let n = filter.len();
             let mid = &mid[y..][..n];
             dst[x] = bd.iclip_pixel(
-                (0..n)
+                ((0..n)
                     .map(|i| filter[i] as i32 * mid[i][x] as i32)
                     .sum::<i32>()
-                    + (1 << 7 + intermediate_bits >> 1)
-                    >> 7 + intermediate_bits,
+                    + (1 << (7 + intermediate_bits) >> 1))
+                    >> (7 + intermediate_bits),
             );
         }
     }
@@ -875,14 +875,14 @@ fn warp_affine_8x8t_rust<BD: BitDepth>(
         let mx = mx + y as i32 * abcd[1] as i32;
         for x in 0..W {
             let tmx = mx + x as i32 * abcd[0] as i32;
-            let filter = &DAV1D_MC_WARP_FILTER[(64 + (tmx + 512 >> 10)) as usize];
+            let filter = &DAV1D_MC_WARP_FILTER[(64 + ((tmx + 512) >> 10)) as usize];
             let n = filter.len();
             let src = &*(src + x - 3usize).slice::<BD>(n);
-            mid[y][x] = ((0..n)
+            mid[y][x] = (((0..n)
                 .map(|i| filter[i] as i32 * src[i].as_::<i32>())
                 .sum::<i32>()
-                + (1 << 7 - intermediate_bits >> 1)
-                >> 7 - intermediate_bits) as i16;
+                + (1 << (7 - intermediate_bits) >> 1))
+                >> (7 - intermediate_bits)) as i16;
         }
     }
 
@@ -891,14 +891,14 @@ fn warp_affine_8x8t_rust<BD: BitDepth>(
         let my = my + y as i32 * abcd[3] as i32;
         for x in 0..W {
             let tmy = my + x as i32 * abcd[2] as i32;
-            let filter = &DAV1D_MC_WARP_FILTER[(64 + (tmy + 512 >> 10)) as usize];
+            let filter = &DAV1D_MC_WARP_FILTER[(64 + ((tmy + 512) >> 10)) as usize];
             let n = filter.len();
             let mid = &mid[y..][..n];
             tmp[x] = BD::sub_prep_bias(
-                (0..n)
+                ((0..n)
                     .map(|i| filter[i] as i32 * mid[i][x] as i32)
                     .sum::<i32>()
-                    + (1 << 7 >> 1)
+                    + (1 << 7 >> 1))
                     >> 7,
             );
         }
@@ -999,12 +999,12 @@ fn resize_rust<BD: BitDepth>(
         for dst_x in 0..dst_w {
             let f = &DAV1D_RESIZE_FILTER[(mx >> 8) as usize];
             dst[dst_x] = bd.iclip_pixel(
-                -(0..f.len())
+                (-(0..f.len())
                     .map(|i| {
                         f[i] as i32 * src[iclip(src_x + i as i32, 0, max) as usize].to::<i32>()
                     })
                     .sum::<i32>()
-                    + 64
+                    + 64)
                     >> 7,
             );
             mx += dx;

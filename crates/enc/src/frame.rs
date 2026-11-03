@@ -1262,8 +1262,8 @@ impl<D: Decide> Encoder<D> {
                 block(self, ti, b[0], x, y, h0);
                 block(self, ti, b[0], x, y + (hsz >> 1), h4);
                 block(self, ti, b[0], x, y + hsz, EdgeFlags::ALL_LEFT_HAS_BOTTOM);
-                if y + (hsz * 3 >> 1) < self.bh {
-                    block(self, ti, b[0], x, y + (hsz * 3 >> 1), h1);
+                if y + ((hsz * 3) >> 1) < self.bh {
+                    block(self, ti, b[0], x, y + ((hsz * 3) >> 1), h1);
                 }
             }
             V4 => {
@@ -1272,8 +1272,8 @@ impl<D: Decide> Encoder<D> {
                 block(self, ti, b[0], x, y, v0);
                 block(self, ti, b[0], x + (hsz >> 1), y, v4);
                 block(self, ti, b[0], x + hsz, y, EdgeFlags::ALL_TOP_HAS_RIGHT);
-                if x + (hsz * 3 >> 1) < self.bw {
-                    block(self, ti, b[0], x + (hsz * 3 >> 1), y, v1);
+                if x + ((hsz * 3) >> 1) < self.bw {
+                    block(self, ti, b[0], x + ((hsz * 3) >> 1), y, v1);
                 }
             }
         }
@@ -1877,7 +1877,7 @@ impl<D: Decide> Encoder<D> {
                             };
                             let used = REDUCED_INTRA_TXTP[y_mode as usize];
                             let mut k = 0;
-                            for &t in set.iter().filter(|&&t| used >> t as u8 & 1 != 0) {
+                            for &t in set.iter().filter(|&&t| used >> t & 1 != 0) {
                                 reduced[k] = t;
                                 k += 1;
                             }
@@ -2341,7 +2341,7 @@ impl<D: Decide> Encoder<D> {
                 let dqp = self.dq[plane];
                 let step = |rc: usize| {
                     let q = dqp[(rc != 0) as usize];
-                    qm.map_or(q, |m| q * m[rc] as u32 + 16 >> 5)
+                    qm.map_or(q, |m| (q * m[rc] as u32 + 16) >> 5)
                 };
                 let err = |rc: usize, l: i32| {
                     let r = ((step(rc).wrapping_mul(l.unsigned_abs()) & 0xffffff) >> shift) as f64;
@@ -4206,8 +4206,8 @@ fn write_coefs<S: Sink>(
     };
     let raster = costs.filter(|_| lay.by_column());
     let mut ac = (0, 0);
-    let dc_level;
-    if eob > 0 {
+
+    let dc_level = if eob > 0 {
         let (_, x, y, _) = scan[eob as usize];
         let lv = level_at(eob as usize);
         if raster.is_none() {
@@ -4294,7 +4294,7 @@ fn write_coefs<S: Sink>(
                 cmp::min(lv, 15) as u8,
             );
         }
-        dc_level = lv;
+        lv
     } else {
         let lv = level_at(0);
         w.symbol(
@@ -4305,8 +4305,8 @@ fn write_coefs<S: Sink>(
         if lv >= 3 {
             br_tok(w, costs, cdf, hi_ctx, chroma, 0, cmp::min(lv, 15) as u8);
         }
-        dc_level = lv;
-    }
+        lv
+    };
     let mut cul_level = 0u32;
     let dc_sign_level;
     let dc = coefs[0];

@@ -2,7 +2,7 @@
 name = "rav1d-enc"
 version = "1.1.0"
 edition = "2021"
-rust-version = "1.79"
+rust-version = "1.82"
 description = "An AV1 still-image encoder on the rav1d tables and DSP"
 license = "BSD-2-Clause"
 publish = false

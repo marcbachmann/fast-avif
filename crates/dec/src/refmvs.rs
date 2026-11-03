@@ -219,7 +219,7 @@ impl save_tmvs::Fn {
         assert!(row_start8 >= 0);
         assert!((row_end8 - row_start8) as u32 <= 16);
 
-        let rp = &*rp.as_ref().unwrap();
+        let rp = rp.as_ref().unwrap();
 
         let row_end8 = cmp::min(row_end8, rf.ih8);
         let col_end8 = cmp::min(col_end8, rf.iw8);
@@ -562,10 +562,10 @@ fn mv_projection(mv: Mv, num: i32, den: i32) -> Mv {
     let x = mv.x as i32 * frac;
     // Round and clip according to AV1 spec section 7.9.3
     let max = (1 << 14) - 1;
-    return Mv {
-        y: iclip(y + 8192 + (y >> 31) >> 14, -max, max) as i16,
-        x: iclip(x + 8192 + (x >> 31) >> 14, -max, max) as i16,
-    };
+    Mv {
+        y: iclip((y + 8192 + (y >> 31)) >> 14, -max, max) as i16,
+        x: iclip((x + 8192 + (x >> 31)) >> 14, -max, max) as i16,
+    }
 }
 
 fn add_temporal_candidate(
@@ -835,7 +835,7 @@ pub(crate) fn rav1d_refmvs_find(
     let b_top;
     let b_top_offset;
     if by4 > rt.tile_row.start {
-        max_rows = cmp::min(by4 - rt.tile_row.start + 1 >> 1, 2 + (bh4 > 1) as i32) as u32;
+        max_rows = cmp::min((by4 - rt.tile_row.start + 1) >> 1, 2 + (bh4 > 1) as i32) as u32;
         let i = rt.r[(by4 as usize & 31) + 5 - 1] + bx4 as usize;
         // We can't offset below 0.
         b_top_offset = match i {
@@ -869,7 +869,7 @@ pub(crate) fn rav1d_refmvs_find(
     let n_cols;
     let b_left;
     if bx4 > rt.tile_col.start {
-        max_cols = cmp::min(bx4 - rt.tile_col.start + 1 >> 1, 2 + (bw4 > 1) as i32) as u32;
+        max_cols = cmp::min((bx4 - rt.tile_col.start + 1) >> 1, 2 + (bw4 > 1) as i32) as u32;
         b_left = &rt.r[(by4 as usize & 31) + 5..];
         n_cols = scan_col(
             mvstack,
@@ -925,8 +925,8 @@ pub(crate) fn rav1d_refmvs_find(
         let rbi = rt.rp_proj + (by8 as usize & 15) * stride + bx8 as usize;
         let step_h = if bw4 >= 16 { 2 } else { 1 };
         let step_v = if bh4 >= 16 { 2 } else { 1 };
-        let w8 = cmp::min(w4 + 1 >> 1, 8) as usize;
-        let h8 = cmp::min(h4 + 1 >> 1, 8) as usize;
+        let w8 = cmp::min((w4 + 1) >> 1, 8) as usize;
+        let h8 = cmp::min((h4 + 1) >> 1, 8) as usize;
         for y in (0..h8).step_by(step_v) {
             for x in (0..w8).step_by(step_h) {
                 add_temporal_candidate(
@@ -949,7 +949,7 @@ pub(crate) fn rav1d_refmvs_find(
             let bw8 = bw4 >> 1;
             let rbi = rbi + bh8 as usize * stride;
             let has_bottom = by8 + bh8 < cmp::min(rt.tile_row.end >> 1, (by8 & !7) + 8);
-            if has_bottom && bx8 - 1 >= cmp::max(rt.tile_col.start >> 1, bx8 & !7) {
+            if has_bottom && bx8 > cmp::max(rt.tile_col.start >> 1, bx8 & !7) {
                 let rb = *rf.rp_proj.index(rbi - 1);
                 add_temporal_candidate(rf, mvstack, cnt, rb, r#ref, None, frame_hdr);
             }
@@ -988,7 +988,8 @@ pub(crate) fn rav1d_refmvs_find(
     let mut n_cols = n_cols;
     for n in 2..=3 {
         if n > n_rows && n <= max_rows {
-            let ri = rt.r[(((by4 & 31) - 2 * n as i32 + 1 | 1) + 5) as usize] + (bx4 as usize | 1);
+            let ri =
+                rt.r[((((by4 & 31) - 2 * n as i32 + 1) | 1) + 5) as usize] + (bx4 as usize | 1);
             n_rows = n_rows.wrapping_add(scan_row(
                 mvstack,
                 cnt,
@@ -1014,7 +1015,7 @@ pub(crate) fn rav1d_refmvs_find(
                 &rt.r[(by4 as usize & 31 | 1) + 5..],
                 bh4,
                 h4,
-                bx4 - n as i32 * 2 + 1 | 1,
+                (bx4 - n as i32 * 2 + 1) | 1,
                 (1 + max_cols - n) as _,
                 if bh4 >= 16 { 4 } else { 2 },
                 &mut have_dummy_newmv_match,
@@ -1226,7 +1227,7 @@ pub(crate) fn rav1d_refmvs_tile_sbrow_init(
     };
     let mut r = 35 * r_stride * tile_row_idx as usize + pass_off;
     let sbsz = rf.sbsz;
-    let off = sbsz * sby & 16;
+    let off = (sbsz * sby) & 16;
     let invalid_r = usize::MAX;
     let mut rr = [invalid_r; 37];
     // SAFETY: All of the valid `r`s that are set are unique, as we add `rf.r_stride` every time.
@@ -1431,7 +1432,7 @@ fn save_tmvs_rust(
         let mut x = col_start8;
         while x < col_end8 {
             let cand_b = *r.index(b + x * 2 + 1);
-            let bw8 = cand_b.bs.dimensions()[0] + 1 >> 1;
+            let bw8 = (cand_b.bs.dimensions()[0] + 1) >> 1;
             let block = |i: usize| {
                 let mv = cand_b.mv.mv[i];
                 let r#ref = cand_b.r#ref.r#ref[i];
@@ -1465,7 +1466,7 @@ pub(crate) fn rav1d_refmvs_init_frame(
     n_tile_threads: u32,
     n_frame_threads: u32,
 ) -> Rav1dResult {
-    let rp_stride = ((frm_hdr.size.width[0] + 127 & !127) >> 3) as u32;
+    let rp_stride = (((frm_hdr.size.width[0] + 127) & !127) >> 3) as u32;
     let n_tile_rows = if n_tile_threads > 1 {
         frm_hdr.tiling.rows as u32
     } else {
@@ -1474,8 +1475,8 @@ pub(crate) fn rav1d_refmvs_init_frame(
     let n_blocks = rp_stride * n_tile_rows;
 
     rf.sbsz = 16 << seq_hdr.sb128;
-    rf.iw8 = frm_hdr.size.width[0] + 7 >> 3;
-    rf.ih8 = frm_hdr.size.height + 7 >> 3;
+    rf.iw8 = (frm_hdr.size.width[0] + 7) >> 3;
+    rf.ih8 = (frm_hdr.size.height + 7) >> 3;
     rf.iw4 = rf.iw8 << 1;
     rf.ih4 = rf.ih8 << 1;
     rf.rp_stride = rp_stride;
@@ -1587,7 +1588,7 @@ unsafe fn splat_mv_c(
     let [bx4, bw4, bh4] = [bx4, bw4, bh4].map(|it| it as usize);
     // SAFETY: Length sliced in `splat_mv::Fn::call`.
     let rr = unsafe { slice::from_raw_parts_mut(rr, bh4) };
-    let rr = rr.into_iter().map(|&mut r| {
+    let rr = rr.iter_mut().map(|&mut r| {
         // SAFETY: `r` is from `rf.r.index_mut((ri + bx4.., ..bw4)).as_mut_ptr().sub(bx4)` in `splat_mv::Fn::call`.
         unsafe { slice::from_raw_parts_mut(r.add(bx4), bw4) }
     });
@@ -1877,8 +1878,8 @@ mod tests {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
         let dsps = contexts();
         for i in 0..2000 {
-            let bw4 = 1 << rng.next() % 6;
-            let bh4 = 1 << rng.next() % 6;
+            let bw4 = 1 << (rng.next() % 6);
+            let bh4 = 1 << (rng.next() % 6);
             let bx4 = (rng.next() as usize % (W4 / bw4)) * bw4;
             let rmv = block(&mut rng);
             let orig: Vec<_> = (0..W4 * 32).map(|_| block(&mut rng)).collect();
@@ -1994,7 +1995,7 @@ mod tests {
             for _ in 0..7 {
                 let start = Instant::now();
                 for k in 0..1000 {
-                    let bw4 = 1 << k % 6;
+                    let bw4 = 1 << (k % 6);
                     splat_rows(black_box(&dsp), &mut rr, &rmv, 0, bw4, bw4);
                 }
                 best[0] = best[0].min(start.elapsed().as_secs_f64() * 1e9 / 1000.);

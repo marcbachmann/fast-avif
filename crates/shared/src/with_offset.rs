@@ -19,7 +19,7 @@ impl<T> WithOffset<T> {
         }
     }
 
-    pub fn as_ref<'a>(&'a self) -> WithOffset<&'a T> {
+    pub fn as_ref(&self) -> WithOffset<&T> {
         WithOffset {
             data: &self.data,
             offset: self.offset,

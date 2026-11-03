@@ -65,7 +65,7 @@ impl Writer {
     }
 
     fn scale(&self, f: u32) -> u32 {
-        (self.rng >> 8) * (f >> EC_PROB_SHIFT) >> (7 - EC_PROB_SHIFT)
+        ((self.rng >> 8) * (f >> EC_PROB_SHIFT)) >> (7 - EC_PROB_SHIFT)
     }
 
     fn encode(&mut self, fl: u32, fh: u32, s: u32, n: u32) {
@@ -108,7 +108,7 @@ impl Writer {
         let count = cdf[1];
         let rate = 4 + (count >> 4);
         if bit {
-            cdf[0] += (1 << 15) - cdf[0] >> rate;
+            cdf[0] += ((1 << 15) - cdf[0]) >> rate;
         } else {
             cdf[0] -= cdf[0] >> rate;
         }
@@ -207,7 +207,7 @@ pub fn adapt(s: u8, cdf: &mut [u16], n: u8) {
     let rate = 4 + (count >> 4) + (n > 2) as u16;
     let s = s as usize;
     for p in &mut cdf[..s] {
-        *p += (1 << 15) - *p >> rate;
+        *p += ((1 << 15) - *p) >> rate;
     }
     for p in &mut cdf[s..n] {
         *p -= *p >> rate;

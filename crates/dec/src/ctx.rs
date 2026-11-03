@@ -60,10 +60,10 @@ pub fn small_memset<T: Clone + Copy, const UP_TO: usize, const WITH_DEFAULT: boo
         buf.try_into().unwrap()
     }
     match buf.len() {
-        01 if UP_TO >= 01 => *as_array(buf) = [val; 01],
-        02 if UP_TO >= 02 => *as_array(buf) = [val; 02],
-        04 if UP_TO >= 04 => *as_array(buf) = [val; 04],
-        08 if UP_TO >= 08 => *as_array(buf) = [val; 08],
+        1 if UP_TO >= 1 => *as_array(buf) = [val; 1],
+        2 if UP_TO >= 2 => *as_array(buf) = [val; 2],
+        4 if UP_TO >= 4 => *as_array(buf) = [val; 4],
+        8 if UP_TO >= 8 => *as_array(buf) = [val; 8],
         16 if UP_TO >= 16 => *as_array(buf) = [val; 16],
         32 if UP_TO >= 32 => *as_array(buf) = [val; 32],
         _ => {
@@ -96,7 +96,7 @@ impl<const UP_TO: usize, const WITH_DEFAULT: bool> CaseSetter<UP_TO, WITH_DEFAUL
         V: Clone + Copy,
     {
         let mut buf = buf.index_mut(self.offset..self.offset + self.len);
-        small_memset::<V, UP_TO, WITH_DEFAULT>(&mut *buf, val);
+        small_memset::<V, UP_TO, WITH_DEFAULT>(&mut buf, val);
     }
 }
 

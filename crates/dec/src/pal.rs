@@ -56,8 +56,8 @@ enum PalIdx<'a> {
 unsafe fn pal_idx_finish_c(dst: *mut u8, src: *const u8, bw: i32, bh: i32, w: i32, h: i32) {
     let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as usize);
 
-    assert!(bw >= 4 && bw <= 64 && bw.is_power_of_two());
-    assert!(bh >= 4 && bh <= 64 && bh.is_power_of_two());
+    assert!((4..=64).contains(&bw) && bw.is_power_of_two());
+    assert!((4..=64).contains(&bh) && bh.is_power_of_two());
     assert!(w >= 4 && w <= bw && (w & 3) == 0);
     assert!(h >= 4 && h <= bh && (h & 3) == 0);
 
@@ -197,8 +197,8 @@ mod rust_simd {
         h: i32,
     ) {
         let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as usize);
-        assert!(bw >= 4 && bw <= 64 && bw.is_power_of_two());
-        assert!(bh >= 4 && bh <= 64 && bh.is_power_of_two());
+        assert!((4..=64).contains(&bw) && bw.is_power_of_two());
+        assert!((4..=64).contains(&bh) && bh.is_power_of_two());
         assert!(w >= 4 && w <= bw && (w & 3) == 0);
         assert!(h >= 4 && h <= bh && (h & 3) == 0);
         let idx = if src == dst {

@@ -349,15 +349,15 @@ fn wiener_rust<BD: BitDepth>(
     let filter = &params.filter;
     let bitdepth = bd.bitdepth().as_::<i32>();
     let round_bits_h = 3 + (bitdepth == 12) as i32 * 2;
-    let rounding_off_h = 1 << round_bits_h - 1;
-    let clip_limit = 1 << bitdepth + 1 + 7 - round_bits_h;
+    let rounding_off_h = 1 << (round_bits_h - 1);
+    let clip_limit = 1 << (bitdepth + 1 + 7 - round_bits_h);
     for (tmp, hor) in tmp
         .chunks_exact(REST_UNIT_STRIDE)
         .zip(hor.chunks_exact_mut(REST_UNIT_STRIDE))
         .take(h + 6)
     {
         for i in 0..w {
-            let mut sum = 1 << bitdepth + 6;
+            let mut sum = 1 << (bitdepth + 6);
 
             if BD::BPC == BPC::BPC8 {
                 sum += tmp[i + 3].to::<i32>() * 128;
@@ -367,13 +367,13 @@ fn wiener_rust<BD: BitDepth>(
                 sum += tmp.to::<i32>() * filter as i32;
             }
 
-            hor[i] = iclip(sum + rounding_off_h >> round_bits_h, 0, clip_limit - 1) as u16;
+            hor[i] = iclip((sum + rounding_off_h) >> round_bits_h, 0, clip_limit - 1) as u16;
         }
     }
 
     let round_bits_v = 11 - (bitdepth == 12) as i32 * 2;
-    let rounding_off_v = 1 << round_bits_v - 1;
-    let round_offset = 1 << bitdepth + (round_bits_v - 1);
+    let rounding_off_v = 1 << (round_bits_v - 1);
+    let round_offset = 1 << (bitdepth + (round_bits_v - 1));
     for j in 0..h {
         for i in 0..w {
             let mut sum = -round_offset;
@@ -385,7 +385,7 @@ fn wiener_rust<BD: BitDepth>(
 
             let p = p + (j as isize * p.pixel_stride::<BD>()) + i;
             *p.index_mut::<BD>() =
-                iclip(sum + rounding_off_v >> round_bits_v, 0, bd.into_max()).as_();
+                iclip((sum + rounding_off_v) >> round_bits_v, 0, bd.into_max()).as_();
         }
     }
 }
@@ -616,8 +616,8 @@ fn selfguided_filter<BD: BitDepth>(
     let mut bb = b.clone() - REST_UNIT_STRIDE;
     for _ in (-1..h as isize + 1).step_by(step) {
         for i in -1..w as isize + 1 {
-            let a = aa[i] + (1 << 2 * bitdepth_min_8 >> 1) >> 2 * bitdepth_min_8;
-            let b = bb[i].as_::<i32>() + (1 << bitdepth_min_8 >> 1) >> bitdepth_min_8;
+            let a = (aa[i] + (1 << (2 * bitdepth_min_8) >> 1)) >> (2 * bitdepth_min_8);
+            let b = (bb[i].as_::<i32>() + (1 << bitdepth_min_8 >> 1)) >> bitdepth_min_8;
 
             let p = cmp::max(a * n - b * b, 0) as u32;
             let z = (p * s + (1 << 19)) >> 20;
@@ -627,8 +627,8 @@ fn selfguided_filter<BD: BitDepth>(
             aa[i] = ((x * bb[i].as_::<u32>() * sgr_one_by_x + (1 << 11)) >> 12) as i32;
             bb[i] = x.as_::<BD::Coef>();
         }
-        aa += step as usize * REST_UNIT_STRIDE;
-        bb += step as usize * REST_UNIT_STRIDE;
+        aa += step * REST_UNIT_STRIDE;
+        bb += step * REST_UNIT_STRIDE;
     }
 
     fn six_neighbors<P>(p: &CursorMut<P>, i: isize) -> i32
@@ -673,7 +673,7 @@ fn selfguided_filter<BD: BitDepth>(
                     b[i].as_::<i32>() * 6 + (b[i as isize - 1] + b[i + 1]).as_::<i32>() * 5,
                     a[i] * 6 + (a[i as isize - 1] + a[i + 1]) * 5,
                 );
-                dst[i] = (b - a * src[i].as_::<i32>() + (1 << 7) >> 8).as_();
+                dst[i] = ((b - a * src[i].as_::<i32>() + (1 << 7)) >> 8).as_();
             }
             dst = &mut dst[MAX_RESTORATION_WIDTH..];
             src = &src[REST_UNIT_STRIDE..];
@@ -685,7 +685,7 @@ fn selfguided_filter<BD: BitDepth>(
         if j + 1 == h {
             for i in 0..w {
                 let (a, b) = (six_neighbors(&b, i as isize), six_neighbors(&a, i as isize));
-                dst[i] = (b - a * src[i].as_::<i32>() + (1 << 8) >> 9).as_();
+                dst[i] = ((b - a * src[i].as_::<i32>() + (1 << 8)) >> 9).as_();
             }
         }
     } else {
@@ -695,7 +695,7 @@ fn selfguided_filter<BD: BitDepth>(
                     eight_neighbors(&b, i as isize),
                     eight_neighbors(&a, i as isize),
                 );
-                dst[i] = (b - a * src[i].as_::<i32>() + (1 << 8) >> 9).as_();
+                dst[i] = ((b - a * src[i].as_::<i32>() + (1 << 8)) >> 9).as_();
             }
             dst = &mut dst[384..];
             src = &src[REST_UNIT_STRIDE..];
@@ -750,7 +750,7 @@ fn sgr_5x5_rust<BD: BitDepth>(
 
     padding::<BD>(&mut tmp, p, left, lpf, lpf_off, w, h, edges);
     let sgr = params.sgr();
-    selfguided_filter(&mut dst, &mut tmp, w, h, 25, sgr.s0, bd);
+    selfguided_filter(&mut dst, &tmp, w, h, 25, sgr.s0, bd);
 
     let w0 = sgr.w0 as i32;
     for j in 0..h {
@@ -758,7 +758,7 @@ fn sgr_5x5_rust<BD: BitDepth>(
         let p = &mut *p.slice_mut::<BD>(w);
         for i in 0..w {
             let v = w0 * dst[j * 384 + i].as_::<i32>();
-            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + (v + (1 << 10) >> 11));
+            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + ((v + (1 << 10)) >> 11));
         }
     }
 }
@@ -803,7 +803,7 @@ fn sgr_3x3_rust<BD: BitDepth>(
 
     padding::<BD>(&mut tmp, p, left, lpf, lpf_off, w, h, edges);
     let sgr = params.sgr();
-    selfguided_filter(&mut dst, &mut tmp, w, h, 9, sgr.s1, bd);
+    selfguided_filter(&mut dst, &tmp, w, h, 9, sgr.s1, bd);
 
     let w1 = sgr.w1 as i32;
     for j in 0..h {
@@ -811,7 +811,7 @@ fn sgr_3x3_rust<BD: BitDepth>(
         let p = &mut *p.slice_mut::<BD>(w);
         for i in 0..w {
             let v = w1 * dst[j * 384 + i].as_::<i32>();
-            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + (v + (1 << 10) >> 11));
+            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + ((v + (1 << 10)) >> 11));
         }
     }
 }
@@ -857,8 +857,8 @@ fn sgr_mix_rust<BD: BitDepth>(
 
     padding::<BD>(&mut tmp, p, left, lpf, lpf_off, w, h, edges);
     let sgr = params.sgr();
-    selfguided_filter(&mut dst0, &mut tmp, w, h, 25, sgr.s0, bd);
-    selfguided_filter(&mut dst1, &mut tmp, w, h, 9, sgr.s1, bd);
+    selfguided_filter(&mut dst0, &tmp, w, h, 25, sgr.s0, bd);
+    selfguided_filter(&mut dst1, &tmp, w, h, 9, sgr.s1, bd);
 
     let w0 = sgr.w0 as i32;
     let w1 = sgr.w1 as i32;
@@ -867,7 +867,7 @@ fn sgr_mix_rust<BD: BitDepth>(
         let p = &mut *p.slice_mut::<BD>(w);
         for i in 0..w {
             let v = w0 * dst0[j * 384 + i].as_::<i32>() + w1 * dst1[j * 384 + i].as_::<i32>();
-            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + (v + (1 << 10) >> 11));
+            p[i] = bd.iclip_pixel(p[i].as_::<i32>() + ((v + (1 << 10)) >> 11));
         }
     }
 }
@@ -1151,9 +1151,9 @@ mod rust_simd {
         bitdepth: i32,
     ) {
         let kh = [filter[0][0], filter[0][1], filter[0][2], filter[0][3]];
-        let rnd_h = (1 << bitdepth + 6) + (1 << SH - 1);
+        let rnd_h = (1 << (bitdepth + 6)) + (1 << (SH - 1));
         let kv = filter[1];
-        let rnd_v = (1 << SV - 1) - (1 << bitdepth + SV - 1);
+        let rnd_v = (1 << (SV - 1)) - (1 << (bitdepth + SV - 1));
         let zero = V::splat(0);
         let max = V::splat((1 << bitdepth) - 1);
         let mut ring = [[0i16; MAX_W + 16]; 8];

@@ -1225,14 +1225,14 @@ fn warp_filter_refs<V: Vw>(m: i32, step: i32) -> [&'static [i8; 8]; 8] {
     } else {
         &DAV1D_MC_WARP_FILTER.0
     };
-    let f = |x: i32| &t[(64 + (m + x * step + 512 >> 10)) as usize];
+    let f = |x: i32| &t[(64 + ((m + x * step + 512) >> 10)) as usize];
     [f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7)]
 }
 
 #[inline(always)]
 fn warp_filters<V: Vw>(m: i32, step: i32) -> [V; 8] {
     let f = |x: i32| -> V {
-        V::load_i8(&DAV1D_MC_WARP_FILTER[(64 + (m + x * step + 512 >> 10)) as usize])
+        V::load_i8(&DAV1D_MC_WARP_FILTER[(64 + ((m + x * step + 512) >> 10)) as usize])
     };
     [f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7)]
 }
@@ -2411,7 +2411,9 @@ mod neon {
         #[inline(always)]
         fn h8<const T6: bool>(s: &[u8], f: &[i8; 8]) -> Self {
             unsafe {
+                // build.rs sets `rav1d_sdot` only on a toolchain where `sdot` builds.
                 #[cfg(rav1d_sdot)]
+                #[allow(clippy::incompatible_msrv)]
                 if D {
                     // `s[..8]` and `s[7..15]`, the windows' bytes `j >= 8` at `j + 1`, less 128
                     // to be signed; `128 * sum(f)` adds it back.
@@ -2833,9 +2835,9 @@ pub fn blend<BD: BitDepth, V: Vx, const PW: usize>(
     let obmc = &DAV1D_OBMC_MASKS.0;
     let mut vm = [0u8; 32];
     if let Blend::V = kind {
-        vm[..w * 3 >> 2].copy_from_slice(&obmc[w..][..w * 3 >> 2]);
+        vm[..(w * 3) >> 2].copy_from_slice(&obmc[w..][..(w * 3) >> 2]);
     }
-    let oh = if let Blend::H = kind { h * 3 >> 2 } else { h };
+    let oh = if let Blend::H = kind { (h * 3) >> 2 } else { h };
     // SAFETY: The blend writes `oh` rows of `w` pixels.
     let dst = unsafe { dst.block_unchecked::<BD>(0..oh as isize, 0..w as isize) };
     for y in 0..oh {
@@ -3844,7 +3846,7 @@ mod tests {
                         "warp8x8",
                         "warp8x8t",
                     ][k],
-                    w as i32,
+                    w,
                 );
                 let name = if f == Filter2d::Sharp8Tap {
                     format!("{name}#")
@@ -3957,7 +3959,8 @@ mod tests {
                 }
             })
         };
-        let rs = |(a, b): (i32, i32), sh: u32| (a + (1 << sh >> 1) >> sh, b + (1 << sh >> 1) >> sh);
+        let rs =
+            |(a, b): (i32, i32), sh: u32| ((a + (1 << sh >> 1)) >> sh, (b + (1 << sh >> 1)) >> sh);
         let fits = |(a, b): (i32, i32), bias: i32| {
             i16::try_from(a - bias).is_ok() && i16::try_from(b - bias).is_ok()
         };
@@ -3998,7 +4001,7 @@ mod tests {
         let (scalar, tiers) = dsps::<BD>();
         let bd = BD::from_max(max);
         let mut rng = Rng(0x0ddb_1a5e_5eed_d123 ^ max as u64);
-        let wf = |m: i32| &DAV1D_MC_WARP_FILTER[(64 + (m + 512 >> 10)) as usize];
+        let wf = |m: i32| &DAV1D_MC_WARP_FILTER[(64 + ((m + 512) >> 10)) as usize];
         let pos = |f: &[i8; 8]| f.iter().map(|&t| t.max(0) as i32).sum::<i32>();
         let top = (0..193).max_by_key(|&i| pos(&WARP_FILTER[i])).unwrap() as i32;
         for it in 0..3000 {

@@ -38,7 +38,7 @@ impl generate_grain_y::Fn {
         bd: BD,
     ) {
         let buf = ptr::from_mut(buf).cast();
-        let data = &data.clone().into();
+        let data = &data.clone();
         let bd = bd.into_max();
         // SAFETY: Fallback `fn generate_grain_y_rust` is safe; the SIMD kernels read and write the same memory.
         unsafe { self.get()(buf, data, bd) }
@@ -64,7 +64,7 @@ impl generate_grain_uv::Fn {
     ) {
         let buf = ptr::from_mut(buf).cast();
         let buf_y = ptr::from_ref(buf_y).cast();
-        let data = &data.clone().into();
+        let data = &data.clone();
         let uv = is_uv.into();
         let bd = bd.into_max();
         // SAFETY: Fallback `fn generate_grain_uv_rust` is safe; the SIMD kernels read and write the same memory.
@@ -100,7 +100,7 @@ impl fgy_32x32xn::Fn {
         let row_strides = (row_num * FG_BLOCK_SIZE) as isize;
         let dst_row = dst.with_offset() + row_strides * dst.pixel_stride::<BD>();
         let src_row = src.with_offset() + row_strides * src.pixel_stride::<BD>();
-        let data = &data.clone().into();
+        let data = &data.clone();
         let scaling = ptr::from_ref(scaling).cast();
         let grain_lut = ptr::from_ref(grain_lut).cast();
         let bh = bh as i32;
@@ -149,9 +149,9 @@ impl fguv_32x32xn::Fn {
     ) {
         let ss_y = (layout == Rav1dPixelLayoutSubSampled::I420) as usize;
         let row_strides = (row_num * FG_BLOCK_SIZE) as isize;
-        let dst_row = dst.with_offset() + (row_strides * dst.pixel_stride::<BD>() >> ss_y);
-        let src_row = src.with_offset() + (row_strides * src.pixel_stride::<BD>() >> ss_y);
-        let data = &data.clone().into();
+        let dst_row = dst.with_offset() + ((row_strides * dst.pixel_stride::<BD>()) >> ss_y);
+        let src_row = src.with_offset() + ((row_strides * src.pixel_stride::<BD>()) >> ss_y);
+        let data = &data.clone();
         let scaling = (scaling as *const BD::Scaling).cast();
         let grain_lut = (grain_lut as *const GrainLut<BD::Entry>).cast();
         let bh = bh as i32;
@@ -218,7 +218,7 @@ unsafe fn generate_grain_y_c_erased<BD: BitDepth>(
 ) {
     // SAFETY: Casting back to the original type from the `generate_grain_y::Fn::call`.
     let buf = unsafe { &mut *buf.cast() };
-    let data = &data.clone().into();
+    let data = &data.clone();
     let bd = BD::from_max(bitdepth_max);
     generate_grain_y_rust(buf, data, bd)
 }
@@ -424,7 +424,7 @@ unsafe fn generate_grain_uv_c_erased<
     let buf = unsafe { &mut *buf.cast() };
     // SAFETY: Casting back to the original type from the `generate_grain_uv::Fn::call`.
     let buf_y = unsafe { &*buf_y.cast() };
-    let data = &data.clone().into();
+    let data = &data.clone();
     let is_uv = uv != 0;
     let bd = BD::from_max(bitdepth_max);
     generate_grain_uv_rust(buf, buf_y, data, is_uv, IS_SUBX, IS_SUBY, bd)
@@ -468,7 +468,7 @@ unsafe fn fgy_32x32xn_c_erased<BD: BitDepth>(
     dst_row: Rav1dPictureDataComponentOffset,
     src_row: Rav1dPictureDataComponentOffset,
 ) {
-    let data = &data.clone().into();
+    let data = &data.clone();
     // SAFETY: Casting back to the original type from the `fn` ptr call.
     let scaling = unsafe { &*scaling.cast() };
     // SAFETY: Casting back to the original type from the `fn` ptr call.
@@ -802,7 +802,7 @@ unsafe fn fguv_32x32xn_c_erased<
     luma_row: Rav1dPictureDataComponentOffset,
 ) {
     let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| row);
-    let data = &data.clone().into();
+    let data = &data.clone();
     // SAFETY: Casting back to the original type from the `fn` ptr call.
     let scaling = unsafe { &*scaling.cast() };
     // SAFETY: Casting back to the original type from the `fn` ptr call.
@@ -2802,7 +2802,7 @@ mod rust_simd {
         dst_row: Rav1dPictureDataComponentOffset,
         src_row: Rav1dPictureDataComponentOffset,
     ) {
-        let data = &data.clone().into();
+        let data = &data.clone();
         // SAFETY: Casting back to the original type from the `fn` ptr call.
         let scaling: &BD::Scaling = unsafe { &*scaling.cast() };
         let (bh, row_num) = (bh as usize, row_num as usize);
@@ -2943,7 +2943,7 @@ mod rust_simd {
         luma_row: Rav1dPictureDataComponentOffset,
     ) {
         let [dst_row, src_row, luma_row] = [dst_row, src_row, luma_row].map(|row| row);
-        let data = &data.clone().into();
+        let data = &data.clone();
         // SAFETY: Casting back to the original type from the `fn` ptr call.
         let scaling: &BD::Scaling = unsafe { &*scaling.cast() };
         let (bh, row_num) = (bh as usize, row_num as usize);
@@ -3179,7 +3179,7 @@ mod rust_simd {
         data: &Rav1dFilmGrainData,
         bitdepth_max: i32,
     ) {
-        let data = &data.clone().into();
+        let data = &data.clone();
         with_px!(BD, |P| {
             // SAFETY: Casting back to the original type from `generate_grain_y::Fn::call`.
             let buf: &mut GrainLut<<P as Px>::E> = unsafe { &mut *buf.cast() };
@@ -3204,7 +3204,7 @@ mod rust_simd {
         uv: isize,
         bitdepth_max: i32,
     ) {
-        let data = &data.clone().into();
+        let data = &data.clone();
         with_px!(BD, |P| {
             // SAFETY: Casting back to the original type from `generate_grain_uv::Fn::call`.
             let buf: &mut GrainLut<<P as Px>::E> = unsafe { &mut *buf.cast() };
@@ -3410,7 +3410,7 @@ mod tests {
             scaling,
             lut,
             pw,
-            bh: bh + sy as usize >> sy as usize,
+            bh: (bh + sy as usize) >> sy as usize,
             row_num: rng.range(0, 1) as usize,
             is_uv: rng.bit(),
             is_id: rng.bit(),

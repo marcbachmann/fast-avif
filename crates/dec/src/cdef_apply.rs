@@ -124,12 +124,12 @@ fn adjust_strength(strength: u8, var: u32) -> i32 {
     }
 
     let i = if var >> 6 != 0 {
-        cmp::min(ulog2(var >> 6), 12 as i32)
+        cmp::min(ulog2(var >> 6), 12_i32)
     } else {
         0
     };
 
-    strength as i32 * (4 + i) + 8 >> 4
+    (strength as i32 * (4 + i) + 8) >> 4
 }
 
 pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
@@ -382,14 +382,14 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                             data: &f.lf.cdef_line_buf,
                                             offset: f.lf.cdef_lpf_line[pl],
                                         } + ((sby - 1) * 4) as isize * uv_stride
-                                            + (bx * 4 >> ss_hor) as isize
+                                            + ((bx * 4) >> ss_hor) as isize
                                     } else {
                                         let line = sby * (4 << sb128) - 4;
                                         WithOffset {
                                             data: &f.lf.lr_line_buf,
                                             offset: f.lf.lr_lpf_line[pl],
                                         } + line as isize * uv_stride
-                                            + (bx * 4 >> ss_hor) as isize
+                                            + ((bx * 4) >> ss_hor) as isize
                                     };
                                     let bottom = bptrs[pl] + ((8 >> ss_ver) * uv_stride);
                                     Some((top, WithOffset::pic(bottom)))
@@ -398,20 +398,20 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                         data: &f.lf.cdef_line_buf,
                                         offset: f.lf.cdef_line[tf as usize][pl],
                                     } + (sby * 8) as isize * uv_stride
-                                        + (bx * 4 >> ss_hor) as isize;
+                                        + ((bx * 4) >> ss_hor) as isize;
                                     let buf = if resize {
                                         WithOffset {
                                             data: &f.lf.cdef_line_buf,
                                             offset: f.lf.cdef_lpf_line[pl],
                                         } + (sby * 4 + 2) as isize * uv_stride
-                                            + (bx * 4 >> ss_hor) as isize
+                                            + ((bx * 4) >> ss_hor) as isize
                                     } else {
                                         let line = sby * (4 << sb128) + 4 * sb128 as i32 + 2;
                                         WithOffset {
                                             data: &f.lf.lr_line_buf,
                                             offset: f.lf.lr_lpf_line[pl],
                                         } + line as isize * uv_stride
-                                            + (bx * 4 >> ss_hor) as isize
+                                            + ((bx * 4) >> ss_hor) as isize
                                     };
                                     Some((
                                         top,
@@ -432,7 +432,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                         data: &f.lf.cdef_line_buf,
                                         offset: f.lf.cdef_line[tf as usize][pl],
                                     } + have_tt as isize * (sby * 8) as isize * uv_stride
-                                        + (bx * 4 >> ss_hor) as isize;
+                                        + ((bx * 4) >> ss_hor) as isize;
                                     let bottom = bptrs[pl] + ((8 >> ss_ver) * uv_stride);
                                     (top, WithOffset::pic(bottom))
                                 });
@@ -461,14 +461,14 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                 }
             }
             iptrs[0] += sbsz as usize * 4;
-            iptrs[1] += sbsz as usize * 4 >> ss_hor;
-            iptrs[2] += sbsz as usize * 4 >> ss_hor;
+            iptrs[1] += (sbsz as usize * 4) >> ss_hor;
+            iptrs[2] += (sbsz as usize * 4) >> ss_hor;
             edges.insert(CdefEdgeFlags::HAVE_LEFT);
         }
         ptrs[0] += 8 * ptrs[0].pixel_stride::<BD>();
         ptrs[1] += 8 * (ptrs[1].pixel_stride::<BD>() >> ss_ver);
         ptrs[2] += 8 * (ptrs[2].pixel_stride::<BD>() >> ss_ver);
-        tc.top_pre_cdef_toggle ^= 1 as i32;
+        tc.top_pre_cdef_toggle ^= 1_i32;
         edges.insert(CdefEdgeFlags::HAVE_TOP);
     }
 }

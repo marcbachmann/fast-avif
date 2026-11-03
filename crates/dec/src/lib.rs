@@ -4,50 +4,15 @@
 )]
 #![allow(clippy::derivable_impls, clippy::erasing_op, clippy::ptr_eq)]
 #![allow(
-    clippy::borrow_deref_ref,
-    clippy::borrowed_box,
-    clippy::cast_abs_to_unsigned,
-    clippy::clone_on_copy,
-    clippy::collapsible_else_if,
-    clippy::collapsible_if,
-    clippy::duplicate_underscore_argument,
-    clippy::explicit_auto_deref,
     clippy::identity_op,
-    clippy::incompatible_msrv,
-    clippy::int_plus_one,
-    clippy::into_iter_on_ref,
     clippy::large_const_arrays,
     clippy::large_enum_variant,
-    clippy::len_zero,
-    clippy::let_underscore_lock,
-    clippy::manual_div_ceil,
-    clippy::manual_range_contains,
-    clippy::manual_saturating_arithmetic,
     clippy::module_inception,
-    clippy::misrefactored_assign_op,
-    clippy::needless_borrow,
     clippy::needless_late_init,
-    clippy::needless_lifetimes,
-    clippy::needless_option_as_deref,
     clippy::needless_range_loop,
-    clippy::needless_return,
-    clippy::nonminimal_bool,
-    clippy::partialeq_to_none,
-    clippy::precedence,
-    clippy::redundant_closure,
-    clippy::redundant_pattern_matching,
-    clippy::redundant_static_lifetimes,
-    clippy::search_is_some,
     clippy::too_many_arguments,
     clippy::type_complexity,
-    clippy::unit_arg,
-    clippy::unnecessary_cast,
-    clippy::unnecessary_fallible_conversions,
-    clippy::unnecessary_mut_passed,
-    clippy::unnecessary_lazy_evaluations,
-    clippy::upper_case_acronyms,
-    clippy::useless_conversion,
-    clippy::zero_prefixed_literal
+    clippy::upper_case_acronyms
 )]
 #![deny(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
 
@@ -214,7 +179,7 @@ pub(crate) fn rav1d_open(
     spawner: Option<&Spawner>,
 ) -> Rav1dResult<Arc<Rav1dContext>> {
     static INITTED: Once = Once::new();
-    INITTED.call_once(|| init_internal());
+    INITTED.call_once(init_internal);
 
     // On 32-bit systems, extremely large frame sizes can cause overflows in
     // `rav1d_decode_frame` alloc size calculations. Prevent that from occuring
@@ -545,7 +510,7 @@ pub(crate) fn rav1d_apply_grain(
     let res = rav1d_picture_alloc_copy(&c.logger, out, in_0.p.w, in_0);
     if res.is_err() {
         let _ = mem::take(out);
-        return res;
+        res
     } else {
         if c.tc.len() > 1 {
             rav1d_task_delayed_fg(c, out, in_0);
@@ -562,8 +527,8 @@ pub(crate) fn rav1d_apply_grain(
                 _ => {}
             }
         }
-        return Ok(());
-    };
+        Ok(())
+    }
 }
 
 pub(crate) fn rav1d_flush(c: &Rav1dContext) {

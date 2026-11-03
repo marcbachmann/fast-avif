@@ -75,7 +75,7 @@ fn quantize_scalar(
     for (rc, ((&c, l), &i)) in coefs.iter().zip(levels.iter_mut()).zip(index).enumerate() {
         let mut q = dq[(rc != 0) as usize];
         if let Some(qm) = qm {
-            q = q * qm[rc] as u32 + 16 >> 5;
+            q = (q * qm[rc] as u32 + 16) >> 5;
         }
         let a = (c.unsigned_abs() as u64) << shift;
         let v = ((a * 128 + q as u64 * rounding as u64) / (q as u64 * 128)) as i32;
@@ -129,7 +129,7 @@ fn dequantize_scalar(levels: &[i32], cf: &mut [i16], dq: [u32; 2], qm: Option<&[
         }
         let mut q = dq[(rc != 0) as usize];
         if let Some(qm) = qm {
-            q = q * qm[rc] as u32 + 16 >> 5;
+            q = (q * qm[rc] as u32 + 16) >> 5;
         }
         let tok = l.unsigned_abs() & 0xfffff;
         let v = ((q.wrapping_mul(tok) & 0xffffff) >> shift) as i32;

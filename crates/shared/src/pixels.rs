@@ -77,7 +77,7 @@ pub trait Pixels {
     }
 }
 
-impl<'a, P: Pixels> Pixels for &'a P {
+impl<P: Pixels> Pixels for &P {
     fn byte_len(&self) -> usize {
         (*self).byte_len()
     }

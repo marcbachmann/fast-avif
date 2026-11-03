@@ -286,8 +286,8 @@ fn cdef_filter_block_rust<BD: BitDepth>(
                         min = cmp::min(s3 as u32, min as u32) as i32;
                         max = cmp::max(s3, max);
                     }
-                    dst[x] =
-                        iclip(px + (sum - (sum < 0) as i32 + 8 >> 4), min, max).as_::<BD::Pixel>();
+                    dst[x] = iclip(px + ((sum - (sum < 0) as i32 + 8) >> 4), min, max)
+                        .as_::<BD::Pixel>();
                 }
             }
         } else {
@@ -307,7 +307,7 @@ fn cdef_filter_block_rust<BD: BitDepth>(
                         sum += pri_tap_k * constrain(p1 - px, pri_strength, pri_shift);
                         pri_tap_k = pri_tap_k & 3 | 2;
                     }
-                    dst[x] = (px + (sum - (sum < 0) as i32 + 8 >> 4)).as_::<BD::Pixel>();
+                    dst[x] = (px + ((sum - (sum < 0) as i32 + 8) >> 4)).as_::<BD::Pixel>();
                 }
             }
         }
@@ -333,7 +333,7 @@ fn cdef_filter_block_rust<BD: BitDepth>(
                     sum += sec_tap * constrain(s2 - px, sec_strength, sec_shift);
                     sum += sec_tap * constrain(s3 - px, sec_strength, sec_shift);
                 }
-                dst[x] = (px + (sum - (sum < 0) as i32 + 8 >> 4)).as_::<BD::Pixel>();
+                dst[x] = (px + ((sum - (sum < 0) as i32 + 8) >> 4)).as_::<BD::Pixel>();
             }
         }
     };
@@ -868,7 +868,7 @@ mod rust_simd {
         }
         if edges.contains(CdefEdgeFlags::HAVE_BOTTOM) {
             for i in 0..2 {
-                let bottom = bottom.clone() - 2_usize + i as isize * stride;
+                let bottom = bottom - 2_usize + i as isize * stride;
                 let range = (bottom.offset + x_start.., ..x_end - x_start);
                 let line = match bottom.data {
                     PicOrBuf::Pic(pic) => &*pic.slice::<BD, _>(range),
@@ -1221,7 +1221,7 @@ mod tests {
                 return (self.next() % (max as u32 + 1)) as i32;
             }
             let mid = 1 << (bits - 1);
-            (mid + ((self.next() % 41) as i32 - 20 << (bits - 8))).clamp(0, max)
+            (mid + (((self.next() % 41) as i32 - 20) << (bits - 8))).clamp(0, max)
         }
     }
 

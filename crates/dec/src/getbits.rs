@@ -60,12 +60,12 @@ impl<'a> GetBits<'a> {
                 state = (state << 8) | self.data[self.index] as u32;
                 self.index += 1;
                 self.bits_left += 8;
-                if !(n > self.bits_left) {
+                if n <= self.bits_left {
                     break;
                 }
             }
         }
-        self.state |= (state as u64) << 64 - self.bits_left;
+        self.state |= (state as u64) << (64 - self.bits_left);
     }
 
     pub fn get_bits(&mut self, n: i32) -> u32 {
@@ -77,7 +77,7 @@ impl<'a> GetBits<'a> {
         let state = self.state;
         self.bits_left -= n;
         self.state = state << n;
-        (state as u64 >> 64 - n) as u32
+        (state >> (64 - n)) as u32
     }
 
     pub fn get_sbits(&mut self, n: i32) -> i32 {
@@ -89,12 +89,12 @@ impl<'a> GetBits<'a> {
         let state = self.state;
         self.bits_left -= n;
         self.state = state << n;
-        (state as i64 >> 64 - n) as i32
+        (state as i64 >> (64 - n)) as i32
     }
 
     pub fn get_uleb128(&mut self) -> u32 {
         let mut val = 0;
-        let mut i = 0 as u32;
+        let mut i = 0_u32;
         let mut more;
         loop {
             let v = self.get_bits(8) as i32;
@@ -143,7 +143,7 @@ impl<'a> GetBits<'a> {
     }
 
     fn get_bits_subexp_u(&mut self, r#ref: u32, n: u32) -> u32 {
-        let mut v = 0 as u32;
+        let mut v = 0_u32;
         let mut i = 0;
         loop {
             let b = if i != 0 { 3 + i - 1 } else { 3 };

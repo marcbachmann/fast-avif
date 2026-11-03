@@ -680,7 +680,7 @@ impl Rav1dSequenceHeader {
             film_grain_present,
             operating_parameter_info: _,
         } = self;
-        true && *profile == other.profile
+        *profile == other.profile
             && *max_width == other.max_width
             && *max_height == other.max_height
             && *layout == other.layout

@@ -45,13 +45,13 @@ fn lr_stripe<BD: BitDepth>(
     let chroma = (plane != 0) as i32;
     let ss_ver = chroma & (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
     let stride: isize = f.sr_cur.p.stride[chroma as usize];
-    let sby = y + (if y != 0 { 8 << ss_ver } else { 0 }) >> 6 - ss_ver + seq_hdr.sb128 as i32;
+    let sby = (y + (if y != 0 { 8 << ss_ver } else { 0 })) >> (6 - ss_ver + seq_hdr.sb128 as i32);
     let have_tt = (c.tc.len() > 1) as i32;
     let lpf_stride = BD::pxstride(stride);
     let mut lpf_offset = f.lf.lr_lpf_line[plane as usize] as isize;
     lpf_offset += (have_tt * (sby * (4 << seq_hdr.sb128) - 4)) as isize * lpf_stride + x as isize;
     // The first stripe of the frame is shorter by 8 luma pixel rows.
-    let mut stripe_h = cmp::min(64 - 8 * (y == 0) as i32 >> ss_ver, row_h - y);
+    let mut stripe_h = cmp::min((64 - 8 * (y == 0) as i32) >> ss_ver, row_h - y);
 
     let mut params = LooprestorationParams::default();
     let lr_fn;
@@ -152,7 +152,7 @@ fn lr_sbrow<BD: BitDepth>(
     let ss_hor = chroma & (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as i32;
     let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
     let unit_size_log2 = frame_hdr.restoration.unit_size[(plane != 0) as usize];
-    let unit_size = (1 as i32) << unit_size_log2;
+    let unit_size = 1_i32 << unit_size_log2;
     let half_unit_size = unit_size >> 1;
     let max_unit_size = unit_size + half_unit_size;
 
@@ -188,7 +188,7 @@ fn lr_sbrow<BD: BitDepth>(
     let mut bit = false;
     while x + max_unit_size <= w {
         let next_x = x + unit_size;
-        let next_u_idx = unit_idx + (next_x >> shift_hor - 1 & 1);
+        let next_u_idx = unit_idx + (next_x >> (shift_hor - 1) & 1);
         lr[!bit as usize] = *f.lf.lr_mask[(sb_idx + (next_x >> shift_hor)) as usize].lr
             [plane as usize][next_u_idx as usize]
             .try_read()
@@ -254,9 +254,9 @@ pub(crate) fn rav1d_lr_sbrow<BD: BitDepth>(
     if restore_planes.contains(LrRestorePlanes::Y) {
         let h = f.sr_cur.p.p.h;
         let w = f.sr_cur.p.p.w;
-        let next_row_y = (sby + 1) << 6 + seq_hdr.sb128;
+        let next_row_y = (sby + 1) << (6 + seq_hdr.sb128);
         let row_h = cmp::min(next_row_y - 8 * not_last, h);
-        let y_stripe = (sby << 6 + seq_hdr.sb128) - offset_y;
+        let y_stripe = (sby << (6 + seq_hdr.sb128)) - offset_y;
         lr_sbrow::<BD>(
             c,
             f,
@@ -271,12 +271,12 @@ pub(crate) fn rav1d_lr_sbrow<BD: BitDepth>(
     if restore_planes.intersects(LrRestorePlanes::UV) {
         let ss_ver = (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
         let ss_hor = (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as i32;
-        let h = f.sr_cur.p.p.h + ss_ver >> ss_ver;
-        let w = f.sr_cur.p.p.w + ss_hor >> ss_hor;
-        let next_row_y = (sby + 1) << 6 - ss_ver + seq_hdr.sb128 as i32;
+        let h = (f.sr_cur.p.p.h + ss_ver) >> ss_ver;
+        let w = (f.sr_cur.p.p.w + ss_hor) >> ss_hor;
+        let next_row_y = (sby + 1) << (6 - ss_ver + seq_hdr.sb128 as i32);
         let row_h = cmp::min(next_row_y - (8 >> ss_ver) * not_last, h);
         let offset_uv = offset_y >> ss_ver;
-        let y_stripe = (sby << 6 - ss_ver + seq_hdr.sb128 as i32) - offset_uv;
+        let y_stripe = (sby << (6 - ss_ver + seq_hdr.sb128 as i32)) - offset_uv;
         if restore_planes.contains(LrRestorePlanes::U) {
             lr_sbrow::<BD>(
                 c,

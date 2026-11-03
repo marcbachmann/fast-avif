@@ -27,7 +27,7 @@ static DIV_LUT: [u16; 257] = [
 #[inline]
 fn iclip_wmp(v: i32) -> i32 {
     let cv = iclip(v, i16::MIN.into(), i16::MAX.into());
-    apply_sign(cv.abs() + 32 >> 6, cv) * (1 << 6)
+    apply_sign((cv.abs() + 32) >> 6, cv) * (1 << 6)
 }
 
 #[inline]
@@ -35,9 +35,9 @@ fn resolve_divisor_32(d: u32) -> (i32, i32) {
     let shift = ulog2(d);
     let e = d - (1 << shift);
     let f = if shift > 8 {
-        e + (1 << shift - 9) >> shift - 8
+        (e + (1 << (shift - 9))) >> (shift - 8)
     } else {
-        e << 8 - shift
+        e << (8 - shift)
     };
     // Use f as lookup into the precomputed table of multipliers
     (shift + 14, DIV_LUT[f as usize] as i32)
@@ -53,14 +53,14 @@ pub(crate) fn rav1d_get_shear_params(wm: &Rav1dWarpedMotionParams) -> bool {
     let alpha = iclip_wmp(mat[2] - 0x10000) as i16;
     let beta = iclip_wmp(mat[3]) as i16;
 
-    let (shift, y) = resolve_divisor_32((mat[2]).abs() as u32);
+    let (shift, y) = resolve_divisor_32((mat[2]).unsigned_abs());
     let y = apply_sign(y, mat[2]);
     let v1 = mat[4] as i64 * 0x10000 * y as i64;
     let rnd = 1 << shift >> 1;
-    let gamma = iclip_wmp(apply_sign64((v1.abs() + rnd as i64 >> shift) as i32, v1)) as i16;
+    let gamma = iclip_wmp(apply_sign64(((v1.abs() + rnd as i64) >> shift) as i32, v1)) as i16;
     let v2 = mat[3] as i64 * mat[4] as i64 * y as i64;
     let delta =
-        iclip_wmp(mat[5] - apply_sign64((v2.abs() + rnd as i64 >> shift) as i32, v2) - 0x10000)
+        iclip_wmp(mat[5] - apply_sign64(((v2.abs() + rnd as i64) >> shift) as i32, v2) - 0x10000)
             as i16;
     wm.abcd.set([alpha, beta, gamma, delta]);
 
@@ -72,9 +72,9 @@ fn resolve_divisor_64(d: u64) -> (i32, i32) {
     let shift = u64log2(d);
     let e = d - (1 << shift);
     let f = if shift > 8 {
-        e + (1 << shift - 9) >> shift - 8
+        (e + (1 << (shift - 9))) >> (shift - 8)
     } else {
-        e << 8 - shift
+        e << (8 - shift)
     };
     // Use f as lookup into the precomputed table of multipliers
     (shift + 14, DIV_LUT[f as usize] as i32)
@@ -82,13 +82,13 @@ fn resolve_divisor_64(d: u64) -> (i32, i32) {
 
 fn get_mult_shift_ndiag(px: i64, idet: i32, shift: i32) -> i32 {
     let v1 = px * idet as i64;
-    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as i32, v1);
+    let v2 = apply_sign64(((v1.abs() + (1 << shift >> 1)) >> shift) as i32, v1);
     iclip(v2, -0x1fff, 0x1fff)
 }
 
 fn get_mult_shift_diag(px: i64, idet: i32, shift: i32) -> i32 {
     let v1 = px * idet as i64;
-    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as i32, v1);
+    let v2 = apply_sign64(((v1.abs() + (1 << shift >> 1)) >> shift) as i32, v1);
     iclip(v2, 0xe001, 0x11fff)
 }
 
@@ -147,13 +147,13 @@ pub(crate) fn rav1d_find_affine_int(
         let sx = pts[0][0] - sux;
         let sy = pts[0][1] - suy;
         if (sx - dx).abs() < 256 && (sy - dy).abs() < 256 {
-            a[0][0] += (sx * sx >> 2) + sx * 2 + 8;
-            a[0][1] += (sx * sy >> 2) + sx + sy + 4;
-            a[1][1] += (sy * sy >> 2) + sy * 2 + 8;
-            bx[0] += (sx * dx >> 2) + sx + dx + 8;
-            bx[1] += (sy * dx >> 2) + sy + dx + 4;
-            by[0] += (sx * dy >> 2) + sx + dy + 4;
-            by[1] += (sy * dy >> 2) + sy + dy + 8;
+            a[0][0] += ((sx * sx) >> 2) + sx * 2 + 8;
+            a[0][1] += ((sx * sy) >> 2) + sx + sy + 4;
+            a[1][1] += ((sy * sy) >> 2) + sy * 2 + 8;
+            bx[0] += ((sx * dx) >> 2) + sx + dx + 8;
+            bx[1] += ((sy * dx) >> 2) + sy + dx + 4;
+            by[0] += ((sx * dy) >> 2) + sx + dy + 4;
+            by[1] += ((sy * dy) >> 2) + sy + dy + 8;
         }
     }
 
@@ -162,7 +162,7 @@ pub(crate) fn rav1d_find_affine_int(
     if det == 0 {
         return true;
     }
-    let (mut shift, idet) = resolve_divisor_64(det.abs() as u64);
+    let (mut shift, idet) = resolve_divisor_64(det.unsigned_abs());
     let mut idet = apply_sign64(idet, det);
     shift -= 16;
     if shift < 0 {

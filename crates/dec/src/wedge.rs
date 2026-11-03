@@ -226,7 +226,7 @@ const fn init_chroma<const LEN_LUMA: usize, const LEN_CHROMA: usize>(
             if ss_ver != 0 {
                 sum += luma[luma_off + w + x] as u16 + luma[luma_off + w + x + 1] as u16 + 1;
             }
-            chroma[chroma_off + (x >> 1)] = (sum - sign >> 1 + ss_ver) as u8;
+            chroma[chroma_off + (x >> 1)] = ((sum - sign) >> (1 + ss_ver)) as u8;
         });
         luma_off += w << ss_ver;
         chroma_off += w >> 1;
@@ -265,8 +265,8 @@ impl<const LEN_444: usize, const LEN_422: usize, const LEN_420: usize>
                 &master[cb[n].direction as usize],
                 w,
                 h,
-                32 - (w * cb[n].x_offset as usize >> 3),
-                32 - (h * cb[n].y_offset as usize >> 3),
+                32 - ((w * cb[n].x_offset as usize) >> 3),
+                32 - ((h * cb[n].y_offset as usize) >> 3),
             );
         });
         const_for!(n in 0..16 => {
@@ -371,7 +371,7 @@ const fn build_master() -> [[[u8; 64]; 64]; WedgeDirectionType::COUNT] {
     master
 }
 
-pub static DAV1D_WEDGE_MASKS: [[[[&'static [u8]; 16]; 2]; 3]; BlockSize::COUNT] = {
+pub static DAV1D_WEDGE_MASKS: [[[[&[u8]; 16]; 2]; 3]; BlockSize::COUNT] = {
     use BlockSize::*;
 
     const MASTER: [[[u8; 64]; 64]; WedgeDirectionType::COUNT] = build_master();
@@ -456,7 +456,7 @@ static II_NONDC_MASK_4X8: Align32<[[u8; 4 * 8]; N_II_PRED_MODES]> =
 static II_NONDC_MASK_4X4: Align16<[[u8; 4 * 4]; N_II_PRED_MODES]> =
     Align16(build_nondc_ii_masks(4, 4, 8));
 
-pub static DAV1D_II_MASKS: [[[&'static [u8]; InterIntraPredMode::COUNT]; 3]; BlockSize::COUNT] = {
+pub static DAV1D_II_MASKS: [[[&[u8]; InterIntraPredMode::COUNT]; 3]; BlockSize::COUNT] = {
     use BlockSize::*;
     use InterIntraPredMode::*;
 

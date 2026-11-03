@@ -101,7 +101,7 @@ impl DerefMut for MsacContext {
 impl MsacContext {
     #[inline]
     pub fn data(&self) -> &[u8] {
-        &**self.data.as_ref().unwrap()
+        self.data.as_ref().unwrap()
     }
 
     #[inline]
@@ -446,7 +446,7 @@ fn rav1d_msac_decode_bool_rust<S: Ec>(s: &mut S, f: u32) -> bool {
     let r = s.rng();
     let dif = s.dif();
     debug_assert!(dif >> (EC_WIN_SIZE - 16) < r as EcWin);
-    let v = ((r >> 8) * (f >> EC_PROB_SHIFT) >> (7 - EC_PROB_SHIFT)) + EC_MIN_PROB;
+    let v = (((r >> 8) * (f >> EC_PROB_SHIFT)) >> (7 - EC_PROB_SHIFT)) + EC_MIN_PROB;
     let (bit, dif, v) = split_at(dif, r, v);
     ctx_norm(s, dif, v);
     bit
@@ -499,7 +499,7 @@ fn rav1d_msac_decode_symbol_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16], n_symb
         v = r * ((cdf[val as usize] >> EC_PROB_SHIFT) as u32);
         v >>= 7 - EC_PROB_SHIFT;
         v += EC_MIN_PROB * ((n_symbols as u32) - val);
-        if !(c < v) {
+        if c >= v {
             break;
         }
         val += 1;
@@ -515,7 +515,7 @@ fn rav1d_msac_decode_symbol_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16], n_symb
         let rate = 4 + (count >> 4) + (n_symbols > 2) as u16;
         let val = val as usize;
         for cdf in &mut cdf[..val] {
-            *cdf += (1 << 15) - *cdf >> rate;
+            *cdf += ((1 << 15) - *cdf) >> rate;
         }
         for cdf in &mut cdf[val..n_symbols as usize] {
             *cdf -= *cdf >> rate;
@@ -545,7 +545,7 @@ fn rav1d_msac_decode_symbol_adapt_unrolled<S: Ec, const N: usize>(
     let mut val = 0;
     for i in 0..N {
         let v = if i < n {
-            (r * (cdf[i] >> EC_PROB_SHIFT) as u32 >> (7 - EC_PROB_SHIFT))
+            ((r * (cdf[i] >> EC_PROB_SHIFT) as u32) >> (7 - EC_PROB_SHIFT))
                 + EC_MIN_PROB * (n - i) as u32
         } else {
             0
@@ -565,7 +565,7 @@ fn rav1d_msac_decode_symbol_adapt_unrolled<S: Ec, const N: usize>(
         for i in 0..N {
             if i < n {
                 let p = cdf[i];
-                let (up, down) = (p + ((1 << 15) - p >> rate), p - (p >> rate));
+                let (up, down) = (p + (((1 << 15) - p) >> rate), p - (p >> rate));
                 cdf[i] = if i < val { up } else { down };
             }
         }
@@ -779,7 +779,7 @@ fn rav1d_msac_decode_bool_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16; 2]) -> bo
         let rate = 4 + (count >> 4);
         // Both steps, then a select: a branch on the decoded bit mispredicts as often as it is random.
         let (up, down) = (
-            cdf[0] + ((1 << 15) - cdf[0] >> rate),
+            cdf[0] + (((1 << 15) - cdf[0]) >> rate),
             cdf[0] - (cdf[0] >> rate),
         );
         cdf[0] = if bit { up } else { down };
@@ -901,7 +901,7 @@ pub fn rav1d_msac_decode_symbol_adapt4(s: &mut MsacContext, cdf: &mut [u16], n_s
     debug_assert!(n_symbols < 4);
     let ret = decode_symbol_adapt::<_, 4>(s, cdf, n_symbols);
     debug_assert!(ret < 4);
-    ret as u8 % 4
+    ret % 4
 }
 
 /// Return value is in the range `0..=n_symbols`.
@@ -912,7 +912,7 @@ pub fn rav1d_msac_decode_symbol_adapt8(s: &mut MsacContext, cdf: &mut [u16], n_s
     debug_assert!(n_symbols < 8);
     let ret = decode_symbol_adapt::<_, 8>(s, cdf, n_symbols);
     debug_assert!(ret < 8);
-    ret as u8 % 8
+    ret % 8
 }
 
 /// Return value is in the range `0..=n_symbols`.
@@ -923,7 +923,7 @@ pub fn rav1d_msac_decode_symbol_adapt16(s: &mut MsacContext, cdf: &mut [u16], n_
     debug_assert!(n_symbols < 16);
     let ret = decode_symbol_adapt::<_, 16>(s, cdf, n_symbols);
     debug_assert!(ret < 16);
-    ret as u8 % 16
+    ret % 16
 }
 
 #[cfg_attr(not(target_arch = "x86_64"), inline)]

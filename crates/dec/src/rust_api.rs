@@ -498,7 +498,7 @@ impl Picture {
     /// # Panics
     ///
     /// On a picture from [`Decoder::rows_picture`], whose planes may still be written.
-    pub fn plane<'a>(&'a self, component: PlanarImageComponent) -> &'a [u8] {
+    pub fn plane(&self, component: PlanarImageComponent) -> &[u8] {
         assert!(
             !self.by_rows,
             "a picture decoded by rows is read through Picture::plane_ptr"

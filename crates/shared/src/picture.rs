@@ -563,7 +563,7 @@ impl Rav1dPicture {
         array::from_fn(|i| {
             let data = &data[has_chroma as usize * i];
             let ss_ver = layout == Rav1dPixelLayout::I420 && i != 0;
-            data.with_offset() + (y as isize * data.pixel_stride::<BD>() >> ss_ver as u8)
+            data.with_offset() + ((y as isize * data.pixel_stride::<BD>()) >> ss_ver as u8)
         })
     }
 }
@@ -909,7 +909,7 @@ fn place(
 impl Rav1dPictureParameters {
     pub fn pic_len(&self, [y_stride, uv_stride]: [isize; 2]) -> [usize; 2] {
         let ss_ver = (self.layout == Rav1dPixelLayout::I420) as u8;
-        let aligned_h = self.h as usize + 127 & !127;
+        let aligned_h = (self.h as usize + 127) & !127;
         let y_sz = y_stride as usize * aligned_h;
         let uv_sz = uv_stride as usize * (aligned_h >> ss_ver);
         [y_sz, uv_sz]
@@ -934,7 +934,7 @@ pub fn alloc_picture_data(
     let picture = PictureParameters {
         width: w as u32,
         height: h as u32,
-        bpc: p.bpc as u8,
+        bpc: p.bpc,
         layout: p.layout,
     };
     let Ok(Ok(PictureBuffer { memory, layout })) =

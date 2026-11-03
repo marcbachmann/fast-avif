@@ -1046,11 +1046,11 @@ fn add_dc<BD: BitDepth, const W: usize, const H: usize>(
 ) {
     let shift = row_shift(W, H);
     if W * 2 == H || H * 2 == W {
-        dc = dc * 181 + 128 >> 8;
+        dc = (dc * 181 + 128) >> 8;
     }
-    dc = dc * 181 + 128 >> 8;
-    dc = dc + (1 << shift >> 1) >> shift;
-    dc = dc * 181 + 128 + 2048 >> 12;
+    dc = (dc * 181 + 128) >> 8;
+    dc = (dc + (1 << shift >> 1)) >> shift;
+    dc = (dc * 181 + 128 + 2048) >> 12;
     let stride = dst.pixel_stride::<BD>();
     if BD::BITDEPTH == 8 {
         let dc = I16x8::splat(dc as i16);

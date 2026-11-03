@@ -41,8 +41,8 @@ fn inv_txfm_add<BD: BitDepth>(
 ) {
     let bitdepth_max = bd.bitdepth_max().as_::<i32>();
 
-    assert!(w >= 4 && w <= 64);
-    assert!(h >= 4 && h <= 64);
+    assert!((4..=64).contains(&w));
+    assert!((4..=64).contains(&h));
     assert!(eob >= 0);
 
     let is_rect2 = w * 2 == h || h * 2 == w;
@@ -52,11 +52,11 @@ fn inv_txfm_add<BD: BitDepth>(
         let mut dc = coeff[0].as_::<i32>();
         coeff[0] = 0.as_();
         if is_rect2 {
-            dc = dc * 181 + 128 >> 8;
+            dc = (dc * 181 + 128) >> 8;
         }
-        dc = dc * 181 + 128 >> 8;
-        dc = dc + rnd >> shift;
-        dc = dc * 181 + 128 + 2048 >> 12;
+        dc = (dc * 181 + 128) >> 8;
+        dc = (dc + rnd) >> shift;
+        dc = (dc * 181 + 128 + 2048) >> 12;
         for y in 0..h {
             let dst = dst + (y as isize * dst.pixel_stride::<BD>());
             let dst = &mut *dst.slice_mut::<BD>(w);
@@ -72,15 +72,11 @@ fn inv_txfm_add<BD: BitDepth>(
 
     let coeff = &mut coeff[..sh * sw];
 
-    let row_clip_min;
-    let col_clip_min;
-    if BD::BITDEPTH == 8 {
-        row_clip_min = i16::MIN as i32;
-        col_clip_min = i16::MIN as i32;
+    let (row_clip_min, col_clip_min) = if BD::BITDEPTH == 8 {
+        (i16::MIN as i32, i16::MIN as i32)
     } else {
-        row_clip_min = (!bitdepth_max) << 7;
-        col_clip_min = (!bitdepth_max) << 5;
-    }
+        ((!bitdepth_max) << 7, (!bitdepth_max) << 5)
+    };
     let row_clip_max = !row_clip_min;
     let col_clip_max = !col_clip_min;
 
@@ -89,7 +85,7 @@ fn inv_txfm_add<BD: BitDepth>(
     for y in 0..sh {
         if is_rect2 {
             for x in 0..sw {
-                c[x] = coeff[y + x * sh].as_::<i32>() * 181 + 128 >> 8;
+                c[x] = (coeff[y + x * sh].as_::<i32>() * 181 + 128) >> 8;
             }
         } else {
             for x in 0..sw {
@@ -102,7 +98,7 @@ fn inv_txfm_add<BD: BitDepth>(
 
     coeff.fill(0.into());
     for i in 0..w * sh {
-        tmp[i] = iclip(tmp[i] + rnd >> shift, col_clip_min, col_clip_max);
+        tmp[i] = iclip((tmp[i] + rnd) >> shift, col_clip_min, col_clip_max);
     }
 
     for x in 0..w {
@@ -118,7 +114,7 @@ fn inv_txfm_add<BD: BitDepth>(
         let dst = dst + (y as isize * dst.pixel_stride::<BD>());
         let dst = &mut *dst.slice_mut::<BD>(w);
         for x in 0..w {
-            dst[x] = bd.iclip_pixel(dst[x].as_::<i32>() + (tmp[y * w + x] + 8 >> 4));
+            dst[x] = bd.iclip_pixel(dst[x].as_::<i32>() + ((tmp[y * w + x] + 8) >> 4));
         }
     }
 }
@@ -500,9 +496,9 @@ impl Rav1dInvTxfmDSPContext {
                     && ($w >= 16 || $h >= if BD::BITDEPTH == 8 { 16 } else { 8 } || $w * $h == 64);
                 $(
                     self.itxfm_add[tx][$type as usize] = if wide {
-                        itxfm::Fn::new(inv_txfm_add_simd_erased::<$w, $h, $type, BD, { ($w + 7) / 8 }, true>)
+                        itxfm::Fn::new(inv_txfm_add_simd_erased::<$w, $h, $type, BD, { usize::div_ceil($w, 8) }, true>)
                     } else {
-                        itxfm::Fn::new(inv_txfm_add_simd_erased::<$w, $h, $type, BD, { ($w + 7) / 8 }, false>)
+                        itxfm::Fn::new(inv_txfm_add_simd_erased::<$w, $h, $type, BD, { usize::div_ceil($w, 8) }, false>)
                     };
                 )*
             }};
@@ -1063,7 +1059,6 @@ mod tests {
                     })
                     .map(|c| (c * scale).as_::<BD::Coef>())
                     .collect();
-                let eob = eob as i32;
                 let mut line = format!("{w}x{h} type {t:2}:");
                 for (name, dsp) in &dsps {
                     let f = &dsp.itxfm_add[tx as usize][t as usize];

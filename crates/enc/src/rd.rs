@@ -130,7 +130,7 @@ const COST: [u16; 1025] = {
 /// Cost in 1/512 bits of a probability `p`/32768.
 #[inline]
 pub fn cost(p: u32) -> u32 {
-    COST[(p.clamp(1, 32768) + 16 >> 5) as usize] as u32
+    COST[((p.clamp(1, 32768) + 16) >> 5) as usize] as u32
 }
 
 impl Sink for Counter {

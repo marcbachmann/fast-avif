@@ -207,7 +207,7 @@ static SCAN_32X32: Align32<[Scan; 1024]> = Align32(Scan::new_array([
     990, 1021, 1022, 991, 1023,
 ]));
 
-pub static DAV1D_SCANS: [&'static [Scan]; TxfmSize::COUNT] = [
+pub static DAV1D_SCANS: [&[Scan]; TxfmSize::COUNT] = [
     &SCAN_4X4.0,
     &SCAN_8X8.0,
     &SCAN_16X16.0,

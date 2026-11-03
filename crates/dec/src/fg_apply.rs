@@ -39,7 +39,7 @@ fn generate_scaling<BD: BitDepth>(bd: BD, points: &[[u8; 2]]) -> BD::Scaling {
         let delta = dy * ((0x10000 + (dx >> 1)) / dx) as isize;
         let mut d = 0x8000;
         for x in 0..dx {
-            scaling[bx + x << shift_x] = (by + (d >> 16)) as u8;
+            scaling[(bx + x) << shift_x] = (by + (d >> 16)) as u8;
             d += delta;
         }
     }
@@ -58,7 +58,7 @@ fn generate_scaling<BD: BitDepth>(bd: BD, points: &[[u8; 2]]) -> BD::Scaling {
             let ex = (p1[0] as usize) << shift_x;
             let dx = ex - bx;
             for x in (0..dx).step_by(pad) {
-                let range = scaling[bx + x + pad] as isize - scaling[(bx + x) as usize] as isize;
+                let range = scaling[bx + x + pad] as isize - scaling[bx + x] as isize;
                 let mut r = rnd as isize;
                 for n in 1..pad {
                     r += range;
@@ -139,7 +139,7 @@ pub(crate) fn rav1d_apply_grain_row<BD: BitDepth>(
 
     let ss_y = (r#in.p.layout == Rav1dPixelLayout::I420) as usize;
     let ss_x = (r#in.p.layout != Rav1dPixelLayout::I444) as usize;
-    let cpw = w + ss_x >> ss_x;
+    let cpw = (w + ss_x) >> ss_x;
     let is_id = seq_hdr.mtrx == Rav1dMatrixCoefficients::Identity;
     let bitdepth_max = (1 << out.p.bpc) - 1;
     let bd = BD::from_max(bitdepth_max);
@@ -163,7 +163,7 @@ pub(crate) fn rav1d_apply_grain_row<BD: BitDepth>(
         return;
     }
 
-    let bh = cmp::min(h - row * FG_BLOCK_SIZE, FG_BLOCK_SIZE) + ss_y >> ss_y;
+    let bh = (cmp::min(h - row * FG_BLOCK_SIZE, FG_BLOCK_SIZE) + ss_y) >> ss_y;
 
     // extend padding pixels
     if out.p.w as usize & ss_x != 0 {
@@ -224,7 +224,7 @@ pub(crate) fn rav1d_apply_grain<BD: BitDepth>(
     r#in: &Rav1dPicture,
 ) {
     let mut grain = Default::default();
-    let rows = (out.p.h as usize + FG_BLOCK_SIZE - 1) / FG_BLOCK_SIZE;
+    let rows = (out.p.h as usize).div_ceil(FG_BLOCK_SIZE);
 
     rav1d_prep_grain::<BD>(dsp, out, r#in, &mut grain);
     for row in 0..rows {

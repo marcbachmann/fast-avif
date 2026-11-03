@@ -326,7 +326,7 @@ fn mask_edges_intra(
 
     CaseSet::<32, true>::many(
         [(a, thl4c), (l, twl4c)],
-        [w4 as usize, h4 as usize],
+        [w4, h4],
         [0, 0],
         |case, (dir, tl4c)| {
             case.set(dir, tl4c);
@@ -409,7 +409,7 @@ fn mask_edges_chroma(
 
     CaseSet::<32, true>::many(
         [(a, thl4c), (l, twl4c)],
-        [cw4 as usize, ch4 as usize],
+        [cw4, ch4],
         [0, 0],
         |case, (dir, tl4c)| {
             case.set(dir, tl4c);
@@ -472,11 +472,11 @@ pub(crate) fn rav1d_create_lf_mask_intra(
     let ss_ver = (layout == Rav1dPixelLayout::I420) as usize;
     let ss_hor = (layout != Rav1dPixelLayout::I444) as usize;
     let cbw4 = cmp::min(
-        (iw + ss_hor >> ss_hor) - (bx >> ss_hor),
+        ((iw + ss_hor) >> ss_hor) - (bx >> ss_hor),
         (b_dim[0] + ss_hor) >> ss_hor,
     );
     let cbh4 = cmp::min(
-        (ih + ss_ver >> ss_ver) - (by >> ss_ver),
+        ((ih + ss_ver) >> ss_ver) - (by >> ss_ver),
         (b_dim[1] + ss_ver) >> ss_ver,
     );
 
@@ -583,11 +583,11 @@ pub(crate) fn rav1d_create_lf_mask_inter(
     let ss_ver = (layout == Rav1dPixelLayout::I420) as usize;
     let ss_hor = (layout != Rav1dPixelLayout::I444) as usize;
     let cbw4 = cmp::min(
-        (iw + ss_hor >> ss_hor) - (bx >> ss_hor),
+        ((iw + ss_hor) >> ss_hor) - (bx >> ss_hor),
         (b_dim[0] + ss_hor) >> ss_hor,
     );
     let cbh4 = cmp::min(
-        (ih + ss_ver >> ss_ver) - (by >> ss_ver),
+        ((ih + ss_ver) >> ss_ver) - (by >> ss_ver),
         (b_dim[1] + ss_ver) >> ss_ver,
     );
 
@@ -631,7 +631,7 @@ pub fn rav1d_calc_eih(lim_lut: &mut Av1FilterLUT, filter_sharpness: u8) {
         let mut limit = level;
 
         if sharp > 0 {
-            limit >>= sharp + 3 >> 2;
+            limit >>= (sharp + 3) >> 2;
             limit = cmp::min(limit, 9 - sharp);
         }
         limit = cmp::max(limit, 1);
@@ -640,7 +640,7 @@ pub fn rav1d_calc_eih(lim_lut: &mut Av1FilterLUT, filter_sharpness: u8) {
         lim_lut.e[level as usize] = 2 * (level + 2) + limit;
     }
     let sharp = sharp as u64;
-    lim_lut.sharp[0] = sharp + 3 >> 2;
+    lim_lut.sharp[0] = (sharp + 3) >> 2;
     lim_lut.sharp[1] = if sharp != 0 { 9 - sharp } else { 0xff };
 }
 

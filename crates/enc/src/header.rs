@@ -226,7 +226,7 @@ impl Tiling {
         let min_log2_cols = tile_log2(64, sbw);
         let max_log2_cols = tile_log2(1, sbw.min(64));
         let max_log2_rows = tile_log2(1, sbh.min(64));
-        let min_log2_tiles = tile_log2(4096 * 2304 >> 12, sbw * sbh).max(min_log2_cols);
+        let min_log2_tiles = tile_log2((4096 * 2304) >> 12, sbw * sbh).max(min_log2_cols);
         let log2_cols = log2_cols.clamp(min_log2_cols, max_log2_cols);
         let min_log2_rows = min_log2_tiles.saturating_sub(log2_cols);
         let log2_rows = min_log2_rows;
@@ -237,8 +237,8 @@ impl Tiling {
             max_log2_cols,
             min_log2_rows,
             max_log2_rows,
-            tile_w: 1 + (sbw - 1 >> log2_cols),
-            tile_h: 1 + (sbh - 1 >> log2_rows),
+            tile_w: 1 + ((sbw - 1) >> log2_cols),
+            tile_h: 1 + ((sbh - 1) >> log2_rows),
             sbw,
             sbh,
         }

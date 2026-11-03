@@ -126,8 +126,7 @@ pub fn get_uv_inter_txtp(uvt_dim: &TxfmInfo, ytxtp: TxfmType) -> TxfmType {
         return if ytxtp == IDTX { IDTX } else { DCT_DCT };
     }
     if uvt_dim.min == TxfmSize::S16x16 as _
-        && ((1 << ytxtp as u8)
-            & ((1 << H_FLIPADST) | (1 << V_FLIPADST) | (1 << H_ADST) | (1 << V_ADST)))
+        && ((1 << ytxtp) & ((1 << H_FLIPADST) | (1 << V_FLIPADST) | (1 << H_ADST) | (1 << V_ADST)))
             != 0
     {
         return DCT_DCT;
@@ -245,7 +244,7 @@ pub fn get_comp_dir_ctx(
         let l_ref0 = *l.r#ref[0].index(yb4 as usize);
 
         if !a_comp && !l_comp {
-            return 1 + 2 * ((a_ref0 >= 4) == (l_ref0 >= 4)) as u8;
+            1 + 2 * ((a_ref0 >= 4) == (l_ref0 >= 4)) as u8
         } else if !a_comp || !l_comp {
             let edge = if a_comp { &a } else { &l };
             let off = if a_comp { xb4 } else { yb4 };
@@ -253,10 +252,10 @@ pub fn get_comp_dir_ctx(
             if !has_uni_comp(edge, off) {
                 return 1;
             }
-            return 3 + ((a_ref0 >= 4) == (l_ref0 >= 4)) as u8;
+            3 + ((a_ref0 >= 4) == (l_ref0 >= 4)) as u8
         } else {
-            let a_uni = has_uni_comp(&a, xb4);
-            let l_uni = has_uni_comp(&l, yb4);
+            let a_uni = has_uni_comp(a, xb4);
+            let l_uni = has_uni_comp(l, yb4);
 
             if !a_uni && !l_uni {
                 return 0;
@@ -264,7 +263,7 @@ pub fn get_comp_dir_ctx(
             if !a_uni || !l_uni {
                 return 2;
             }
-            return 3 + ((a_ref0 == 4) == (l_ref0 == 4)) as u8;
+            3 + ((a_ref0 == 4) == (l_ref0 == 4)) as u8
         }
     } else if have_top || have_left {
         let edge = if have_left { l } else { a };
@@ -276,10 +275,10 @@ pub fn get_comp_dir_ctx(
         if edge.comp_type.index(off as usize).is_none() {
             return 2;
         }
-        return 4 * has_uni_comp(&edge, off) as u8;
+        4 * has_uni_comp(edge, off) as u8
     } else {
-        return 2;
-    };
+        2
+    }
 }
 
 #[inline]
@@ -287,9 +286,9 @@ pub fn get_poc_diff(order_hint_n_bits: u8, poc0: i32, poc1: i32) -> i32 {
     if order_hint_n_bits == 0 {
         return 0;
     }
-    let mask = 1 << order_hint_n_bits - 1;
+    let mask = 1 << (order_hint_n_bits - 1);
     let diff = poc0 - poc1;
-    return (diff & mask - 1) - (diff & mask);
+    (diff & (mask - 1)) - (diff & mask)
 }
 
 #[inline]
@@ -599,7 +598,7 @@ fn fix_int_mv_precision(mv: &mut Mv) {
 pub fn fix_mv_precision(hdr: &Rav1dFrameHeader, mv: &mut Mv) {
     if hdr.force_integer_mv {
         fix_int_mv_precision(mv);
-    } else if !(*hdr).hp {
+    } else if !hdr.hp {
         mv.x = (mv.x - (mv.x >> 15)) & !1;
         mv.y = (mv.y - (mv.y >> 15)) & !1;
     }
@@ -641,13 +640,13 @@ pub fn get_gmv_2d(
     let shift = 16 - (3 - !hdr.hp as i32);
     let round = 1 << shift >> 1;
     let mut res = Mv {
-        y: apply_sign(yc.abs() + round >> shift << !hdr.hp as i32, yc) as i16,
-        x: apply_sign(xc.abs() + round >> shift << !hdr.hp as i32, xc) as i16,
+        y: apply_sign((yc.abs() + round) >> shift << !hdr.hp as i32, yc) as i16,
+        x: apply_sign((xc.abs() + round) >> shift << !hdr.hp as i32, xc) as i16,
     };
     if hdr.force_integer_mv {
         fix_int_mv_precision(&mut res);
     }
-    return res;
+    res
 }
 
 trait ReadInt {
@@ -790,8 +789,8 @@ pub fn get_skip_ctx(
 
 #[inline]
 pub fn get_dc_sign_ctx(tx: TxfmSize, a: &[u8], l: &[u8]) -> u32 {
-    let mask = 0xc0c0c0c0c0c0c0c0 as u64;
-    let mul = 0x101010101010101 as u64;
+    let mask = 0xc0c0c0c0c0c0c0c0_u64;
+    let mul = 0x101010101010101_u64;
 
     use TxfmSize::*;
     let s = match tx {

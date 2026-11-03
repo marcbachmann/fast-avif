@@ -231,7 +231,7 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
         let sz = 4 * th as usize;
         let left = &mut topleft_out[topleft_out_offset - sz..];
         if have_left {
-            let px_have = cmp::min(sz, (h - y << 2) as usize);
+            let px_have = cmp::min(sz, ((h - y) << 2) as usize);
             for i in 0..px_have {
                 left[sz - 1 - i] = *(dst + (i as isize * stride - 1)).index::<BD>();
             }
@@ -260,7 +260,7 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
                 edge_flags.contains(EdgeFlags::I444_LEFT_HAS_BOTTOM)
             };
             if have_bottomleft {
-                let px_have = cmp::min(sz, (h - y - th << 2) as usize);
+                let px_have = cmp::min(sz, ((h - y - th) << 2) as usize);
                 for i in 0..px_have {
                     bottom_left[sz - 1 - i] =
                         *(dst + ((sz + i) as isize * stride - 1)).index::<BD>();
@@ -280,7 +280,7 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
         let sz = 4 * tw as usize;
         let top = &mut topleft_out[topleft_out_offset + 1..];
         if have_top {
-            let px_have = cmp::min(sz, (w - x << 2) as usize);
+            let px_have = cmp::min(sz, ((w - x) << 2) as usize);
             BD::pixel_copy(top, &dst_top[have_left as usize..], px_have);
             if px_have < sz {
                 let fill_value = top[px_have - 1];
@@ -308,7 +308,7 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
             };
             if have_topright {
                 let top_right = &mut top[sz..];
-                let px_have = cmp::min(sz, (w - x - tw << 2) as usize);
+                let px_have = cmp::min(sz, ((w - x - tw) << 2) as usize);
                 BD::pixel_copy(top_right, &dst_top[sz + have_left as usize..], px_have);
                 if px_have < sz {
                     let fill_value = top_right[px_have - 1];
@@ -335,12 +335,12 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
             (1 << bitdepth >> 1).as_::<BD::Pixel>()
         };
         if mode == Z2_PRED && tw + th >= 6 && filter_edge != 0 {
-            corner[1] = ((corner[0].as_::<i32>() + corner[2].as_::<i32>()) * 5
+            corner[1] = (((corner[0].as_::<i32>() + corner[2].as_::<i32>()) * 5
                 + corner[1].as_::<i32>() * 6
-                + 8
+                + 8)
                 >> 4)
                 .as_::<BD::Pixel>();
         }
     }
-    return mode;
+    mode
 }
