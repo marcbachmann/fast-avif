@@ -1,0 +1,25 @@
+[package]
+name = "rav1d-shared"
+version = "1.1.0"
+edition = "2021"
+rust-version = "1.79"
+description = "What the rav1d decoder and encoder share"
+license = "BSD-2-Clause"
+publish = false
+
+[dependencies]
+atomig = { version = "0.4.0", features = ["derive"] }
+av-data = "0.4.2"
+bitflags = "2.4.0"
+libc.workspace = true
+parking_lot = "0.12.2"
+static_assertions = "1.1.0"
+strum = { version = "0.27", features = ["derive"] }
+to_method = "1.1.0"
+zerocopy = { version = "0.7.32", features = ["derive"] }
+
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+raw-cpuid = "11.0.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rav1d_itx_bisect)'] }

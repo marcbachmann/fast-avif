@@ -5,7 +5,7 @@ and one paragraph per step, newest first.
 
 ## State
 
-- Branch `encoder`. Built: range encoder, headers, every intra tool with palettes, libaom's
+- Branch `crate-split` (four crates, no C API, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
   forward transforms, the RD search with RDOQ, tune IQ (Variance Boost, SSIM λ, quantizer
   matrices, chroma delta q), deblocking and CDEF strengths searched on the decoded picture.
 - Not yet: restoration, threads, alpha and lossless parity checks.
@@ -32,12 +32,50 @@ D=/root/.cache/ld-image-processing-deps
 docker run --rm --cgroup-parent="$COMMANDQUEUE_SLICE" -v "$PWD":/work -v $D:/deps -w /work \
   -e CARGO_TARGET_DIR=/deps/target-rav1d-enc -e CARGO_HOME=/deps/cargo-home-rav1d-enc \
   -e RUSTUP_TOOLCHAIN=stable ip-build:trixie \
-  cargo test -p rav1d --profile opt-dev --features encoder --lib enc::
+  cargo test -p rav1d-enc --profile opt-dev --lib
 ```
 
 An incremental build takes about 17 s.
 
 ## Log
+
+**2026-11-02, the fork as four crates, no C API.** Branch `crate-split`: `crates/shared` (headers,
+tables, cdfs, the SIMD layer, intra prediction, the inverse transforms, msac, env, cpu, the
+filter-trial trait), `crates/dec` (the decoder, its build script with the sdot cfg), `crates/enc`
+(the encoder, on shared alone; its tests take dec as a dev-dependency) and the root `rav1d`, a facade
+with the old paths: `rav1d::enc::{Options, still, still_on}`, `parse_sequence_header`, `Decoder`,
+`include::dav1d::*`, `Spawner`. The filter search takes a `FilterTrials` (shared) implemented by
+`rav1d_dec::DecoderTrials`; the facade's `still` and `still_on` hand it over, so no build reaches a
+search without one. The C API, its `capi` feature and the transliterated CLI are gone; `tools/dav1d`
+is a conformance runner on the Rust API (IVF, Section 5, Annex B in; the planes' md5 out or
+verified) that the meson lists verify: 760 of 760. Same output: the corpus bench's streams at efforts
+0, 2, 4, 9, natural and drawn, 56 rows read, 56 identical to the base; the 760 conformance md5s
+identical. Tests: 148 passed, 16 ignored before and after (enc 55/3, dec 39/10, shared 54/3), the
+prep commit alone 148/16 and 93/13. A palette fault fails five named rav1d-enc tests (50+5+3), a
+deblocking fault two named rav1d-dec tests (37+2+10). A/B: encode level on worker pinned and on the
+laptop (111.9G against 111.8G instructions); decode level on worker, and on aarch64 the split read
++1.6% instructions until the small helpers moved to shared got `#[inline]` (a65d93db): +0.1%, cycles
+level. Build times on worker (release, bitcode only, one codegen unit; the base crate spent 46 of
+52 s in LLVM on one thread): the library alone clean 62 s before, after shared 1.4 s then dec 57 s
+beside enc 19 s; an encoder edit 62 s before, 22 s after; a decoder edit 62 s before, 81 s after
+(dec carries its own and shared's generic instantiations, 16.5k mono items against the base's 20.4k;
+enc 8.3k, shared 1.3k). The matrix harness in the alpine image against a path dependency: clean
+390 s before, 407 s after; an encoder edit 408 s before, 335 s after; a decoder edit 454 s before,
+346 s after; its own thin-LTO links of image-processing and avif-matrix stay at about 180 s of
+each. Public surface by rustdoc JSON, base 2404 items: nothing removed; changed are the eleven
+encoder functions whose `ty: u8` became `TxfmType` on main between the two readings and
+`filters::search`, which takes the trials; added are `DecoderTrials`, `FilterTrials` and the
+widened items of shared, which are `#[doc(hidden)]`. The refuter found the CLI short of the options
+the svc and vq_suite lists pass (`--oppoint`, `--alllayers`, `--decodeframetype`, `--limit=`), CI's
+clippy failing on the items the split widened to pub, and the filter-search test measuring both
+arms through `dist::sse`; all three fixed (6a917360): the 32 explicit meson entries pass beside the
+760 md5s, clippy is clean as CI runs it and on the workspace with the encoder, the test sums its
+own squared error again. Negative strides were a feature of the C API's allocator, so that CI
+step is gone. On a warm consumer build cargo rebuilds every fork crate after one encoder edit:
+the shipped files carry fresh mtimes, so this is the harness's measurement setup, not the
+workspace; the touch-rebuild figures above are what a stale tree costs, a developer's tree
+rebuilds enc, the facade and the consumers only. The capi integration tests went with the C
+API; `rust_api_rows` (16 tests, release) and the ported `uninit` stay.
 
 **2026-11-02, threads code the bytes of one thread again.** At effort 4 and up with two tile
 columns, `still_on` on threads and `still` on one thread coded a graphic to different bytes, with

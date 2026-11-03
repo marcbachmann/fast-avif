@@ -56,7 +56,6 @@ jobs:
         run: |
           .github/workflows/test.sh \
               -r target/${{ matrix.target }}/${{ matrix.build.name }}/dav1d \
-              -s target/${{ matrix.target }}/${{ matrix.build.name }}/seek_stress \
               -t ${{ matrix.build.timeout_multiplier }} \
               ${{ matrix.variant }}
       - name: copy log files
@@ -87,13 +86,13 @@ jobs:
       - name: cache rust dependencies
         uses: Swatinem/rust-cache@v2
       - name: cargo check
-        run: cargo +${{ steps.toolchain.outputs.name }} check --workspace --all-targets --features capi,encoder
+        run: cargo +${{ steps.toolchain.outputs.name }} check --workspace --all-targets --features encoder
       - name: cargo test lib
-        run: cargo +${{ steps.toolchain.outputs.name }} test --release --lib
+        run: cargo +${{ steps.toolchain.outputs.name }} test --release --workspace --lib
       - name: cargo test lib with encoder
-        run: cargo +${{ steps.toolchain.outputs.name }} test --release --lib --features encoder
+        run: cargo +${{ steps.toolchain.outputs.name }} test --release --workspace --lib --features encoder
       - name: cargo test integration tests
-        run: cargo +${{ steps.toolchain.outputs.name }} test --release --features capi --tests
+        run: cargo +${{ steps.toolchain.outputs.name }} test --release --tests
   test-on-macos-x86_64:
     runs-on: macos-15-intel # select an x86_64 image
     steps:
@@ -119,8 +118,7 @@ jobs:
       - name: meson test for x86_64-apple-darwin
         run: |
           .github/workflows/test.sh \
-              -r target/release/dav1d \
-              -s target/release/seek_stress
+              -r target/release/dav1d
       - name: copy log files
         if: ${{ !cancelled() }}
         run: |
@@ -246,12 +244,11 @@ jobs:
         run: cargo +${{ steps.toolchain.outputs.name }} clippy -- -D warnings
       - name: cargo test lib
         if: ${{ matrix.variant == '' }}
-        run: cargo +${{ steps.toolchain.outputs.name }} test --release --lib
+        run: cargo +${{ steps.toolchain.outputs.name }} test --release --workspace --lib
       - name: meson test
         run: |
           .github/workflows/test.sh \
               -r target/release/dav1d \
-              -s target/release/seek_stress \
               -t 1 \
               ${{ matrix.variant }}
       - name: upload build artifacts
@@ -290,28 +287,18 @@ jobs:
       - name: Clippy
         run: cargo +${{ steps.toolchain.outputs.name }} clippy -- -D warnings
       - name: cargo test lib
-        run: cargo +${{ steps.toolchain.outputs.name }} test --release --lib
+        run: cargo +${{ steps.toolchain.outputs.name }} test --release --workspace --lib
       - name: test ${{ matrix.build.name }} build without frame delay
         run: |
           .github/workflows/test.sh \
             -r ./target/${{ startsWith(matrix.build.name, 'release') && 'release' || matrix.build.name }}/dav1d \
-            -s ./target/${{ startsWith(matrix.build.name, 'release') && 'release' || matrix.build.name }}/seek_stress \
             -t ${{ matrix.build.timeout_multiplier }}
         # release tests run quickly so we test negative strides and frame delays
-      - name: test release build with negative stride
-        if: ${{ startsWith(matrix.build.name, 'release') }}
-        run: |
-          .github/workflows/test.sh \
-            -r ./target/release/dav1d \
-            -s ./target/release/seek_stress \
-            -t ${{ matrix.build.timeout_multiplier }} \
-            -n
       - name: test release build with frame delay of 1
         if: ${{ startsWith(matrix.build.name, 'release') }}
         run: |
           .github/workflows/test.sh \
             -r ./target/release/dav1d \
-            -s ./target/release/seek_stress \
             -t ${{ matrix.build.timeout_multiplier }} \
             -f 1
       - name: test release build with frame delay of 2
@@ -319,7 +306,6 @@ jobs:
         run: |
           .github/workflows/test.sh \
             -r ./target/release/dav1d \
-            -s ./target/release/seek_stress \
             -t ${{ matrix.build.timeout_multiplier }} \
             -f 2
       - name: copy log files

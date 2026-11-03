@@ -38,8 +38,7 @@ The following feature flags are supported:
 
 * `bitdepth_8` - Enables support for 8 bitdepth decoding.
 * `bitdepth_16` - Enables support for 10 and 12 bitdepth decoding.
-* `encoder` - The AV1 still-image encoder in `src/enc` (off by default).
-* `capi` - The `dav1d`-compatible `dav1d_*` C API, for the CLI (off by default).
+* `encoder` - The AV1 still-image encoder, the crate `crates/enc` (off by default).
 
 `bitdepth_8` and `bitdepth_16` are enabled by default. To build a version of `librav1d` with
 only one of them, use the `--no-default-features` flag in combination with the
@@ -128,9 +127,6 @@ Or:
 
 The test script accepts additional arguments to configure how tests are run:
 
-* `-s PATH` - Specify a path to the `seek_stress` binary in order to run the
-  `seek_stress` tests. This is generally in the same output directory as the
-  main `dav1d` binary, e.g. `target/release/seek_stress`.
 * `-t MULTIPLIER` - Specify a multiplier for the test timeout. Allows for tests
   to take longer to run, e.g. if running tests with a debug build.
 * `-f DELAY` - Specify a frame delay for the tests. If specified the tests will
@@ -152,6 +148,5 @@ caller's threads (`Decoder::with_spawner`), data read in place
 (`Settings::set_allocator`) and `parse_sequence_header`. See
 [`tests/rust_api_rows.rs`](tests/rust_api_rows.rs) for its use.
 
-The `dav1d`-compatible `dav1d_*` functions are behind the non-default `capi`
-feature (in [`src/capi.rs`](src/capi.rs)); only the `dav1d` CLI in
-[`tools/`](tools/) uses them.
+There is no C API. The `dav1d` CLI in [`tools/`](tools/) is the conformance runner on the
+Rust API: IVF, Section 5 and Annex B streams in, the md5 of the decoded planes out or verified.

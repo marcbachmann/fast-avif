@@ -2,21 +2,11 @@
 //! changes read memory nothing wrote.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::ffi::c_int;
 use std::hash::{DefaultHasher, Hasher};
-use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use rav1d::include::dav1d::data::Dav1dData;
-use rav1d::include::dav1d::dav1d::{Dav1dContext, Dav1dSettings};
-use rav1d::include::dav1d::headers::{DAV1D_PIXEL_LAYOUT_I400, DAV1D_PIXEL_LAYOUT_I420, DAV1D_PIXEL_LAYOUT_I444};
-use rav1d::include::dav1d::picture::Dav1dPicture;
-use rav1d::{
-    dav1d_close, dav1d_data_create, dav1d_data_unref, dav1d_decode_rows, dav1d_default_settings,
-    dav1d_get_picture, dav1d_open, dav1d_picture_unref, dav1d_send_data, dav1d_set_decode_by_rows,
-};
+use rav1d::{Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
 
 static FILL: AtomicU8 = AtomicU8::new(0);
 
@@ -47,11 +37,6 @@ unsafe impl GlobalAlloc for Filling {
 #[global_allocator]
 static GLOBAL: Filling = Filling;
 
-#[cfg(target_os = "macos")]
-const EAGAIN: i32 = -libc::EAGAIN;
-#[cfg(not(target_os = "macos"))]
-const EAGAIN: i32 = -11;
-
 fn ivf_frames(data: &[u8]) -> Vec<&[u8]> {
     let mut frames = Vec::new();
     if data.len() < 32 || &data[..4] != b"DKIF" {
@@ -70,86 +55,61 @@ fn ivf_frames(data: &[u8]) -> Vec<&[u8]> {
     frames
 }
 
-fn digest(p: &Dav1dPicture) -> u64 {
+fn digest(p: &Picture) -> u64 {
     let mut h = DefaultHasher::new();
-    let (w, hgt) = (p.p.w as usize, p.p.h as usize);
-    let sample = if p.p.bpc > 8 { 2 } else { 1 };
-    for i in 0..3 {
-        let (sx, sy) = match p.p.layout {
-            DAV1D_PIXEL_LAYOUT_I400 if i > 0 => continue,
-            DAV1D_PIXEL_LAYOUT_I420 if i > 0 => (1, 1),
-            DAV1D_PIXEL_LAYOUT_I444 => (0, 0),
-            _ if i > 0 => (1, 0),
+    let (w, hgt) = (p.width() as usize, p.height() as usize);
+    let sample = if p.bit_depth() > 8 { 2 } else { 1 };
+    for (i, c) in [PlanarImageComponent::Y, PlanarImageComponent::U, PlanarImageComponent::V].into_iter().enumerate() {
+        let (sx, sy) = match p.pixel_layout() {
+            PixelLayout::I400 if i > 0 => continue,
+            PixelLayout::I420 if i > 0 => (1, 1),
+            PixelLayout::I422 if i > 0 => (1, 0),
             _ => (0, 0),
         };
-        let Some(data) = p.data[i] else { continue };
-        let stride = p.stride[i.min(1)];
+        let (stride, data) = (p.stride(c) as usize, p.plane(c));
         for y in 0..(hgt + sy) >> sy {
-            let row = unsafe {
-                std::slice::from_raw_parts(
-                    (data.as_ptr() as *const u8).offset(stride * y as isize),
-                    ((w + sx) >> sx) * sample,
-                )
-            };
-            h.write(row);
+            h.write(&data[y * stride..][..((w + sx) >> sx) * sample]);
         }
     }
     h.finish()
 }
 
-fn decode(file: &Path, threads: c_int, by_rows: bool) -> Vec<Result<u64, i32>> {
+fn decode(file: &Path, threads: u32, by_rows: bool) -> Vec<Result<u64, Rav1dError>> {
     let data = std::fs::read(file).unwrap();
     let mut out = Vec::new();
-    unsafe {
-        let mut settings = MaybeUninit::<Dav1dSettings>::uninit();
-        dav1d_default_settings(NonNull::new(settings.as_mut_ptr()).unwrap());
-        let mut settings = settings.assume_init();
-        settings.n_threads = threads;
-        settings.max_frame_delay = 1;
-        let mut ctx: Option<Dav1dContext> = None;
-        assert_eq!(dav1d_open(NonNull::new(&mut ctx), NonNull::new(&mut settings)).0, 0);
-        let ctx = ctx.unwrap();
-        dav1d_set_decode_by_rows(ctx, by_rows);
-        let drain = |out: &mut Vec<Result<u64, i32>>| loop {
-            let mut n = 0;
-            while dav1d_decode_rows(ctx, &mut n).0 == 0 {}
-            let mut p = Dav1dPicture::default();
-            match dav1d_get_picture(Some(ctx), NonNull::new(&mut p)).0 {
-                0 => {
-                    out.push(Ok(digest(&p)));
-                    dav1d_picture_unref(NonNull::new(&mut p));
-                }
-                EAGAIN => {
-                    let mut n = 0;
-                    if dav1d_decode_rows(ctx, &mut n).0 != 0 {
-                        break;
-                    }
-                }
-                e => out.push(Err(e)),
-            }
-        };
-        for frame in ivf_frames(&data) {
-            let mut d = Dav1dData::default();
-            let buf = dav1d_data_create(NonNull::new(&mut d), frame.len());
-            std::ptr::copy_nonoverlapping(frame.as_ptr(), buf, frame.len());
-            for _ in 0..1000 {
-                let res = dav1d_send_data(Some(ctx), NonNull::new(&mut d)).0;
-                if res != 0 && res != EAGAIN {
-                    out.push(Err(res));
-                    break;
-                }
-                drain(&mut out);
-                if d.sz == 0 {
+    let mut settings = Settings::new();
+    settings.set_n_threads(threads);
+    settings.set_max_frame_delay(1);
+    let mut d = Decoder::with_settings(&settings).unwrap();
+    d.set_decode_by_rows(by_rows);
+    let drain = |d: &mut Decoder, out: &mut Vec<Result<u64, Rav1dError>>| loop {
+        while d.decode_rows().is_ok() {}
+        match d.get_picture() {
+            Ok(p) => out.push(Ok(digest(&p))),
+            Err(Rav1dError::TryAgain) => {
+                if d.decode_rows().is_err() {
                     break;
                 }
             }
-            if d.sz > 0 {
-                dav1d_data_unref(NonNull::new(&mut d));
-            }
+            Err(e) => out.push(Err(e)),
         }
-        drain(&mut out);
-        dav1d_close(NonNull::new(&mut Some(ctx)));
+    };
+    for frame in ivf_frames(&data) {
+        let mut sent = d.send_data(frame.into(), None, None, None);
+        for _ in 0..1000 {
+            match sent {
+                Ok(()) => break,
+                Err(Rav1dError::TryAgain) => {}
+                Err(e) => {
+                    out.push(Err(e));
+                    break;
+                }
+            }
+            drain(&mut d, &mut out);
+            sent = d.send_pending_data();
+        }
     }
+    drain(&mut d, &mut out);
     out
 }
 
@@ -187,7 +147,7 @@ fn reads_no_memory_nothing_wrote() {
             let zero = decode(file, threads, by_rows);
             FILL.store(0xff, Ordering::Relaxed);
             let ones = decode(file, threads, by_rows);
-            let upto = |d: &Vec<Result<u64, i32>>| d.iter().position(|o| o.is_err()).unwrap_or(d.len());
+            let upto = |d: &Vec<Result<u64, Rav1dError>>| d.iter().position(|o| o.is_err()).unwrap_or(d.len());
             let n = upto(&zero).min(upto(&ones));
             if zero[..n] != ones[..n] {
                 differ.push(format!("{} threads {threads} by rows {by_rows}", file.display()));

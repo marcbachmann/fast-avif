@@ -65,7 +65,7 @@ assembly (SSE/AVX2/AVX-512, NEON):
 
 These modules are `mod`, not `pub mod`, in `lib.rs`. An encoder in a separate crate would need
 all of them made public, which is a large API surface for the fork to carry. So the encoder lives
-in the crate as `src/enc/`, behind a cargo feature `encoder`, and uses them as `crate::…`.
+in the crate as `crates/enc/src/`, behind a cargo feature `encoder`, and uses them as `crate::…`.
 
 Not reusable as they are: the filter walkers (`lf_apply.rs`, `cdef_apply.rs`, `lr_apply.rs`) and
 `recon.rs` are tied to the decoder's `Rav1dFrameData`/`Rav1dTaskContext`. The encoder gets its own
@@ -122,7 +122,7 @@ Alpha is coded with tune PSNR, i.e. none of these.
 ## Architecture
 
 ```
-src/enc/
+crates/enc/src/
   mod.rs         Encoder, Config, the public API
   frame.rs       source planes, reconstruction frame (a rav1d picture), mode info
   analyse.rs     screen content estimate, activity map (variance boost, SSIM weights)
@@ -364,7 +364,7 @@ but not on graphics.
 
 ## Open decisions
 
-1. **Location.** In the rav1d fork as `src/enc/` behind feature `encoder` (proposed), or a
+1. **Location.** In the rav1d fork as `crates/enc/src/` behind feature `encoder` (proposed), or a
    separate crate with rav1d's DSP made public?
 2. **Targets.** Is 3× the speed at effort 4 the right bar? Memory: is a peak set by the width
    plus 2–3 times the output enough, or must the tokens go too, by fixing the filter parameters

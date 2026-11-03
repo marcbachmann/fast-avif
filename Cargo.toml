@@ -1,9 +1,8 @@
 [workspace]
-members = [".", "tools"]
+members = [".", "tools", "crates/shared", "crates/dec", "crates/enc"]
 default-members = [".", "tools"]
 
 [workspace.dependencies]
-cc = "1.0.79"
 cfg-if = "1.0.0"
 libc = "0.2"
 
@@ -19,37 +18,15 @@ repository = "https://github.com/memorysafety/rav1d"
 exclude = ["*.c", "*.h", "*.in", "meson*", "tests/", "doc/"]
 
 [dependencies]
-assert_matches = "1.5.0"
-atomig = { version = "0.4.0", features = ["derive"] }
-av-data = "0.4.2"
-bitflags = "2.4.0"
-cfg-if.workspace = true
-libc.workspace = true
-parking_lot = "0.12.2"
-paste = "1.0.14"
-static_assertions = "1.1.0"
-strum = { version = "0.27", features = ["derive"] }
-to_method = "1.1.0"
-zerocopy = { version = "0.7.32", features = ["derive"] }
-
-[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
-raw-cpuid = "11.0.1"
+rav1d-shared = { path = "crates/shared", version = "1.1.0" }
+rav1d-dec = { path = "crates/dec", version = "1.1.0", default-features = false }
+rav1d-enc = { path = "crates/enc", version = "1.1.0", optional = true }
 
 [features]
 default = ["bitdepth_8", "bitdepth_16"]
-bitdepth_8 = []
-bitdepth_16 = []
-encoder = []
-# The dav1d-compatible `dav1d_*` functions, for the CLI and its tests; the library's API is `rust_api`.
-capi = []
-
-[[test]]
-name = "decode_rows"
-required-features = ["capi"]
-
-[[test]]
-name = "uninit"
-required-features = ["capi"]
+bitdepth_8 = ["rav1d-dec/bitdepth_8"]
+bitdepth_16 = ["rav1d-dec/bitdepth_16"]
+encoder = ["dep:rav1d-enc", "rav1d-dec/encoder"]
 
 [profile.dev]
 panic = "abort"
@@ -74,6 +51,3 @@ debug = "line-tables-only"
 inherits = "dev"
 opt-level = 2
 codegen-units = 16
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rav1d_itx_bisect)'] }

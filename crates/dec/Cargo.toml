@@ -1,0 +1,30 @@
+[package]
+name = "rav1d-dec"
+version = "1.1.0"
+edition = "2021"
+rust-version = "1.79"
+description = "The rav1d AV1 decoder"
+license = "BSD-2-Clause"
+publish = false
+
+[dependencies]
+rav1d-shared = { path = "../shared", version = "1.1.0" }
+assert_matches = "1.5.0"
+atomig = { version = "0.4.0", features = ["derive"] }
+av-data = "0.4.2"
+bitflags = "2.4.0"
+cfg-if.workspace = true
+libc.workspace = true
+parking_lot = "0.12.2"
+paste = "1.0.14"
+static_assertions = "1.1.0"
+strum = { version = "0.27", features = ["derive"] }
+to_method = "1.1.0"
+zerocopy = { version = "0.7.32", features = ["derive"] }
+
+[features]
+default = ["bitdepth_8", "bitdepth_16"]
+bitdepth_8 = []
+bitdepth_16 = []
+# The encoder's filter trials.
+encoder = []
