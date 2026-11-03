@@ -2,35 +2,35 @@ use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{array, cmp, iter, mem};
 
-use rav1d_shared::align::{Align16, AlignedVec64};
-use rav1d_shared::attributes::ctz;
-use rav1d_shared::bitdepth::BPC;
-use rav1d_shared::cdf::{
+use fast_avif_shared::align::{Align16, AlignedVec64};
+use fast_avif_shared::attributes::ctz;
+use fast_avif_shared::bitdepth::BPC;
+use fast_avif_shared::cdf::{
     rav1d_cdf_thread_alloc, rav1d_cdf_thread_copy, rav1d_cdf_thread_init_static,
     rav1d_cdf_thread_update, CdfMvComponent, CdfThreadContext,
 };
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
-use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutSlice};
-use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use rav1d_shared::env::{
+use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
+use fast_avif_shared::disjoint_mut::{DisjointMut, DisjointMutSlice};
+use fast_avif_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
+use fast_avif_shared::env::{
     av1_get_bwd_ref_1_ctx, av1_get_bwd_ref_ctx, av1_get_fwd_ref_1_ctx, av1_get_fwd_ref_2_ctx,
     av1_get_fwd_ref_ctx, av1_get_ref_ctx, av1_get_uni_p1_ctx, fix_mv_precision,
     gather_left_partition_prob, gather_top_partition_prob, get_comp_ctx, get_comp_dir_ctx,
     get_filter_ctx, get_gmv_2d, get_intra_ctx, get_jnt_comp_ctx, get_mask_comp_ctx,
     get_partition_ctx, get_poc_diff, get_tx_ctx, BlockContext,
 };
-use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::extensions::OptionError as _;
+use fast_avif_shared::error::{Rav1dError, Rav1dResult};
+use fast_avif_shared::extensions::OptionError as _;
 #[cfg(feature = "encoder")]
 #[cfg(feature = "encoder")]
-use rav1d_shared::filter_trials::{Measure, Trial};
-use rav1d_shared::headers::{
+use fast_avif_shared::filter_trials::{Measure, Trial};
+use fast_avif_shared::headers::{
     Rav1dFilterMode, Rav1dFrameHeader, Rav1dPixelLayout, Rav1dRestorationType, Rav1dSequenceHeader,
     Rav1dTxfmMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType, SgrIdx, RAV1D_PRIMARY_REF_NONE,
 };
-use rav1d_shared::intops::{apply_sign64, clip, clip_u8, iclip};
-use rav1d_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
-use rav1d_shared::levels::{
+use fast_avif_shared::intops::{apply_sign64, clip, clip_u8, iclip};
+use fast_avif_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
+use fast_avif_shared::levels::{
     Av1Block, Av1BlockInter, Av1BlockInter1d, Av1BlockInter2d, Av1BlockInterNd, Av1BlockIntra,
     Av1BlockIntraInter, BlockLevel, BlockPartition, BlockSize, CompInterType, DrlProximity,
     Filter2d, InterIntraPredMode, InterIntraType, MVJoint, MotionMode, Mv, SegmentId, TxfmSize,
@@ -38,21 +38,21 @@ use rav1d_shared::levels::{
     NEARMV, NEWMV, NEWMV_NEWMV, N_COMP_INTER_PRED_MODES, N_INTRA_PRED_MODES, N_UV_INTRA_PRED_MODES,
     VERT_LEFT_PRED, VERT_PRED,
 };
-use rav1d_shared::msac::{
+use fast_avif_shared::msac::{
     rav1d_msac_decode_bool, rav1d_msac_decode_bool_adapt, rav1d_msac_decode_bool_equi,
     rav1d_msac_decode_bools, rav1d_msac_decode_subexp, rav1d_msac_decode_symbol_adapt16,
     rav1d_msac_decode_symbol_adapt4, rav1d_msac_decode_symbol_adapt8, rav1d_msac_decode_uniform,
     MsacContext,
 };
-use rav1d_shared::picture::Rav1dPicture;
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::qm::DAV1D_QM_TBL;
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
-use rav1d_shared::shared_bytes::SharedBytes;
+use fast_avif_shared::picture::Rav1dPicture;
+use fast_avif_shared::props::Rav1dDataProps;
+use fast_avif_shared::qm::DAV1D_QM_TBL;
+use fast_avif_shared::relaxed_atomic::RelaxedAtomic;
+use fast_avif_shared::shared_bytes::SharedBytes;
 #[cfg(feature = "encoder")]
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::sync::{Condvar, Mutex};
-use rav1d_shared::tables::{
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::sync::{Condvar, Mutex};
+use fast_avif_shared::tables::{
     CFL_ALLOWED_MASK, DAV1D_AL_PART_CTX, DAV1D_BLOCK_SIZES, DAV1D_COMP_INTER_PRED_MODES,
     DAV1D_FILTER_2D, DAV1D_FILTER_DIR, DAV1D_INTRA_MODE_CONTEXT, DAV1D_MAX_TXFM_SIZE_FOR_BS,
     DAV1D_PARTITION_TYPE_COUNT, DAV1D_SGR_PARAMS, DAV1D_TXFM_DIMENSIONS, DAV1D_WEDGE_CTX_LUT,

@@ -3,10 +3,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::{array, cmp, fmt, mem};
 
-use rav1d_shared::data::Rav1dData;
-use rav1d_shared::env::get_poc_diff;
-use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::headers::{
+use fast_avif_shared::data::Rav1dData;
+use fast_avif_shared::env::get_poc_diff;
+use fast_avif_shared::error::{Rav1dError, Rav1dResult};
+use fast_avif_shared::headers::{
     Rav1dAdaptiveBoolean, Rav1dChromaSamplePosition, Rav1dColorPrimaries, Rav1dColorRange,
     Rav1dContentLightLevel, Rav1dFilmGrainData, Rav1dFilterMode, Rav1dFrameHeader,
     Rav1dFrameHeaderCdef, Rav1dFrameHeaderDelta, Rav1dFrameHeaderDeltaLF, Rav1dFrameHeaderDeltaQ,
@@ -21,10 +21,10 @@ use rav1d_shared::headers::{
     RAV1D_MAX_CDEF_STRENGTHS, RAV1D_MAX_OPERATING_POINTS, RAV1D_MAX_TILE_COLS, RAV1D_MAX_TILE_ROWS,
     RAV1D_PRIMARY_REF_NONE, RAV1D_REFS_PER_FRAME,
 };
-use rav1d_shared::intops::{clip_u8, ulog2};
-use rav1d_shared::levels::ObuMetaType;
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::shared_bytes::SharedBytes;
+use fast_avif_shared::intops::{clip_u8, ulog2};
+use fast_avif_shared::levels::ObuMetaType;
+use fast_avif_shared::props::Rav1dDataProps;
+use fast_avif_shared::shared_bytes::SharedBytes;
 
 use crate::decode::rav1d_submit_frame;
 use crate::getbits::GetBits;

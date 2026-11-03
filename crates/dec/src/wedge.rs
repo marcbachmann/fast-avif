@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
 
+use fast_avif_shared::align::{Align16, Align32, Align64};
+use fast_avif_shared::const_fn::{const_for, const_min};
+use fast_avif_shared::levels::{BlockSize, InterIntraPredMode};
 use paste::paste;
-use rav1d_shared::align::{Align16, Align32, Align64};
-use rav1d_shared::const_fn::{const_for, const_min};
-use rav1d_shared::levels::{BlockSize, InterIntraPredMode};
 use strum::EnumCount;
 
 #[derive(Clone, Copy, EnumCount)]

@@ -2,7 +2,7 @@
 //! of every visible plane row of every picture, its picture count and its name. CI compares the lines of a
 //! native build with those of a wasm32-wasip1 build run in wasmtime.
 
-use rav1d::{Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
+use fast_avif::{Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
 
 fn ivf_frames(data: &[u8]) -> Vec<&[u8]> {
     let mut frames = Vec::new();

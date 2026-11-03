@@ -3,36 +3,36 @@ use std::hint::assert_unchecked;
 use std::{array, cmp, ptr};
 
 use assert_matches::debug_assert_matches;
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, ToPrimitive, BPC};
-use rav1d_shared::cdf::CdfCoefContext;
-use rav1d_shared::dump::{ac_dump, coef_dump, hex_dump, hex_dump_pic};
-use rav1d_shared::env::{get_dc_sign_ctx, get_skip_ctx, get_uv_inter_txtp};
-use rav1d_shared::headers::{
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth, ToPrimitive, BPC};
+use fast_avif_shared::cdf::CdfCoefContext;
+use fast_avif_shared::dump::{ac_dump, coef_dump, hex_dump, hex_dump_pic};
+use fast_avif_shared::env::{get_dc_sign_ctx, get_skip_ctx, get_uv_inter_txtp};
+use fast_avif_shared::headers::{
     Rav1dPixelLayout, Rav1dPixelLayoutSubSampled, Rav1dWarpedMotionParams, Rav1dWarpedMotionType,
 };
-use rav1d_shared::in_range::InRange;
-use rav1d_shared::intops::{apply_sign64, clip, ulog2};
-use rav1d_shared::intra_edge::EdgeFlags;
-use rav1d_shared::ipred_prepare::{rav1d_prepare_intra_edges, sm_flag, sm_uv_flag};
-use rav1d_shared::levels::{
+use fast_avif_shared::in_range::InRange;
+use fast_avif_shared::intops::{apply_sign64, clip, ulog2};
+use fast_avif_shared::intra_edge::EdgeFlags;
+use fast_avif_shared::ipred_prepare::{rav1d_prepare_intra_edges, sm_flag, sm_uv_flag};
+use fast_avif_shared::levels::{
     Av1Block, Av1BlockInter, Av1BlockIntra, Av1BlockIntraInter, BlockSize, CompInterType, Filter2d,
     InterIntraPredMode, InterIntraType, IntraPredMode, MotionMode, Mv, TxClass, TxfmSize, TxfmType,
     CFL_PRED, DCT_DCT, DC_PRED, FILTER_PRED, GLOBALMV, GLOBALMV_GLOBALMV, IDTX, SMOOTH_PRED,
     WHT_WHT,
 };
-use rav1d_shared::msac::{
+use fast_avif_shared::msac::{
     rav1d_msac_decode_bool_equi, rav1d_msac_decode_bools, rav1d_msac_decode_symbol_adapt8,
     MsacLocal,
 };
-use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
-use rav1d_shared::pixels::Pixels as _;
-use rav1d_shared::scan::DAV1D_SCANS;
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::{
+use fast_avif_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
+use fast_avif_shared::pixels::Pixels as _;
+use fast_avif_shared::scan::DAV1D_SCANS;
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::{
     LoCtxOffset, TxfmInfo, DAV1D_FILTER_2D, DAV1D_FILTER_MODE_TO_Y_MODE, DAV1D_LO_CTX_OFFSETS,
     DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE, DAV1D_TX_TYPES_PER_SET, DAV1D_TX_TYPE_CLASS,
 };
-use rav1d_shared::with_offset::WithOffset;
+use fast_avif_shared::with_offset::WithOffset;
 use to_method::To as _;
 
 use crate::cdef_apply::rav1d_cdef_brow;

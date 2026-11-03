@@ -8,7 +8,7 @@
 use std::mem::size_of;
 use std::slice;
 
-use rav1d_shared::picture::PicRows;
+use fast_avif_shared::picture::PicRows;
 
 use super::*;
 
@@ -3497,9 +3497,9 @@ pub unsafe fn blend_dir_erased<BD: BitDepth, const V: bool, const WIDE: bool>(
 
 #[cfg(test)]
 mod tests {
-    use rav1d_shared::align::Align64;
-    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu, CpuFlags};
+    use fast_avif_shared::align::Align64;
+    use fast_avif_shared::bitdepth::{BitDepth16, BitDepth8};
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu, CpuFlags};
 
     use super::*;
     /// Picture buffers are multiples of 64 bytes.

@@ -3,15 +3,15 @@
 use std::cmp;
 
 use bitflags::bitflags;
-use rav1d_shared::align::{Align16, AlignedVec64};
-use rav1d_shared::bitdepth::{BitDepth, BPC};
-use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::headers::Rav1dPixelLayout;
-use rav1d_shared::intops::ulog2;
-use rav1d_shared::pic_or_buf::PicOrBuf;
-use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
-use rav1d_shared::strided::{Strided as _, WithStride};
-use rav1d_shared::with_offset::WithOffset;
+use fast_avif_shared::align::{Align16, AlignedVec64};
+use fast_avif_shared::bitdepth::{BitDepth, BPC};
+use fast_avif_shared::disjoint_mut::DisjointMut;
+use fast_avif_shared::headers::Rav1dPixelLayout;
+use fast_avif_shared::intops::ulog2;
+use fast_avif_shared::pic_or_buf::PicOrBuf;
+use fast_avif_shared::picture::Rav1dPictureDataComponentOffset;
+use fast_avif_shared::strided::{Strided as _, WithStride};
+use fast_avif_shared::with_offset::WithOffset;
 
 use crate::cdef::CdefEdgeFlags;
 use crate::internal::{Rav1dContext, Rav1dFrameData, Rav1dTaskContext};

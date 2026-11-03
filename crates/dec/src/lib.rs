@@ -21,7 +21,7 @@ compile_error!("No bitdepths enabled. Enable one or more of the following featur
 
 pub mod settings;
 
-pub use rav1d_shared::{align, cpu, Spawner};
+pub use fast_avif_shared::{align, cpu, Spawner};
 
 mod cdef;
 mod cdef_apply;
@@ -55,19 +55,19 @@ use std::sync::{Arc, Once};
 use std::{cmp, mem, thread};
 
 #[cfg(feature = "bitdepth_16")]
-use rav1d_shared::bitdepth::BitDepth16;
+use fast_avif_shared::bitdepth::BitDepth16;
 #[cfg(feature = "bitdepth_8")]
-use rav1d_shared::bitdepth::BitDepth8;
-use rav1d_shared::cpu::{rav1d_init_cpu, rav1d_num_logical_processors};
-use rav1d_shared::data::Rav1dData;
-pub use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::extensions::OptionError as _;
-use rav1d_shared::in_range::InRange;
-use rav1d_shared::intops::clip;
-use rav1d_shared::iter::wrapping_iter;
-use rav1d_shared::picture::Rav1dPicture;
-use rav1d_shared::sync::Mutex;
-use rav1d_shared::validate::validate_input;
+use fast_avif_shared::bitdepth::BitDepth8;
+use fast_avif_shared::cpu::{rav1d_init_cpu, rav1d_num_logical_processors};
+use fast_avif_shared::data::Rav1dData;
+pub use fast_avif_shared::error::{Rav1dError, Rav1dResult};
+use fast_avif_shared::extensions::OptionError as _;
+use fast_avif_shared::in_range::InRange;
+use fast_avif_shared::intops::clip;
+use fast_avif_shared::iter::wrapping_iter;
+use fast_avif_shared::picture::Rav1dPicture;
+use fast_avif_shared::sync::Mutex;
+use fast_avif_shared::validate::validate_input;
 pub use rust_api::*;
 
 use crate::decode::{rav1d_abandon_rows, rav1d_decode_frame_exit};
@@ -272,7 +272,7 @@ pub(crate) fn rav1d_open(
                     let handle = thread::Builder::new()
                         // Don't set stack size like `dav1d` does.
                         // See <https://github.com/memorysafety/rav1d/issues/889>.
-                        .name(format!("rav1d-worker-{n}"))
+                        .name(format!("fast-avif-worker-{n}"))
                         .spawn(move || {
                             let _helping = helping;
                             rav1d_worker_task(thread_data_copy)

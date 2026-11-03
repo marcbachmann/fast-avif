@@ -41,7 +41,7 @@ will not match `fdct.rs`; that is fine, forward transforms are not normative. Wh
 
 ## Deciding measurements
 
-- Encoder tests: `cargo test -p rav1d --profile opt-dev --features encoder --lib enc::` all
+- Encoder tests: `cargo test -p fast-avif --profile opt-dev --features encoder --lib enc::` all
   green (the round-trip tests decode the encoder's output and compare with its reconstruction).
 - Quality and speed on the corpus bench, same pin, old vs new tree:
   `scripts/enc-ab.sh <tree A> <tree B> ENC_KEEP=4 ENC_RECT=2 ENC_LEVELS=0..4` with

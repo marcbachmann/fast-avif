@@ -10,30 +10,30 @@ use std::cmp;
 use std::ops::Range;
 use std::sync::Once;
 
-use rav1d_shared::align::AlignedVec64;
-use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
-use rav1d_shared::cdf::{rav1d_cdf_thread_copy, rav1d_cdf_thread_init_static, CdfContext};
-use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
-use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::enum_map::DefaultValue;
-use rav1d_shared::env::{
+use fast_avif_shared::align::AlignedVec64;
+use fast_avif_shared::bitdepth::{BitDepth, BitDepth8};
+use fast_avif_shared::cdf::{rav1d_cdf_thread_copy, rav1d_cdf_thread_init_static, CdfContext};
+use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
+use fast_avif_shared::disjoint_mut::DisjointMut;
+use fast_avif_shared::enum_map::DefaultValue;
+use fast_avif_shared::env::{
     gather_left_partition_prob, gather_top_partition_prob, get_dc_sign_ctx, get_skip_ctx,
 };
-use rav1d_shared::headers::{Rav1dPixelLayout, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
-use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN};
-use rav1d_shared::ipred_prepare::rav1d_prepare_intra_edges;
-use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
-use rav1d_shared::levels::{
+use fast_avif_shared::headers::{Rav1dPixelLayout, Rav1dPixelLayoutSubSampled};
+use fast_avif_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
+use fast_avif_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN};
+use fast_avif_shared::ipred_prepare::rav1d_prepare_intra_edges;
+use fast_avif_shared::itx::Rav1dInvTxfmDSPContext;
+use fast_avif_shared::levels::{
     BlockLevel, BlockPartition, BlockSize, TxClass, TxfmSize, TxfmType, CFL_PRED, DCT_DCT, DC_PRED,
     FILTER_PRED, HOR_DOWN_PRED, HOR_PRED, HOR_UP_PRED, IDTX, N_INTRA_PRED_MODES,
     N_UV_INTRA_PRED_MODES, PAETH_PRED, SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, VERT_LEFT_PRED,
     VERT_PRED, VERT_RIGHT_PRED, WHT_WHT,
 };
-use rav1d_shared::picture::Rav1dPictureDataComponent;
-use rav1d_shared::qm::DAV1D_QM_TBL;
-use rav1d_shared::tables::{
+use fast_avif_shared::picture::Rav1dPictureDataComponent;
+use fast_avif_shared::qm::DAV1D_QM_TBL;
+use fast_avif_shared::tables::{
     TxfmInfo, CFL_ALLOWED_MASK, DAV1D_AL_PART_CTX, DAV1D_BLOCK_SIZES, DAV1D_FILTER_MODE_TO_Y_MODE,
     DAV1D_INTRA_MODE_CONTEXT, DAV1D_MAX_TXFM_SIZE_FOR_BS, DAV1D_PARTITION_TYPE_COUNT,
     DAV1D_TXFM_DIMENSIONS, DAV1D_TXTP_FROM_UVMODE, DAV1D_TX_TYPES_PER_SET, DAV1D_TX_TYPE_CLASS,
@@ -4342,7 +4342,7 @@ fn write_coefs<S: Sink>(
 }
 #[cfg(test)]
 pub(crate) mod tests {
-    use rav1d_dec::{Decoder, PlanarImageComponent, Settings};
+    use fast_avif_dec::{Decoder, PlanarImageComponent, Settings};
 
     use super::*;
     use crate::header::{Colour, Quant, Tiling};
@@ -4532,7 +4532,7 @@ pub(crate) mod tests {
     ) -> Vec<Vec<u8>> {
         let mut s = Settings::new();
         if !filters {
-            s.set_inloop_filters(rav1d_dec::InloopFilterType::empty());
+            s.set_inloop_filters(fast_avif_dec::InloopFilterType::empty());
         }
         s.set_n_threads(1);
         s.set_max_frame_delay(1);
@@ -4867,23 +4867,23 @@ pub(crate) mod tests {
             h as u32,
             &rows,
             &options,
-            &rav1d_dec::DecoderTrials,
+            &fast_avif_dec::DecoderTrials,
         );
-        let threads: rav1d_shared::Spawner = std::sync::Arc::new(|f| {
+        let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
             std::thread::spawn(f);
             true
         });
-        let refusing: rav1d_shared::Spawner = std::sync::Arc::new(|_| false);
-        let dropping: rav1d_shared::Spawner = std::sync::Arc::new(|_| true);
+        let refusing: fast_avif_shared::Spawner = std::sync::Arc::new(|_| false);
+        let dropping: fast_avif_shared::Spawner = std::sync::Arc::new(|_| true);
         let late = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let keeping: rav1d_shared::Spawner = {
+        let keeping: fast_avif_shared::Spawner = {
             let late = late.clone();
             std::sync::Arc::new(move |f| {
                 late.lock().unwrap().push(f);
                 false
             })
         };
-        let panicking: rav1d_shared::Spawner = std::sync::Arc::new(|f| {
+        let panicking: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
             std::thread::spawn(f);
             panic!("a spawner that fails after taking work")
         });
@@ -4895,7 +4895,7 @@ pub(crate) mod tests {
                 shared.clone(),
                 &options,
                 Some(spawner),
-                &rav1d_dec::DecoderTrials,
+                &fast_avif_dec::DecoderTrials,
             );
             assert!(coded.data == alone.data);
         }
@@ -4909,7 +4909,7 @@ pub(crate) mod tests {
                 shared.clone(),
                 &options,
                 Some(&panicking),
-                &rav1d_dec::DecoderTrials,
+                &fast_avif_dec::DecoderTrials,
             )
         }));
         assert!(failed.is_err());
@@ -4921,7 +4921,7 @@ pub(crate) mod tests {
                 tile_cols_log2: 0,
                 ..options
             },
-            &rav1d_dec::DecoderTrials,
+            &fast_avif_dec::DecoderTrials,
         );
         assert!(one.data != alone.data);
     }
@@ -4930,7 +4930,7 @@ pub(crate) mod tests {
     /// bytes.
     #[test]
     fn tile_threads_graphic() {
-        let threads: rav1d_shared::Spawner = std::sync::Arc::new(|f| {
+        let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
             std::thread::spawn(f);
             true
         });
@@ -4948,7 +4948,7 @@ pub(crate) mod tests {
                     h as u32,
                     &rows,
                     &options,
-                    &rav1d_dec::DecoderTrials,
+                    &fast_avif_dec::DecoderTrials,
                 );
                 let on = crate::still_on(
                     w as u32,
@@ -4956,7 +4956,7 @@ pub(crate) mod tests {
                     shared.clone(),
                     &options,
                     Some(&threads),
-                    &rav1d_dec::DecoderTrials,
+                    &fast_avif_dec::DecoderTrials,
                 );
                 assert!(
                     alone.data == on.data,
@@ -5374,7 +5374,7 @@ pub(crate) mod tests {
                 Err(_) => options.clone(),
             };
             let t = std::time::Instant::now();
-            let threads: rav1d_shared::Spawner = std::sync::Arc::new(|f| {
+            let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
                 std::thread::spawn(f);
                 true
             });
@@ -5416,7 +5416,7 @@ pub(crate) mod tests {
                 10.0 * (65025.0 * (w * h * 3) as f64 / e.estimated_sse.max(1) as f64).log10();
             if options.filter_search {
                 e.flush();
-                crate::filters::search(&mut e, &rows, &rav1d_dec::DecoderTrials);
+                crate::filters::search(&mut e, &rows, &fast_avif_dec::DecoderTrials);
             }
             let c = e.finish();
             let t = t.elapsed().as_millis();
@@ -5617,7 +5617,13 @@ pub(crate) mod tests {
         let planes: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
         let plain = crate::Options::effort(150, 4, false, u64::MAX);
         let code = |o: &crate::Options| {
-            let c = crate::still(w as u32, h as u32, &planes, o, &rav1d_dec::DecoderTrials);
+            let c = crate::still(
+                w as u32,
+                h as u32,
+                &planes,
+                o,
+                &fast_avif_dec::DecoderTrials,
+            );
             let db = psnr(&img, &decode_with(c.data.clone(), w, h, 3, true));
             (c.data.len(), db)
         };
@@ -5661,7 +5667,13 @@ pub(crate) mod tests {
                 filter_search: search,
                 ..crate::Options::effort(144, 4, false, u64::MAX)
             };
-            let c = crate::still(w as u32, h as u32, &planes, &o, &rav1d_dec::DecoderTrials);
+            let c = crate::still(
+                w as u32,
+                h as u32,
+                &planes,
+                &o,
+                &fast_avif_dec::DecoderTrials,
+            );
             (
                 c.data.len(),
                 psnr(&img, &decode_with(c.data.clone(), w, h, 3, true)),

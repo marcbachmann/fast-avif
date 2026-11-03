@@ -1,8 +1,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 use std::slice;
 
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 
 wrap_fn_ptr!(pub unsafe fn pal_idx_finish(
     dst: *mut u8,
@@ -126,7 +126,7 @@ fn pal_idx_finish_rust(idx: PalIdx, bw: usize, bh: usize, w: usize, h: usize) {
 /// [`pal_idx_finish_rust`] sixteen indices at a time: `lo | hi << 4` of each pair from their
 /// `u16` lanes.
 mod rust_simd {
-    use rav1d_shared::simd128::I16x8;
+    use fast_avif_shared::simd128::I16x8;
 
     use super::*;
 
@@ -231,7 +231,7 @@ impl Rav1dPalDSPContext {
             return self;
         }
         let _ = flags;
-        if !rav1d_shared::simd128::native() {
+        if !fast_avif_shared::simd128::native() {
             return self;
         }
         self.pal_idx_finish = pal_idx_finish::Fn::new(rust_simd::pal_idx_finish_simd);
@@ -254,8 +254,8 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use rav1d_shared::align::AlignedVec64;
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+    use fast_avif_shared::align::AlignedVec64;
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
 
     use super::*;
 

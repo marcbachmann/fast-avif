@@ -2,8 +2,8 @@
 
 use std::cmp;
 
-use rav1d_shared::cdf::CdfCoefContext;
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
+use fast_avif_shared::cdf::CdfCoefContext;
+use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
 
 use crate::ec::{adapt, Writer};
 

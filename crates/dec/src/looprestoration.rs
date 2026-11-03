@@ -3,15 +3,15 @@ use std::ops::Add;
 use std::{cmp, iter, mem, slice};
 
 use bitflags::bitflags;
-use rav1d_shared::align::AlignedVec64;
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow, ToPrimitive, BPC};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::intops::iclip;
-use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::DAV1D_SGR_X_BY_X;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::align::AlignedVec64;
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow, ToPrimitive, BPC};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::disjoint_mut::DisjointMut;
+use fast_avif_shared::intops::iclip;
+use fast_avif_shared::picture::Rav1dPictureDataComponentOffset;
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::DAV1D_SGR_X_BY_X;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 use to_method::To;
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
@@ -56,7 +56,7 @@ pub struct LooprestorationParamsSgr {
 pub struct LooprestorationParams {
     /// [`Align16`] moved to [`Self`] because we can't `#[derive(`[`AsBytes`]`)]` on it due to generics.
     ///
-    /// [`Align16`]: rav1d_shared::align::Align16
+    /// [`Align16`]: fast_avif_shared::align::Align16
     pub filter: [[i16; 8]; 2],
 }
 
@@ -875,8 +875,8 @@ fn sgr_mix_rust<BD: BitDepth>(
 /// The 8 bpc filters on `I16x8`.
 mod rust_simd {
     #[cfg(target_arch = "x86_64")]
-    use rav1d_shared::simd128::I16x16;
-    use rav1d_shared::simd128::{I16x8, I32x4};
+    use fast_avif_shared::simd128::I16x16;
+    use fast_avif_shared::simd128::{I16x8, I32x4};
 
     use super::*;
 
@@ -1658,7 +1658,7 @@ impl Rav1dLoopRestorationDSPContext {
             return self;
         }
         let _ = flags;
-        if !rav1d_shared::simd128::native() {
+        if !fast_avif_shared::simd128::native() {
             return self;
         }
         let wiener = loop_restoration_filter::Fn::new(match BD::BPC {
@@ -1689,11 +1689,11 @@ impl Rav1dLoopRestorationDSPContext {
 
 #[cfg(test)]
 mod tests {
-    use rav1d_shared::align::AlignedVec64;
-    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use rav1d_shared::picture::Rav1dPictureDataComponent;
-    use rav1d_shared::with_offset::WithOffset;
+    use fast_avif_shared::align::AlignedVec64;
+    use fast_avif_shared::bitdepth::{BitDepth16, BitDepth8};
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+    use fast_avif_shared::picture::Rav1dPictureDataComponent;
+    use fast_avif_shared::with_offset::WithOffset;
 
     use super::*;
 
@@ -1775,7 +1775,7 @@ mod tests {
     /// `sgr[mode]`'s parameters: a strength pair from the table that selects it, and weights
     /// in the ranges the bitstream codes.
     fn sgr_params(rng: &mut Rng, mode: usize) -> LooprestorationParams {
-        use rav1d_shared::tables::DAV1D_SGR_PARAMS;
+        use fast_avif_shared::tables::DAV1D_SGR_PARAMS;
 
         let idx = match mode {
             0 => rng.range(14, 15),

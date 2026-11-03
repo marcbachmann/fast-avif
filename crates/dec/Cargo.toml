@@ -1,14 +1,14 @@
 [package]
-name = "rav1d-dec"
+name = "fast-avif-dec"
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "The rav1d AV1 decoder"
+description = "The fast-avif AV1 decoder"
 license = "BSD-2-Clause"
 publish = false
 
 [dependencies]
-rav1d-shared = { path = "../shared", version = "1.1.0" }
+fast-avif-shared = { path = "../shared", version = "1.1.0" }
 assert_matches = "1.5.0"
 atomig = { version = "0.4.0", features = ["derive"] }
 av-data = "0.4.2"

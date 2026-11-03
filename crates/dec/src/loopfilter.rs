@@ -2,15 +2,15 @@
 
 use std::cmp;
 
-use rav1d_shared::align::{Align16, AlignedVec2};
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutGuard};
-use rav1d_shared::intops::iclip;
-use rav1d_shared::picture::{Rav1dPictureDataComponentInner, Rav1dPictureDataComponentOffset};
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::with_offset::WithOffset;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::align::{Align16, AlignedVec2};
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::disjoint_mut::{DisjointMut, DisjointMutGuard};
+use fast_avif_shared::intops::iclip;
+use fast_avif_shared::picture::{Rav1dPictureDataComponentInner, Rav1dPictureDataComponentOffset};
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::with_offset::WithOffset;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 use strum::FromRepr;
 
 use crate::internal::Rav1dFrameData;
@@ -270,9 +270,9 @@ fn loop_filter<BD: BitDepth>(
 /// C's branches would. Along a vertical edge the lines are rows, turned into lanes by transposes;
 /// along a horizontal one they are columns, loaded as they lie.
 mod rust_simd {
-    use rav1d_shared::simd128::{rows_fit, transpose8x8, Bytes, I16x8, Lanes, U8x16};
+    use fast_avif_shared::simd128::{rows_fit, transpose8x8, Bytes, I16x8, Lanes, U8x16};
     #[cfg(target_arch = "x86_64")]
-    use rav1d_shared::simd128::{I16x16, U8x32};
+    use fast_avif_shared::simd128::{I16x16, U8x32};
     use zerocopy::{AsBytes, FromBytes};
 
     use super::*;
@@ -1896,7 +1896,7 @@ impl Rav1dLoopFilterDSPContext {
         #[cfg(not(target_arch = "x86_64"))]
         let avx2 = false;
         let _ = flags;
-        if !rav1d_shared::simd128::native() {
+        if !fast_avif_shared::simd128::native() {
             return self;
         }
         let lf = &mut self.loop_filter_sb;
@@ -1921,10 +1921,10 @@ impl Rav1dLoopFilterDSPContext {
 
 #[cfg(test)]
 mod tests {
-    use rav1d_shared::align::AlignedVec64;
-    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use rav1d_shared::picture::Rav1dPictureDataComponent;
+    use fast_avif_shared::align::AlignedVec64;
+    use fast_avif_shared::bitdepth::{BitDepth16, BitDepth8};
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+    use fast_avif_shared::picture::Rav1dPictureDataComponent;
 
     use super::*;
     use crate::lf_mask::rav1d_calc_eih;

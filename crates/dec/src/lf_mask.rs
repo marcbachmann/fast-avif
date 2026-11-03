@@ -1,16 +1,16 @@
 use std::cmp;
 use std::mem::MaybeUninit;
 
-use rav1d_shared::align::{Align16, AlignedVec2, ArrayDefault};
-use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::headers::{
+use fast_avif_shared::align::{Align16, AlignedVec2, ArrayDefault};
+use fast_avif_shared::disjoint_mut::DisjointMut;
+use fast_avif_shared::headers::{
     Rav1dFrameHeader, Rav1dLoopfilterModeRefDeltas, Rav1dPixelLayout, Rav1dRestorationType,
 };
-use rav1d_shared::intops::{clip, iclip};
-use rav1d_shared::levels::{BlockSize, SegmentId, TxfmSize};
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
-use rav1d_shared::sync::RwLock;
-use rav1d_shared::tables::DAV1D_TXFM_DIMENSIONS;
+use fast_avif_shared::intops::{clip, iclip};
+use fast_avif_shared::levels::{BlockSize, SegmentId, TxfmSize};
+use fast_avif_shared::relaxed_atomic::RelaxedAtomic;
+use fast_avif_shared::sync::RwLock;
+use fast_avif_shared::tables::DAV1D_TXFM_DIMENSIONS;
 use zerocopy::FromBytes;
 
 use crate::ctx::CaseSet;

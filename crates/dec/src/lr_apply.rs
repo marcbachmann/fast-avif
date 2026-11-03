@@ -4,12 +4,12 @@ use std::cmp;
 
 use assert_matches::assert_matches;
 use bitflags::bitflags;
-use rav1d_shared::align::Align16;
-use rav1d_shared::bitdepth::BitDepth;
-use rav1d_shared::headers::{Rav1dPixelLayout, Rav1dRestorationType};
-use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::DAV1D_SGR_PARAMS;
+use fast_avif_shared::align::Align16;
+use fast_avif_shared::bitdepth::BitDepth;
+use fast_avif_shared::headers::{Rav1dPixelLayout, Rav1dRestorationType};
+use fast_avif_shared::picture::Rav1dPictureDataComponentOffset;
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::DAV1D_SGR_PARAMS;
 
 use crate::internal::{Rav1dContext, Rav1dFrameData};
 use crate::lf_mask::Av1RestorationUnit;

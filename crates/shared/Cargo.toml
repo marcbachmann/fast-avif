@@ -1,9 +1,9 @@
 [package]
-name = "rav1d-shared"
+name = "fast-avif-shared"
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "What the rav1d decoder and encoder share"
+description = "What the fast-avif decoder and encoder share"
 license = "BSD-2-Clause"
 publish = false
 

@@ -16,4 +16,4 @@ mkdir -p "$out"
 } > "$out/dc_qlookup.h"
 gcc -O2 -ffp-contract=off -I "$here/cnn-ref/stub" -I "$out" -I "$aom" -o "$out/cnn-ref" \
     "$here/cnn-ref/cnn-ref.c" "$aom/av1/encoder/cnn.c" "$aom/av1/encoder/ml.c" "$aom/aom_mem/aom_mem.c" "$aom/aom_util/aom_thread.c" -lm
-CNN_REF="$out/cnn-ref" cargo test -p rav1d-enc --release --lib partition_cnn::tests::matches_libaom -- --ignored --nocapture
+CNN_REF="$out/cnn-ref" cargo test -p fast-avif-enc --release --lib partition_cnn::tests::matches_libaom -- --ignored --nocapture

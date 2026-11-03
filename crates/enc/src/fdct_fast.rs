@@ -5,8 +5,8 @@
 
 use std::mem::MaybeUninit;
 
-use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
-use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
+use fast_avif_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
+use fast_avif_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
 use strum::EnumCount;
 
 use super::fdct::{self, dimensions, kinds, Kind};
@@ -286,8 +286,8 @@ unsafe fn assume_init_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
 
 #[cfg(test)]
 mod tests {
-    use rav1d_shared::bitdepth::BitDepth8;
-    use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
+    use fast_avif_shared::bitdepth::BitDepth8;
+    use fast_avif_shared::itx::Rav1dInvTxfmDSPContext;
 
     use super::*;
     use crate::fdct::coded_dimensions;

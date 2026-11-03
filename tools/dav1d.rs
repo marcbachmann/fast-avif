@@ -7,8 +7,10 @@
 use std::io::Write;
 use std::process::ExitCode;
 
-use rav1d::cpu::rav1d_set_cpu_flags_mask;
-use rav1d::{DecodeFrameType, Decoder, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
+use fast_avif::cpu::rav1d_set_cpu_flags_mask;
+use fast_avif::{
+    DecodeFrameType, Decoder, PixelLayout, PlanarImageComponent, Rav1dError, Settings,
+};
 
 struct Args {
     input: String,
@@ -69,7 +71,7 @@ fn args() -> Result<Args, String> {
             "--limit" => a.limit = value()?.parse().map_err(|e| format!("--limit: {e}"))?,
             "-q" | "--quiet" => a.quiet = true,
             "-v" | "--version" => {
-                println!("{}", rav1d::rav1d_version());
+                println!("{}", fast_avif::rav1d_version());
                 std::process::exit(0);
             }
             "--framedelay" => {
@@ -315,7 +317,7 @@ impl Md5 {
 }
 
 /// Every plane row of `p`, luma then chroma, as dav1d's md5 muxer hashes them.
-fn hash_picture(md5: &mut Md5, p: &rav1d::Picture) {
+fn hash_picture(md5: &mut Md5, p: &fast_avif::Picture) {
     let (w, h) = (p.width() as usize, p.height() as usize);
     let sample = if p.bit_depth() > 8 { 2 } else { 1 };
     let (ss_hor, ss_ver) = match p.pixel_layout() {
@@ -338,7 +340,7 @@ fn hash_picture(md5: &mut Md5, p: &rav1d::Picture) {
 
 fn hash_plane(
     md5: &mut Md5,
-    p: &rav1d::Picture,
+    p: &fast_avif::Picture,
     c: PlanarImageComponent,
     bytes: usize,
     rows: usize,

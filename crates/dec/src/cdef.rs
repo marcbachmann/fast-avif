@@ -2,17 +2,17 @@
 use std::{cmp, ptr};
 
 use bitflags::bitflags;
-use rav1d_shared::align::AlignedVec64;
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::intops::{apply_sign, iclip};
-use rav1d_shared::pic_or_buf::PicOrBuf;
-use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::DAV1D_CDEF_DIRECTIONS;
-use rav1d_shared::with_offset::WithOffset;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::align::AlignedVec64;
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::disjoint_mut::DisjointMut;
+use fast_avif_shared::intops::{apply_sign, iclip};
+use fast_avif_shared::pic_or_buf::PicOrBuf;
+use fast_avif_shared::picture::Rav1dPictureDataComponentOffset;
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::DAV1D_CDEF_DIRECTIONS;
+use fast_avif_shared::with_offset::WithOffset;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 
 bitflags! {
     #[repr(transparent)]
@@ -469,10 +469,10 @@ fn cdef_find_dir_rust<BD: BitDepth>(
 mod rust_simd {
     use std::mem;
 
-    use rav1d_shared::bitdepth::BPC;
+    use fast_avif_shared::bitdepth::BPC;
     #[cfg(target_arch = "x86_64")]
-    use rav1d_shared::simd128::I16x16;
-    use rav1d_shared::simd128::{I16x8, I32x4};
+    use fast_avif_shared::simd128::I16x16;
+    use fast_avif_shared::simd128::{I16x8, I32x4};
     use zerocopy::AsBytes;
 
     use super::*;
@@ -1160,7 +1160,7 @@ impl Rav1dCdefDSPContext {
             return self;
         }
         let _ = flags;
-        if !rav1d_shared::simd128::native() {
+        if !fast_avif_shared::simd128::native() {
             return self;
         }
 
@@ -1192,9 +1192,9 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use rav1d_shared::picture::Rav1dPictureDataComponent;
+    use fast_avif_shared::bitdepth::{BitDepth16, BitDepth8};
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+    use fast_avif_shared::picture::Rav1dPictureDataComponent;
 
     use super::*;
 

@@ -6,9 +6,9 @@
 use std::cmp;
 use std::mem::MaybeUninit;
 
-use rav1d_shared::levels::{TxClass, TxfmSize};
-use rav1d_shared::scan::DAV1D_SCANS;
-use rav1d_shared::tables::{DAV1D_LO_CTX_OFFSETS, DAV1D_TXFM_DIMENSIONS};
+use fast_avif_shared::levels::{TxClass, TxfmSize};
+use fast_avif_shared::scan::DAV1D_SCANS;
+use fast_avif_shared::tables::{DAV1D_LO_CTX_OFFSETS, DAV1D_TXFM_DIMENSIONS};
 use strum::EnumCount;
 
 use super::fdct_fast::Lane;

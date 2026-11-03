@@ -1,13 +1,13 @@
-# rav1d
+# fast-avif
 
-**rav1d** is an AV1 cross-platform decoder, open-source, and focused on speed
-and correctness. It is a Rust port of
-[dav1d](https://code.videolan.org/videolan/dav1d).
+**fast-avif** is an AV1 still-image encoder and decoder in Rust, built for AVIF. Its decoder
+and the tables and DSP both share come from [rav1d](https://github.com/memorysafety/rav1d), the
+Rust port of [dav1d](https://code.videolan.org/videolan/dav1d).
 
 # Building
 
-rav1d is written in Rust and uses the standard Rust toolchain to build. The Rust
-toolchain can be installed by going to https://rustup.rs. The rav1d library
+fast-avif is written in Rust and uses the standard Rust toolchain to build. The Rust
+toolchain can be installed by going to https://rustup.rs. The library
 builds on stable Rust for `x86`, `x86_64`, and `aarch64`, but currently
 requires a nightly compiler for `arm` and `riscv64`. The project is configured
 to use a nightly compiler by default via `rust-toolchain.toml`, but a stable
@@ -26,7 +26,7 @@ runs faster than a regular debug build but has all debug checks still enabled:
 cargo build --profile opt-dev
 ```
 
-To build just `librav1d` using a stable compiler:
+To build just the library using a stable compiler:
 
 ```sh
 cargo +stable build --lib --release
@@ -40,7 +40,7 @@ The following feature flags are supported:
 * `bitdepth_16` - Enables support for 10 and 12 bitdepth decoding.
 * `encoder` - The AV1 still-image encoder, the crate `crates/enc` (off by default).
 
-`bitdepth_8` and `bitdepth_16` are enabled by default. To build a version of `librav1d` with
+`bitdepth_8` and `bitdepth_16` are enabled by default. To build a version of the library with
 only one of them, use the `--no-default-features` flag in combination with the
 `--features` flag:
 
@@ -58,7 +58,7 @@ The decoder is silent unless `DEBUG` names `fast-avif`, as Node's `debug` reads 
 
 ## Cross-Compiling
 
-rav1d can be cross-compiled for a target other than the host platform using the
+fast-avif can be cross-compiled for a target other than the host platform using the
 `cargo` `--target` flag. This will require passing additional arguments to
 `rustc` to tell it what linker to use. This can be done by setting the
 `RUSTFLAGS` enviroment variable and specifying the `linker` compiler flag. For
@@ -78,7 +78,7 @@ RUSTFLAGS="-C target-feature=+crt-static -C linker=aarch64-linux-gnu-gcc" cargo 
 
 This will require installing the `rustup` component for the target platform and
 the appropriate cross-platform compiler/linker toolchain for your target
-platform. Examples of how we cross-compile rav1d in CI can be found in
+platform. Examples of how we cross-compile fast-avif in CI can be found in
 [`.github/workflows/build-and-test-qemu.yml`](.github/workflows/build-and-test-qemu.yml).
 
 The following targets are currently supported:
@@ -100,7 +100,7 @@ tests run with `cargo test`.
 
 To setup and run the tests, do the following:
 
-First, build `rav1d` using `cargo`. You'll need to do this step manually before
+First, build `fast-avif` using `cargo`. You'll need to do this step manually before
 running any tests because it is not built automatically when tests are run. It's
 recommended to run tests with either the `release` or `opt-dev` profile as the
 debug build runs slowly and often causes tests to timeout. The `opt-dev` profile
@@ -142,9 +142,9 @@ The test script accepts additional arguments to configure how tests are run:
 You can learn more about how to build and test by referencing the CI scripts in
 the [`.github/workflows`](.github/workflows) folder.
 
-# Using rav1d
+# Using fast-avif
 
-The library's API is the safe Rust one in [`crates/dec/src/rust_api.rs`](crates/dec/src/rust_api.rs), re-exported by the `rav1d` crate:
+The library's API is the safe Rust one in [`crates/dec/src/rust_api.rs`](crates/dec/src/rust_api.rs), re-exported by the `fast-avif` crate:
 `Settings`, `Decoder` and `Picture`, with decoding by superblock rows
 (`Decoder::set_decode_by_rows`, `decode_rows`, `rows_picture`), workers on the
 caller's threads (`Decoder::with_spawner`), data read in place

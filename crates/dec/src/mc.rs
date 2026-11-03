@@ -1,22 +1,22 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 use std::{cmp, iter, mem, ptr};
 
-use rav1d_shared::align::AlignedVec64;
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use rav1d_shared::headers::{Rav1dFilterMode, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::intops::{clip, iclip};
-use rav1d_shared::levels::Filter2d;
-use rav1d_shared::pic_or_buf::PicOrBuf;
-use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::{
+use fast_avif_shared::align::AlignedVec64;
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
+use fast_avif_shared::headers::{Rav1dFilterMode, Rav1dPixelLayoutSubSampled};
+use fast_avif_shared::intops::{clip, iclip};
+use fast_avif_shared::levels::Filter2d;
+use fast_avif_shared::pic_or_buf::PicOrBuf;
+use fast_avif_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::{
     DAV1D_MC_SUBPEL_FILTERS, DAV1D_MC_WARP_FILTER, DAV1D_OBMC_MASKS, DAV1D_RESIZE_FILTER,
     WARP_FILTER,
 };
-use rav1d_shared::with_offset::WithOffset;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::with_offset::WithOffset;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 use to_method::To;
 
 use crate::internal::{

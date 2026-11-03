@@ -78,6 +78,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "fast-avif"
+version = "1.1.0"
+dependencies = [
+ "fast-avif-dec",
+ "fast-avif-enc",
+ "fast-avif-shared",
+]
+
+[[package]]
+name = "fast-avif-cli"
+version = "1.1.0"
+dependencies = [
+ "fast-avif",
+]
+
+[[package]]
+name = "fast-avif-dec"
+version = "1.1.0"
+dependencies = [
+ "assert_matches",
+ "atomig",
+ "av-data",
+ "bitflags",
+ "cfg-if",
+ "fast-avif-shared",
+ "paste",
+ "static_assertions",
+ "strum",
+ "to_method",
+ "zerocopy",
+]
+
+[[package]]
+name = "fast-avif-enc"
+version = "1.1.0"
+dependencies = [
+ "fast-avif-dec",
+ "fast-avif-shared",
+ "strum",
+]
+
+[[package]]
+name = "fast-avif-shared"
+version = "1.1.0"
+dependencies = [
+ "atomig",
+ "av-data",
+ "bitflags",
+ "raw-cpuid",
+ "strum",
+ "zerocopy",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,60 +209,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "rav1d"
-version = "1.1.0"
-dependencies = [
- "rav1d-dec",
- "rav1d-enc",
- "rav1d-shared",
-]
-
-[[package]]
-name = "rav1d-cli"
-version = "1.1.0"
-dependencies = [
- "rav1d",
-]
-
-[[package]]
-name = "rav1d-dec"
-version = "1.1.0"
-dependencies = [
- "assert_matches",
- "atomig",
- "av-data",
- "bitflags",
- "cfg-if",
- "paste",
- "rav1d-shared",
- "static_assertions",
- "strum",
- "to_method",
- "zerocopy",
-]
-
-[[package]]
-name = "rav1d-enc"
-version = "1.1.0"
-dependencies = [
- "rav1d-dec",
- "rav1d-shared",
- "strum",
-]
-
-[[package]]
-name = "rav1d-shared"
-version = "1.1.0"
-dependencies = [
- "atomig",
- "av-data",
- "bitflags",
- "raw-cpuid",
- "strum",
- "zerocopy",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "rav1d-cli"
+name = "fast-avif-cli"
 version = "1.1.0"
 edition = "2021"
 default-run = "dav1d"
@@ -12,9 +12,9 @@ path = "dav1d.rs"
 name = "dav1d"
 
 [dependencies]
-rav1d = { path = "../", version = "1.1.0", default-features = false }
+fast-avif = { path = "../", version = "1.1.0", default-features = false }
 
 [features]
 default = ["bitdepth_8", "bitdepth_16"]
-bitdepth_8 = ["rav1d/bitdepth_8"]
-bitdepth_16 = ["rav1d/bitdepth_16"]
+bitdepth_8 = ["fast-avif/bitdepth_8"]
+bitdepth_16 = ["fast-avif/bitdepth_16"]

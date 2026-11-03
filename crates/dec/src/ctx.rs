@@ -36,10 +36,10 @@
 //! * employs the same small powers of 2 optimization the `case_set*` implementation did
 //! * is far simpler than the `case_set*` implementation, consisting of a `match` and array writes
 //!
-//! [`BlockContext`]: rav1d_shared::env::BlockContext
+//! [`BlockContext`]: fast_avif_shared::env::BlockContext
 use std::iter::zip;
 
-use rav1d_shared::disjoint_mut::{AsMutPtr, DisjointMut};
+use fast_avif_shared::disjoint_mut::{AsMutPtr, DisjointMut};
 
 /// Perform a `memset` optimized for lengths that are small powers of 2.
 ///

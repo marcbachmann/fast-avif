@@ -4,7 +4,7 @@
 
 use std::cell::Cell;
 
-use rav1d_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
+use fast_avif_shared::levels::{TxfmSize, TxfmType, WHT_WHT};
 
 use super::{dimensions, forward_in, Config, Lane, Txfm1d};
 use crate::fdct::tests::{decodable, sizes, Rng};

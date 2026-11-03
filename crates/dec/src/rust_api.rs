@@ -30,21 +30,21 @@ use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 pub use av_data::pixel;
-use rav1d_shared::bitdepth::BitDepth8;
-use rav1d_shared::error::Rav1dError;
-pub use rav1d_shared::headers::{
+use fast_avif_shared::bitdepth::BitDepth8;
+use fast_avif_shared::error::Rav1dError;
+pub use fast_avif_shared::headers::{
     Rav1dAdaptiveBoolean as AdaptiveBoolean, Rav1dContentLightLevel as ContentLightLevel,
     Rav1dMasteringDisplay as MasteringDisplay, Rav1dPixelLayout as PixelLayout,
     Rav1dSequenceHeader as SequenceHeader,
     Rav1dSequenceHeaderOperatingPoint as SequenceHeaderOperatingPoint,
 };
-use rav1d_shared::in_range::InRange;
-pub use rav1d_shared::picture::{
+use fast_avif_shared::in_range::InRange;
+pub use fast_avif_shared::picture::{
     PictureAllocator, PictureBuffer, PictureParameters, PlaneLayout,
     RAV1D_PICTURE_ALIGNMENT as PICTURE_ALIGNMENT,
 };
-use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
-use rav1d_shared::shared_bytes::SharedBytes;
+use fast_avif_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
+use fast_avif_shared::shared_bytes::SharedBytes;
 
 use crate::decode::rav1d_decode_rows;
 use crate::internal::Rav1dContext;
@@ -363,12 +363,12 @@ impl Decoder {
 pub struct DecoderTrials;
 
 #[cfg(feature = "encoder")]
-impl rav1d_shared::filter_trials::FilterTrials for DecoderTrials {
+impl fast_avif_shared::filter_trials::FilterTrials for DecoderTrials {
     fn decoded(
         &self,
         data: Box<[u8]>,
         planes: usize,
-        measure: &mut rav1d_shared::filter_trials::Measure,
+        measure: &mut fast_avif_shared::filter_trials::Measure,
     ) -> [u64; 3] {
         let mut s = Settings::new();
         s.set_inloop_filters(InloopFilterType::DEBLOCK | InloopFilterType::CDEF);
@@ -397,8 +397,8 @@ impl rav1d_shared::filter_trials::FilterTrials for DecoderTrials {
     fn trials(
         &self,
         data: Box<[u8]>,
-        measure: &mut rav1d_shared::filter_trials::Measure,
-        search: &mut dyn FnMut(&mut rav1d_shared::filter_trials::Trial),
+        measure: &mut fast_avif_shared::filter_trials::Measure,
+        search: &mut dyn FnMut(&mut fast_avif_shared::filter_trials::Trial),
     ) -> Result<(), Rav1dError> {
         let mut s = Settings::new();
         s.set_inloop_filters(InloopFilterType::empty());

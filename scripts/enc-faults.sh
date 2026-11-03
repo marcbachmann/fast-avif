@@ -3,7 +3,7 @@
 # and reports which tests each fault failed. The tree is restored and compared after each.
 set -u
 run() {
-    cargo test -p rav1d-enc --profile opt-dev --lib -- --nocapture > "$1" 2>&1
+    cargo test -p fast-avif-enc --profile opt-dev --lib -- --nocapture > "$1" 2>&1
 }
 run /work/base.log
 base=$?

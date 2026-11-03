@@ -5,28 +5,28 @@ use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
 use atomig::{Atom, Atomic};
-use rav1d_shared::align::{Align16, Align64, AlignedVec2, AlignedVec64};
-use rav1d_shared::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
-use rav1d_shared::cdf::{CdfContext, CdfThreadContext};
-use rav1d_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
-use rav1d_shared::data::Rav1dData;
-use rav1d_shared::disjoint_mut::{
+use fast_avif_shared::align::{Align16, Align64, AlignedVec2, AlignedVec64};
+use fast_avif_shared::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
+use fast_avif_shared::cdf::{CdfContext, CdfThreadContext};
+use fast_avif_shared::cpu::{rav1d_get_cpu_flags, CpuFlags};
+use fast_avif_shared::data::Rav1dData;
+use fast_avif_shared::disjoint_mut::{
     DisjointImmutGuard, DisjointMut, DisjointMutArcSlice, DisjointMutGuard,
 };
-use rav1d_shared::env::BlockContext;
-use rav1d_shared::error::Rav1dError;
-use rav1d_shared::headers::{
+use fast_avif_shared::env::BlockContext;
+use fast_avif_shared::error::Rav1dError;
+use fast_avif_shared::headers::{
     Rav1dContentLightLevel, Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay,
     Rav1dSequenceHeader, Rav1dWarpedMotionParams,
 };
-use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN, SCRATCH_EDGE_LEN};
-use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
-use rav1d_shared::levels::{Av1Block, Filter2d, SegmentId, TxfmType, WHT_WHT};
-use rav1d_shared::msac::MsacContext;
-use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
-use rav1d_shared::props::Rav1dDataProps;
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
-use rav1d_shared::sync::{Condvar, Mutex, RwLock, RwLockReadGuard};
+use fast_avif_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN, SCRATCH_EDGE_LEN};
+use fast_avif_shared::itx::Rav1dInvTxfmDSPContext;
+use fast_avif_shared::levels::{Av1Block, Filter2d, SegmentId, TxfmType, WHT_WHT};
+use fast_avif_shared::msac::MsacContext;
+use fast_avif_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
+use fast_avif_shared::props::Rav1dDataProps;
+use fast_avif_shared::relaxed_atomic::RelaxedAtomic;
+use fast_avif_shared::sync::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use strum::FromRepr;
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
@@ -630,7 +630,7 @@ pub struct Rav1dFrameContextFrameThread {
     /// Iterated over inside tile state.
     pub pal_idx: DisjointMut<AlignedVec64<u8>>,
 
-    /// [`AlignedVec64`]`<`[`DynCoef`](rav1d_shared::bitdepth::DynCoef)`>`
+    /// [`AlignedVec64`]`<`[`DynCoef`](fast_avif_shared::bitdepth::DynCoef)`>`
     pub cf: DisjointMut<AlignedVec64<u8>>,
 
     /// Start offsets per tile

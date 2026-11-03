@@ -5,7 +5,7 @@ and one paragraph per step, newest first.
 
 ## State
 
-- Branch `crate-split` (four crates, no C boundary, no libc, formatted, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
+- Branch `fast-avif` (the crates renamed fast-avif, on `lint-allows` on `crate-split`, on main 501fd216; no C boundary, no libc, clippy clean on stable and the pinned nightly). Built: range encoder, headers, every intra tool with palettes, libaom's
   forward transforms, the RD search with RDOQ, tune IQ (Variance Boost, SSIM λ, quantizer
   matrices, chroma delta q), deblocking and CDEF strengths searched on the decoded picture.
 - Not yet: restoration, threads, alpha and lossless parity checks.
@@ -32,12 +32,27 @@ D=/root/.cache/ld-image-processing-deps
 docker run --rm --cgroup-parent="$COMMANDQUEUE_SLICE" -v "$PWD":/work -v $D:/deps -w /work \
   -e CARGO_TARGET_DIR=/deps/target-rav1d-enc -e CARGO_HOME=/deps/cargo-home-rav1d-enc \
   -e RUSTUP_TOOLCHAIN=stable ip-build:trixie \
-  cargo test -p rav1d-enc --profile opt-dev --lib
+  cargo test -p fast-avif-enc --profile opt-dev --lib
 ```
 
 An incremental build takes about 17 s.
 
 ## Log
+
+**2026-11-04, lints on and the name fast-avif.** Branch `lint-allows`: the clippy lists the
+transpile switched off went, but for eight kept on purpose (argument counts and type complexity
+of the DSP signatures, identity ops in the spec tables, index loops in the kernels, large consts
+and enum variants, module inception, acronyms) and, in the decoder, late initialization: the OBU
+parser reads several fields per branch as the spec lays them out. `cargo clippy --fix` and a few
+hand fixes; `rust-version` is the 1.82 the code needed already. The newer stable clippy flags
+more than the pinned nightly, so both run clean. The decoder's log goes to stderr only when
+`DEBUG` names `fast-avif`. Branch `fast-avif`: the packages are `fast-avif`,
+`fast-avif-shared`, `fast-avif-dec`, `fast-avif-enc` and `fast-avif-cli`; the conformance binary
+keeps dav1d's name and flags. At the rename, x86 on stable: clippy clean; lib 148 passed 16
+ignored; integration 18, 200 seeks 6656 pictures 0 differ; uninit 117 pictures 0 differ; meson 792
+Ok, plain and `-f 2`; wasm32; the flush, owner and lane faults fail their tests; encoder 56 of 56
+rows identical to the base. aarch64, fat LTO, the sweep against `crate-split`: encode instructions
+level, decode -0.2%. image-processing branch `fast-avif` takes it by git.
 
 **2026-11-03, the open items of the split.** Picture strides are never negative (`PlaneLayout`
 strides are `usize`), so the bottom-up handling and `with_offset`'s bit depth went. `Decoder::flush`

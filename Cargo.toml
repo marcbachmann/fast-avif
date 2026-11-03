@@ -6,26 +6,26 @@ default-members = [".", "tools"]
 cfg-if = "1.0.0"
 
 [package]
-name = "rav1d"
+name = "fast-avif"
 authors = ["Rav1d Developers", "Prossimo"]
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Rust port of the dav1d AV1 decoder"
+description = "AV1 still-image encoder and decoder in Rust, from rav1d, the Rust port of dav1d"
 license = "BSD-2-Clause"
 repository = "https://github.com/memorysafety/rav1d"
 exclude = ["*.c", "*.h", "*.in", "meson*", "tests/", "doc/"]
 
 [dependencies]
-rav1d-shared = { path = "crates/shared", version = "1.1.0" }
-rav1d-dec = { path = "crates/dec", version = "1.1.0", default-features = false }
-rav1d-enc = { path = "crates/enc", version = "1.1.0", optional = true }
+fast-avif-shared = { path = "crates/shared", version = "1.1.0" }
+fast-avif-dec = { path = "crates/dec", version = "1.1.0", default-features = false }
+fast-avif-enc = { path = "crates/enc", version = "1.1.0", optional = true }
 
 [features]
 default = ["bitdepth_8", "bitdepth_16"]
-bitdepth_8 = ["rav1d-dec/bitdepth_8"]
-bitdepth_16 = ["rav1d-dec/bitdepth_16"]
-encoder = ["dep:rav1d-enc", "rav1d-dec/encoder"]
+bitdepth_8 = ["fast-avif-dec/bitdepth_8"]
+bitdepth_16 = ["fast-avif-dec/bitdepth_16"]
+encoder = ["dep:fast-avif-enc", "fast-avif-dec/encoder"]
 
 [profile.dev]
 panic = "abort"

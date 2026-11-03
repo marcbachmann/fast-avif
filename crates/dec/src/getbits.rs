@@ -1,6 +1,6 @@
 use std::ops::Index;
 
-use rav1d_shared::intops::{inv_recenter, ulog2};
+use fast_avif_shared::intops::{inv_recenter, ulog2};
 
 #[repr(C)]
 pub struct GetBits<'a> {

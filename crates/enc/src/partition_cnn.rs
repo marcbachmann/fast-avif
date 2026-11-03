@@ -8,7 +8,7 @@
 #[rustfmt::skip]
 mod weights;
 
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
+use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
 use weights::*;
 
 const SIDE: usize = 65;

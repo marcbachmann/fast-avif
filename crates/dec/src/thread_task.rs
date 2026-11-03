@@ -8,17 +8,17 @@ use std::{cmp, mem, thread};
 
 use atomig::{Atom, Atomic};
 #[cfg(feature = "bitdepth_16")]
-use rav1d_shared::bitdepth::BitDepth16;
+use fast_avif_shared::bitdepth::BitDepth16;
 #[cfg(feature = "bitdepth_8")]
-use rav1d_shared::bitdepth::BitDepth8;
-use rav1d_shared::cdf::rav1d_cdf_thread_update;
-use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::headers::Rav1dPixelLayout;
-use rav1d_shared::intops::iclip;
-use rav1d_shared::iter::wrapping_iter;
-use rav1d_shared::picture::Rav1dPicture;
-use rav1d_shared::relaxed_atomic::RelaxedAtomic;
-use rav1d_shared::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use fast_avif_shared::bitdepth::BitDepth8;
+use fast_avif_shared::cdf::rav1d_cdf_thread_update;
+use fast_avif_shared::error::{Rav1dError, Rav1dResult};
+use fast_avif_shared::headers::Rav1dPixelLayout;
+use fast_avif_shared::intops::iclip;
+use fast_avif_shared::iter::wrapping_iter;
+use fast_avif_shared::picture::Rav1dPicture;
+use fast_avif_shared::relaxed_atomic::RelaxedAtomic;
+use fast_avif_shared::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 use crate::decode::{
     rav1d_decode_frame_exit, rav1d_decode_frame_init, rav1d_decode_frame_init_cdf,
@@ -853,7 +853,7 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
         // and the caller itself finding no task, none would ever wake.
         assert!(
             !caller || ttd.helpers.load(Ordering::SeqCst) > ttd.parked.load(Ordering::SeqCst),
-            "rav1d: the caller waits for a frame and no worker runs ({} workers, {} waiting)",
+            "fast-avif: the caller waits for a frame and no worker runs ({} workers, {} waiting)",
             ttd.helpers.load(Ordering::SeqCst),
             ttd.parked.load(Ordering::SeqCst)
         );

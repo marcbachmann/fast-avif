@@ -34,10 +34,10 @@ pub mod rd;
 use std::cmp;
 use std::sync::{Arc, Condvar, Mutex};
 
+use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
+pub use fast_avif_shared::filter_trials::FilterTrials;
 use frame::{Coded, Encoder, Rd};
 use header::{Cdef, Colour, Frame, Quant, Sequence, Tiling};
-use rav1d_shared::dequant_tables::DAV1D_DQ_TBL;
-pub use rav1d_shared::filter_trials::FilterTrials;
 
 /// The headers of a still picture at `qidx`, monochrome or 4:4:4 YCbCr in BT.601 full range,
 /// with libaom's deblocking and CDEF strengths for its key frames at that qindex.
@@ -450,7 +450,7 @@ pub fn still_on(
     height: u32,
     planes: Arc<Vec<Vec<u8>>>,
     options: &Options,
-    spawner: Option<&rav1d_shared::Spawner>,
+    spawner: Option<&fast_avif_shared::Spawner>,
     trials: &dyn FilterTrials,
 ) -> Coded {
     let rows: Vec<&[u8]> = planes.iter().map(|p| p.as_slice()).collect();
@@ -505,7 +505,7 @@ pub(crate) fn still_rows(
     planes: &[&[u8]],
     options: &Options,
     timing: bool,
-    workers: Option<(&rav1d_shared::Spawner, &Arc<Vec<Vec<u8>>>)>,
+    workers: Option<(&fast_avif_shared::Spawner, &Arc<Vec<Vec<u8>>>)>,
 ) -> Encoder<Rd> {
     let mut e = encoder(width, height, planes, options, timing);
     let cols = e.frame.tiling.cols();

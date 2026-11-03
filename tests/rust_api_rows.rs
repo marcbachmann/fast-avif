@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use rav1d::{
+use fast_avif::{
     parse_sequence_header, Decoder, Picture, PictureAllocator, PictureBuffer, PictureParameters,
     PixelLayout, PlanarImageComponent, PlaneLayout, Rav1dError, Settings, Spawner,
     PICTURE_ALIGNMENT,
@@ -1056,7 +1056,7 @@ fn gives_each_picture_the_sequence_header_it_was_decoded_under() {
 
 fn check_sequence_header(
     p: &Picture,
-    parsed: Option<&rav1d::SequenceHeader>,
+    parsed: Option<&fast_avif::SequenceHeader>,
     file: &Path,
     checked: &mut usize,
 ) {

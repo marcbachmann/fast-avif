@@ -325,7 +325,7 @@ fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
 
 #[cfg(test)]
 mod tests {
-    use rav1d_dec::decode::order_palette;
+    use fast_avif_dec::decode::order_palette;
 
     use super::*;
     use crate::frame::tests::Rng;

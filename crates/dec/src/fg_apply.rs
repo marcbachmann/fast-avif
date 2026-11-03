@@ -2,11 +2,11 @@
 
 use std::cmp;
 
-use rav1d_shared::align::ArrayDefault;
-use rav1d_shared::bitdepth::{BitDepth, BPC};
-use rav1d_shared::headers::{Rav1dMatrixCoefficients, Rav1dPixelLayout};
-use rav1d_shared::picture::Rav1dPicture;
-use rav1d_shared::strided::Strided as _;
+use fast_avif_shared::align::ArrayDefault;
+use fast_avif_shared::bitdepth::{BitDepth, BPC};
+use fast_avif_shared::headers::{Rav1dMatrixCoefficients, Rav1dPixelLayout};
+use fast_avif_shared::picture::Rav1dPicture;
+use fast_avif_shared::strided::Strided as _;
 
 use crate::filmgrain::{Rav1dFilmGrainDSPContext, FG_BLOCK_SIZE};
 use crate::internal::GrainBD;

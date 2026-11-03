@@ -2,8 +2,8 @@
 //! search them at its default speeds: the frame header is written last, so the strengths can be
 //! chosen once every tile is coded.
 
-use rav1d_shared::filter_trials::FilterTrials;
-use rav1d_shared::headers::Rav1dFrameHeader;
+use fast_avif_shared::filter_trials::FilterTrials;
+use fast_avif_shared::headers::Rav1dFrameHeader;
 
 use crate::dist;
 use crate::frame::{Encoder, Rd};
@@ -235,13 +235,13 @@ mod tests {
                         .sum()
                 };
             let mut runs = 0;
-            rav1d_dec::DecoderTrials
+            fast_avif_dec::DecoderTrials
                 .trials(data, &mut trial_measure, &mut |trial| {
                     for &(lf, c) in &cands {
                         e.frame.lf = lf;
                         e.frame.cdef = Some(c);
                         let got = trial(&|hdr| put_filters(&e.frame, mono, cdef, hdr));
-                        let decoded = rav1d_dec::DecoderTrials.decoded(
+                        let decoded = fast_avif_dec::DecoderTrials.decoded(
                             e.bytes().into_boxed_slice(),
                             planes,
                             &mut decoded_measure,

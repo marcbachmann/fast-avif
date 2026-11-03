@@ -3,15 +3,15 @@ use std::hint::assert_unchecked;
 use std::ops::{Add, Shl, Shr};
 use std::{cmp, mem, ptr};
 
-use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynEntry, DynScaling};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
-use rav1d_shared::headers::{Rav1dFilmGrainData, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::intops::iclip;
-use rav1d_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
-use rav1d_shared::strided::Strided as _;
-use rav1d_shared::tables::DAV1D_GAUSSIAN_SEQUENCE;
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::bitdepth::{AsPrimitive, BitDepth, DynEntry, DynScaling};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::enum_map::{enum_map, enum_map_ty, DefaultValue};
+use fast_avif_shared::headers::{Rav1dFilmGrainData, Rav1dPixelLayoutSubSampled};
+use fast_avif_shared::intops::iclip;
+use fast_avif_shared::picture::{Rav1dPictureDataComponent, Rav1dPictureDataComponentOffset};
+use fast_avif_shared::strided::Strided as _;
+use fast_avif_shared::tables::DAV1D_GAUSSIAN_SEQUENCE;
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 use to_method::To;
 
 use crate::internal::GrainLut;
@@ -837,10 +837,10 @@ unsafe fn fguv_32x32xn_c_erased<
 /// sixteen-lane `tbl`s on NEON at 8 bpc, and from `vpgatherdd` with AVX2.
 mod rust_simd {
     #[cfg(target_arch = "x86_64")]
-    use rav1d_shared::simd128::I16x16;
-    use rav1d_shared::simd128::{I16x8, I32x4};
+    use fast_avif_shared::simd128::I16x16;
+    use fast_avif_shared::simd128::{I16x8, I32x4};
     #[cfg(target_arch = "aarch64")]
-    use rav1d_shared::simd128::{Lut256, U8x16};
+    use fast_avif_shared::simd128::{Lut256, U8x16};
     use zerocopy::{AsBytes, FromBytes};
 
     use super::*;
@@ -1548,20 +1548,20 @@ mod rust_simd {
     pub mod avx2_8 {
         use std::arch::x86_64::*;
 
-        use rav1d_shared::bitdepth::BitDepth8;
+        use fast_avif_shared::bitdepth::BitDepth8;
 
         use super::*;
 
         /// The scaling table with four bytes either side, for the gathers, aligned so that no
         /// gathered dword spans two cache lines: clipped pixels gather the last entry in
         /// every lane, which read in place from an aligned table makes eight split loads.
-        pub struct Scaling(rav1d_shared::align::Align64<[u8; 264]>);
+        pub struct Scaling(fast_avif_shared::align::Align64<[u8; 264]>);
 
         impl Scaling {
             pub fn new(t: &[u8]) -> Self {
                 let mut p = [0; 264];
                 p[4..260].copy_from_slice(&t[..256]);
-                Self(rav1d_shared::align::Align64(p))
+                Self(fast_avif_shared::align::Align64(p))
             }
         }
 
@@ -2161,7 +2161,7 @@ mod rust_simd {
     pub mod avx2_16 {
         use std::arch::x86_64::*;
 
-        use rav1d_shared::bitdepth::BitDepth16;
+        use fast_avif_shared::bitdepth::BitDepth16;
 
         use super::avx2_8::{Chunk, Offsets, CHUNK, LUT_LEN};
         use super::*;
@@ -2536,12 +2536,12 @@ mod rust_simd {
                 let scaling: &[u8] = $scaling;
                 let n = $bitdepth_max as usize + 1;
                 if n <= 1024 {
-                    let mut p = rav1d_shared::align::Align64([0; 1024 + 8]);
+                    let mut p = fast_avif_shared::align::Align64([0; 1024 + 8]);
                     p.0[4..][..n].copy_from_slice(&scaling[..n]);
                     let $t = &p.0[4..];
                     $e
                 } else {
-                    let mut p = rav1d_shared::align::Align64([0; 4096 + 8]);
+                    let mut p = fast_avif_shared::align::Align64([0; 4096 + 8]);
                     p.0[4..][..n].copy_from_slice(&scaling[..n]);
                     let $t = &p.0[4..];
                     $e
@@ -3250,7 +3250,7 @@ impl Rav1dFilmGrainDSPContext {
         #[cfg(not(target_arch = "x86_64"))]
         let gather = false;
         let _ = flags;
-        if !rav1d_shared::simd128::native() {
+        if !fast_avif_shared::simd128::native() {
             return self;
         }
         self.generate_grain_y = generate_grain_y::Fn::new(generate_grain_y_simd_erased::<BD>);
@@ -3287,9 +3287,9 @@ mod tests {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use rav1d_shared::align::{Align64, AlignedVec64, ArrayDefault};
-    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
+    use fast_avif_shared::align::{Align64, AlignedVec64, ArrayDefault};
+    use fast_avif_shared::bitdepth::{BitDepth16, BitDepth8};
+    use fast_avif_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
 
     use super::*;
 

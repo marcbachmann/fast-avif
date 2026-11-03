@@ -3,18 +3,18 @@
 use std::mem::MaybeUninit;
 use std::{cmp, mem, ptr, slice};
 
-use rav1d_shared::align::{Align16, AlignedVec64};
-use rav1d_shared::cpu::CpuFlags;
-use rav1d_shared::disjoint_mut::{
+use fast_avif_shared::align::{Align16, AlignedVec64};
+use fast_avif_shared::cpu::CpuFlags;
+use fast_avif_shared::disjoint_mut::{
     DisjointMut, DisjointMutArcSlice, DisjointMutGuard, DisjointMutSlice,
 };
-use rav1d_shared::env::{fix_mv_precision, get_gmv_2d, get_poc_diff};
-use rav1d_shared::error::Rav1dResult;
-use rav1d_shared::headers::{Rav1dFrameHeader, Rav1dSequenceHeader, Rav1dWarpedMotionType};
-use rav1d_shared::intops::{apply_sign, iclip};
-use rav1d_shared::intra_edge::EdgeFlags;
-use rav1d_shared::levels::{BlockSize, Mv, UnalignedMv};
-use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
+use fast_avif_shared::env::{fix_mv_precision, get_gmv_2d, get_poc_diff};
+use fast_avif_shared::error::Rav1dResult;
+use fast_avif_shared::headers::{Rav1dFrameHeader, Rav1dSequenceHeader, Rav1dWarpedMotionType};
+use fast_avif_shared::intops::{apply_sign, iclip};
+use fast_avif_shared::intra_edge::EdgeFlags;
+use fast_avif_shared::levels::{BlockSize, Mv, UnalignedMv};
+use fast_avif_shared::wrap_fn_ptr::wrap_fn_ptr;
 use zerocopy::{AsBytes, FromZeroes};
 
 use crate::internal::Bxy;
@@ -1605,7 +1605,7 @@ fn splat_mv_rust<'a>(rr: impl Iterator<Item = &'a mut [RefMvsBlock]>, rmv: &Alig
 /// [`splat_mv_rust`] with the width chosen once per call: four 12-byte blocks as three 16-byte
 /// stores, eight as three 32-byte ones with AVX2.
 mod rust_simd {
-    use rav1d_shared::simd128::U8x16;
+    use fast_avif_shared::simd128::U8x16;
 
     use super::*;
 
@@ -1799,12 +1799,12 @@ mod tests {
     }
 
     fn contexts() -> Vec<(&'static str, Rav1dRefmvsDSPContext)> {
-        rav1d_shared::cpu::rav1d_init_cpu();
+        fast_avif_shared::cpu::rav1d_init_cpu();
         vec![
             ("scalar", Rav1dRefmvsDSPContext::default()),
             (
                 "rust simd",
-                Rav1dRefmvsDSPContext::new(rav1d_shared::cpu::rav1d_get_cpu_flags()),
+                Rav1dRefmvsDSPContext::new(fast_avif_shared::cpu::rav1d_get_cpu_flags()),
             ),
         ]
     }

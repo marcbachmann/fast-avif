@@ -227,8 +227,8 @@ fn recenter(r: u32, v: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use rav1d_shared::msac::*;
-    use rav1d_shared::shared_bytes::SharedBytes;
+    use fast_avif_shared::msac::*;
+    use fast_avif_shared::shared_bytes::SharedBytes;
 
     use super::*;
 

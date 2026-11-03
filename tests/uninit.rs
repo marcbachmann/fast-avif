@@ -6,7 +6,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use rav1d::{Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
+use fast_avif::{Decoder, Picture, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
 
 static FILL: AtomicU8 = AtomicU8::new(0);
 

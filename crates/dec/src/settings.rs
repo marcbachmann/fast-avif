@@ -1,6 +1,6 @@
 use bitflags::bitflags;
-use rav1d_shared::in_range::InRange;
-use rav1d_shared::picture::Rav1dPicAllocator;
+use fast_avif_shared::in_range::InRange;
+use fast_avif_shared::picture::Rav1dPicAllocator;
 use strum::FromRepr;
 
 use crate::log::Rav1dLogger;
@@ -38,15 +38,15 @@ bitflags! {
         /// either because it's the start of a new coded sequence,
         /// or the decoder was flushed before it was generated.
         ///
-        /// [`Rav1dSequenceHeader`]: rav1d_shared::headers::Rav1dSequenceHeader
+        /// [`Rav1dSequenceHeader`]: fast_avif_shared::headers::Rav1dSequenceHeader
         const NEW_SEQUENCE = 1 << 0;
 
         /// The last returned picture contains a reference to a
         /// [`Rav1dSequenceHeader`] with new [`Rav1dSequenceHeaderOperatingParameterInfo`]
         /// for the current coded sequence.
         ///
-        /// [`Rav1dSequenceHeader`]: rav1d_shared::headers::Rav1dSequenceHeader
-        /// [`Rav1dSequenceHeaderOperatingParameterInfo`]: rav1d_shared::headers::Rav1dSequenceHeaderOperatingParameterInfo
+        /// [`Rav1dSequenceHeader`]: fast_avif_shared::headers::Rav1dSequenceHeader
+        /// [`Rav1dSequenceHeaderOperatingParameterInfo`]: fast_avif_shared::headers::Rav1dSequenceHeaderOperatingParameterInfo
         const NEW_OP_PARAMS_INFO = 1 << 1;
     }
 }

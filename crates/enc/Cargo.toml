@@ -1,16 +1,16 @@
 [package]
-name = "rav1d-enc"
+name = "fast-avif-enc"
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "An AV1 still-image encoder on the rav1d tables and DSP"
+description = "An AV1 still-image encoder on the fast-avif tables and DSP"
 license = "BSD-2-Clause"
 publish = false
 
 [dependencies]
-rav1d-shared = { path = "../shared", version = "1.1.0" }
+fast-avif-shared = { path = "../shared", version = "1.1.0" }
 strum = { version = "0.27", features = ["derive"] }
 
 [dev-dependencies]
 # The tests decode what they code.
-rav1d-dec = { path = "../dec", version = "1.1.0", features = ["encoder"] }
+fast-avif-dec = { path = "../dec", version = "1.1.0", features = ["encoder"] }
