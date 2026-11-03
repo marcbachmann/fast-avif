@@ -194,10 +194,9 @@ impl Decoder {
 
     /// Flush the decoder.
     ///
-    /// This flushes all delayed frames in the decoder and clears the internal decoder state.
-    ///
-    /// All currently pending frames are available afterwards via [`Decoder::get_picture`].
+    /// This drops all delayed frames and data still pending, and clears the internal decoder state.
     pub fn flush(&mut self) {
+        self.pending_data = None;
         rav1d_flush(&self.ctx);
     }
 

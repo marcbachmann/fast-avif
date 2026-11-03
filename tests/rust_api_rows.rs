@@ -418,6 +418,25 @@ fn drops_data_read_in_place_with_the_decoder() {
     assert!(Arc::try_unwrap(broken).is_ok(), "the failed data outlived the decoder");
 }
 
+/// A flush drops the data still pending, so the decoder takes data again and decodes it as a new
+/// one does.
+#[test]
+fn flush_drops_pending_data() {
+    let data = std::fs::read(intra()).unwrap();
+    let frames = ivf_frames(&data);
+    let shared: Vec<_> = frames[..3].iter().map(|f| Arc::new(f.to_vec())).collect();
+    let mut decoder = Open::new(true, false).decoder();
+    let sent: Vec<_> = shared.iter().map(|f| decoder.send_data_owned(Shared(f.clone()), None, None, None)).collect();
+    assert_eq!(sent[2], Err(Rav1dError::TryAgain), "{sent:?}");
+    decoder.flush();
+    assert_eq!(Arc::strong_count(&shared[2]), 1, "pending data held past the flush");
+    let (mut new, mut resumed) = (Decoded::default(), Decoded::default());
+    send_all(&mut Open::new(true, false).decoder(), &frames, &mut new);
+    send_all(&mut decoder, &frames, &mut resumed);
+    assert!(new.out.len() >= 3 && new.out.iter().all(|o| o.is_ok()), "{:?}", new.out);
+    assert_eq!(new.out, resumed.out);
+}
+
 /// A tile group after the frame fails the data at the `get_picture` after the picture's, by rows
 /// as when the frame is decoded whole.
 #[test]
