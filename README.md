@@ -51,6 +51,11 @@ cargo build --no-default-features --features="bitdepth_8"
 The SIMD kernels are written in Rust and selected at run time from the CPU's
 features; there is no assembly and no C to build.
 
+## Logging
+
+The decoder is silent unless `DEBUG` names `fast-avif`, as Node's `debug` reads it
+(`DEBUG=fast-avif`, `DEBUG=*`); it then writes why a header or a picture failed to stderr.
+
 ## Cross-Compiling
 
 rav1d can be cross-compiled for a target other than the host platform using the

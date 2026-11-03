@@ -1,10 +1,44 @@
 use std::fmt;
 use std::io::{stderr, Write as _};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) enum Rav1dLogger {
-    #[default]
     Stderr,
+}
+
+impl Rav1dLogger {
+    /// Stderr when `DEBUG` names `fast-avif`, read as Node's `debug` reads it.
+    pub(crate) fn from_env() -> Option<Self> {
+        std::env::var("DEBUG")
+            .is_ok_and(|debug| enabled(&debug, "fast-avif"))
+            .then_some(Self::Stderr)
+    }
+}
+
+/// Whether the comma or space separated `debug` names `name`, where `*` matches any run of
+/// characters and an entry starting with `-` excludes what it matches.
+fn enabled(debug: &str, name: &str) -> bool {
+    let mut on = false;
+    for entry in debug.split(|c: char| c == ',' || c.is_whitespace()) {
+        match entry.strip_prefix('-') {
+            Some(excluded) if glob(excluded, name) => return false,
+            Some(_) => {}
+            None => on |= !entry.is_empty() && glob(entry, name),
+        }
+    }
+    on
+}
+
+fn glob(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((head, rest)) => name.strip_prefix(head).is_some_and(|tail| {
+            tail.char_indices()
+                .map(|(i, _)| i)
+                .chain([tail.len()])
+                .any(|i| glob(rest, &tail[i..]))
+        }),
+    }
 }
 
 /// Any type implementing [`Rav1dLog`] can be used with [`write!`].
@@ -43,6 +77,36 @@ impl Rav1dLog for Option<Rav1dLogger> {
     fn write_fmt(&self, args: fmt::Arguments) {
         if let Some(logger) = self {
             logger.write_fmt(args);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_names_as_node_reads_them() {
+        for on in [
+            "fast-avif",
+            "*",
+            "fast-*",
+            "app, fast-avif",
+            "app fast-avif",
+            "*,-app",
+        ] {
+            assert!(enabled(on, "fast-avif"), "{on}");
+        }
+        for off in [
+            "",
+            "app",
+            "fast-avif:*",
+            "fast-avif-x",
+            "*,-fast-avif",
+            "-fast-avif,fast-avif",
+            "*,-fast*",
+        ] {
+            assert!(!enabled(off, "fast-avif"), "{off}");
         }
     }
 }

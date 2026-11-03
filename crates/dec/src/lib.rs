@@ -140,7 +140,7 @@ impl Default for Rav1dSettings {
             all_layers: true,
             frame_size_limit: 0,
             allocator: None,
-            logger: Some(Rav1dLogger::default()),
+            logger: Rav1dLogger::from_env(),
             strict_std_compliance: false,
             output_invisible_frames: false,
             inloop_filters: Rav1dInloopFilterType::all(),
