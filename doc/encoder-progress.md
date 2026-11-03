@@ -5,7 +5,7 @@ and one paragraph per step, newest first.
 
 ## State
 
-- Branch `crate-split` (four crates, no C boundary, no libc, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
+- Branch `crate-split` (four crates, no C boundary, no libc, formatted, on main 501fd216). Built: range encoder, headers, every intra tool with palettes, libaom's
   forward transforms, the RD search with RDOQ, tune IQ (Variance Boost, SSIM λ, quantizer
   matrices, chroma delta q), deblocking and CDEF strengths searched on the decoded picture.
 - Not yet: restoration, threads, alpha and lossless parity checks.
@@ -38,6 +38,24 @@ docker run --rm --cgroup-parent="$COMMANDQUEUE_SLICE" -v "$PWD":/work -v $D:/dep
 An incremental build takes about 17 s.
 
 ## Log
+
+**2026-11-03, the open items of the split.** Picture strides are never negative (`PlaneLayout`
+strides are `usize`), so the bottom-up handling and `with_offset`'s bit depth went. `Decoder::flush`
+drops the data still pending, so `send_data` after a flush no longer panics
+(`flush_drops_pending_data`). A panic in the `Drop` of data sent with `send_data_owned` is caught
+where the bytes drop, as for picture memory, and no longer hangs a frame-threaded decoder
+(`a_panicking_owner_drops_quietly`; it matters to consumers that unwind, as image-processing
+does). The workspace is formatted; the CNN weights keep libaom's layout. The gates found a real
+encoder bug: the column cache of the forward transform keyed on the transform, not on the lane
+that filled it, and rav1d's CPU flags read empty until initialized, so in tests a call could
+switch from the scalar to the SIMD lane and read a pass never made (`columns_cached` failed once
+in two runs); the key holds the lane and `columns_cached_across_lanes` alternates them. The
+encoder initializes the flags before it codes, so no stream changed. With the lane fix: clippy clean; lib 147 passed 16 ignored (dec 39, enc 56, shared 52);
+integration 18, 200 seeks 6656 pictures 0 differ; uninit 117 pictures 0 differ; meson 792 Ok, plain
+and `-f 2`; wasm32 checks; encoder 56 of 56 rows identical to the base. Faults: the flush, the
+owner's catch and the lane key each fail their named test. Pinned x86 A/B of the stride change
+against 47b13f31, three clean rounds (A/A within 0.7%): encode and decode within 0.3%, 279,889 B. image-processing's
+two `get_picture` loops decode with `max_frame_delay(1)`, so no frame thread drains there.
 
 **2026-11-03, no C boundary left.** On `crate-split`: the `Dav1d*` mirrors, the `include::dav1d`
 layout, the C allocator and logger callbacks, `CRef`/`CBox`/`CArc` and user data, `extern "C"` on

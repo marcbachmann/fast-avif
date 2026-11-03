@@ -154,7 +154,7 @@ pub fn forward(residual: &[i16], stride: usize, coefs: &mut [i32], size: TxfmSiz
 /// transform: of the reduced intra set's five, DCT_DCT and DCT_ADST share it, as do
 /// ADST_DCT and ADST_ADST.
 pub struct Columns {
-    key: Option<(Txfm1d, bool)>,
+    key: Option<(Txfm1d, bool, Lane)>,
     buf: ColumnBuf,
 }
 
@@ -185,16 +185,28 @@ impl Columns {
         size: TxfmSize,
         ty: TxfmType,
     ) {
+        self.forward_in(Lane::detect(), residual, stride, coefs, size, ty)
+    }
+
+    fn forward_in(
+        &mut self,
+        lane: Lane,
+        residual: &[i16],
+        stride: usize,
+        coefs: &mut [i32],
+        size: TxfmSize,
+        ty: TxfmType,
+    ) {
         if ty == WHT_WHT {
             return fdct::forward(residual, stride, coefs, size, ty);
         }
         let cfg = Config::new(size, ty);
-        let key = Some((cfg.col, cfg.ud_flip));
+        let key = Some((cfg.col, cfg.ud_flip, lane));
         let have = self.key == key;
         self.key = key;
         let coefs = &mut coefs[..cfg.w.min(32) * cfg.h.min(32)];
         assert!(stride >= cfg.w && residual.len() >= (cfg.h - 1) * stride + cfg.w);
-        match Lane::detect() {
+        match lane {
             Lane::Scalar => scalar::forward(residual, stride, coefs, &cfg),
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Lane::Simd => {
@@ -365,6 +377,31 @@ mod tests {
                     columns.forward(&block, w, &mut got, size, ty);
                     assert!(want == got, "{size:?} {ty}: the cached columns differ");
                 }
+            }
+        }
+    }
+
+    /// A cache filled on one lane is not read on the other: rav1d's CPU flags read empty until
+    /// they are initialized, so the lane can change between two calls.
+    #[test]
+    fn columns_cached_across_lanes() {
+        let lanes = Lane::testable();
+        for size in sizes() {
+            let types: Vec<TxfmType> = (0..WHT_WHT).filter(|&ty| decodable(size, ty)).collect();
+            let block = blocks(size, 0x9e37_79b9 ^ size as u64, 4, 255).swap_remove(0);
+            let (w, _) = dimensions(size);
+            let n = cw_ch(size);
+            let mut columns = Columns::new();
+            for (i, &ty) in types.iter().chain(&types).enumerate() {
+                let lane = lanes[i % lanes.len()];
+                let mut want = vec![i32::MIN; n];
+                let mut got = vec![i32::MAX; n];
+                forward(&block, w, &mut want, size, ty);
+                columns.forward_in(lane, &block, w, &mut got, size, ty);
+                assert!(
+                    want == got,
+                    "{size:?} {ty} on {lane:?}: the cached columns differ"
+                );
             }
         }
     }
