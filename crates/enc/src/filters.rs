@@ -5,7 +5,7 @@
 use crate::dist;
 use crate::frame::{Encoder, Rd};
 use crate::header::{Cdef, Frame};
-use rav1d_shared::include::dav1d::headers::Rav1dFrameHeader;
+use rav1d_shared::headers::Rav1dFrameHeader;
 use rav1d_shared::filter_trials::FilterTrials;
 
 /// The header a decoder reads from `fr`'s filter fields, written into `hdr`.

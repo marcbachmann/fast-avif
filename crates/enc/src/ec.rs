@@ -228,8 +228,7 @@ fn recenter(r: u32, v: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rav1d_shared::c_arc::CArc;
-    use rav1d_shared::c_box::CRef;
+    use rav1d_shared::shared_bytes::SharedBytes;
     use rav1d_shared::msac::*;
 
     struct Rng(u64);
@@ -337,7 +336,7 @@ mod tests {
     }
 
     fn decoder(data: Vec<u8>) -> MsacContext {
-        let data = CArc::wrap(CRef::Box(data.into_boxed_slice())).unwrap();
+        let data = SharedBytes::new(data);
         MsacContext::new(data, false)
     }
 

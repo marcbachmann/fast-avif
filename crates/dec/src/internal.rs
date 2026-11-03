@@ -1,4 +1,3 @@
-use std::ffi::{c_int, c_uint};
 use std::mem;
 use std::ops::{Deref, Range};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
@@ -6,7 +5,6 @@ use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
 use atomig::{Atom, Atomic};
-use rav1d_shared::c_types::ptrdiff_t;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use strum::FromRepr;
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
@@ -19,15 +17,15 @@ use rav1d_shared::disjoint_mut::{DisjointImmutGuard, DisjointMut, DisjointMutArc
 use rav1d_shared::env::BlockContext;
 use rav1d_shared::error::Rav1dError;
 use crate::filmgrain::{Rav1dFilmGrainDSPContext, GRAIN_HEIGHT, GRAIN_WIDTH};
-use rav1d_shared::include::common::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
-use rav1d_shared::include::dav1d::common::Rav1dDataProps;
-use rav1d_shared::include::dav1d::data::Rav1dData;
-use crate::include::dav1d::dav1d::{Rav1dDecodeFrameType, Rav1dEventFlags, Rav1dInloopFilterType};
-use rav1d_shared::include::dav1d::headers::{
-    DRav1d, Dav1dFrameHeader, Dav1dSequenceHeader, Rav1dContentLightLevel, Rav1dFrameHeader,
+use rav1d_shared::bitdepth::{BitDepth, BitDepth16, BitDepth8, BPC};
+use rav1d_shared::props::Rav1dDataProps;
+use rav1d_shared::data::Rav1dData;
+use crate::settings::{Rav1dDecodeFrameType, Rav1dEventFlags, Rav1dInloopFilterType};
+use rav1d_shared::headers::{
+    Rav1dContentLightLevel, Rav1dFrameHeader,
     Rav1dITUTT35, Rav1dMasteringDisplay, Rav1dSequenceHeader, Rav1dWarpedMotionParams,
 };
-use rav1d_shared::include::dav1d::picture::{Rav1dPicAllocator, Rav1dPicture};
+use rav1d_shared::picture::{Rav1dPicAllocator, Rav1dPicture};
 use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN, SCRATCH_EDGE_LEN};
 use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
 use rav1d_shared::levels::{Av1Block, Filter2d, SegmentId, TxfmType, WHT_WHT};
@@ -40,7 +38,6 @@ use crate::mc::Rav1dMCDSPContext;
 use rav1d_shared::msac::MsacContext;
 use crate::pal::Rav1dPalDSPContext;
 use crate::picture::{PictureFlags, Rav1dThreadPicture};
-use rav1d_shared::pool::MemPool;
 use crate::recon::{
     rav1d_backup_ipred_edge, rav1d_copy_pal_block_uv, rav1d_copy_pal_block_y, rav1d_filter_sbrow,
     rav1d_filter_sbrow_cdef, rav1d_filter_sbrow_deblock_cols, rav1d_filter_sbrow_deblock_rows,
@@ -154,8 +151,8 @@ impl Default for &'static Rav1dBitDepthDSPContext {
 
 #[derive(Clone, Default)]
 pub(crate) struct Rav1dTileGroupHeader {
-    pub start: c_int,
-    pub end: c_int,
+    pub start: i32,
+    pub end: i32,
 }
 
 #[derive(Clone, Default)]
@@ -191,7 +188,7 @@ impl Default for TaskType {
 #[repr(C)]
 pub(crate) struct Rav1dContextFrameThread {
     pub out_delayed: Box<[Rav1dThreadPicture]>,
-    pub next: c_uint,
+    pub next: u32,
 }
 
 pub type GrainLut<Entry> = [[Entry; GRAIN_WIDTH]; GRAIN_HEIGHT + 1];
@@ -299,7 +296,7 @@ pub(crate) struct Rav1dContextRefs {
     pub p: Rav1dThreadPicture,
     pub segmap: Option<DisjointMutArcSlice<SegmentId>>,
     pub refmvs: Option<DisjointMutArcSlice<RefMvsTemporalBlock>>,
-    pub refpoc: [c_uint; 7],
+    pub refpoc: [u32; 7],
 }
 
 pub(crate) enum Rav1dContextTaskType {
@@ -347,9 +344,9 @@ pub struct Rav1dState {
     /// Cache of OBUs that make up a single frame before we submit them
     /// to a frame worker to be decoded.
     pub(crate) tiles: Vec<Rav1dTileGroup>,
-    pub(crate) n_tiles: c_int,
-    pub(crate) seq_hdr: Option<Arc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>>, // TODO(kkysen) Previously pooled.
-    pub(crate) frame_hdr: Option<Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>, // TODO(kkysen) Previously pooled.
+    pub(crate) n_tiles: i32,
+    pub(crate) seq_hdr: Option<Arc<Rav1dSequenceHeader>>, // TODO(kkysen) Previously pooled.
+    pub(crate) frame_hdr: Option<Arc<Rav1dFrameHeader>>, // TODO(kkysen) Previously pooled.
     pub(crate) content_light: Option<Arc<Rav1dContentLightLevel>>,
     pub(crate) mastering_display: Option<Arc<Rav1dMasteringDisplay>>,
 
@@ -368,7 +365,7 @@ pub struct Rav1dState {
     pub(crate) refs: [Rav1dContextRefs; 8],
     pub(crate) cdf: [CdfThreadContext; 8], // Previously pooled
 
-    pub(crate) operating_point_idc: c_uint,
+    pub(crate) operating_point_idc: u32,
     pub(crate) max_spatial_id: u8,
     pub(crate) drain: bool,
     pub(crate) frame_flags: PictureFlags,
@@ -391,8 +388,8 @@ pub struct Rav1dState {
 #[derive(Clone, Copy)]
 pub(crate) struct FrameRows {
     /// The next superblock row.
-    pub sby: c_int,
-    pub refresh_frame_flags: c_uint,
+    pub sby: i32,
+    pub refresh_frame_flags: u32,
 }
 
 #[derive(Default)]
@@ -418,7 +415,7 @@ pub struct Rav1dContext {
     pub(crate) apply_grain: bool,
     pub(crate) operating_point: u8,
     pub(crate) all_layers: bool,
-    pub(crate) frame_size_limit: c_uint,
+    pub(crate) frame_size_limit: u32,
     pub(crate) strict_std_compliance: bool,
     pub(crate) output_invisible_frames: bool,
     pub(crate) inloop_filters: Rav1dInloopFilterType,
@@ -428,8 +425,6 @@ pub struct Rav1dContext {
     pub(crate) decode_frame_type: Rav1dDecodeFrameType,
 
     pub(crate) logger: Option<Rav1dLogger>,
-
-    pub(crate) picture_pool: Arc<MemPool<u8>>,
 }
 
 // SAFETY:
@@ -443,23 +438,23 @@ unsafe impl Sync for Rav1dContext {}
 #[repr(C)]
 pub struct Rav1dTask {
     // frame thread id
-    pub frame_idx: c_uint,
-    pub tile_idx: c_uint,
+    pub frame_idx: u32,
+    pub tile_idx: u32,
     // task work
     pub type_0: TaskType,
     // sbrow
-    pub sby: c_int,
+    pub sby: i32,
 
     // task dependencies
-    pub recon_progress: c_int,
-    pub deblock_progress: c_int,
+    pub recon_progress: i32,
+    pub deblock_progress: i32,
     pub deps_skip: RelaxedAtomic<i32>,
     // only used in task queue
     pub next: Atomic<Rav1dTaskIndex>,
 }
 
 impl Rav1dTask {
-    pub fn init(frame_idx: c_uint) -> Self {
+    pub fn init(frame_idx: u32) -> Self {
         Self {
             type_0: TaskType::Init,
             frame_idx,
@@ -497,8 +492,8 @@ impl Rav1dTask {
 #[derive(Default)]
 #[repr(C)]
 pub struct ScalableMotionParams {
-    pub scale: c_int, // if no scaling, this is 0
-    pub step: c_int,
+    pub scale: i32, // if no scaling, this is 0
+    pub step: i32,
 }
 
 pub(crate) struct Rav1dFrameContextBdFn {
@@ -509,7 +504,7 @@ pub(crate) struct Rav1dFrameContextBdFn {
     pub refilter_sbrow: FilterSbrowFn,
     pub filter_sbrow_deblock_cols: FilterSbrowFn,
     pub filter_sbrow_deblock_rows: FilterSbrowFn,
-    pub filter_sbrow_cdef: fn(&Rav1dContext, &Rav1dFrameData, &mut Rav1dTaskContext, c_int) -> (),
+    pub filter_sbrow_cdef: fn(&Rav1dContext, &Rav1dFrameData, &mut Rav1dTaskContext, i32) -> (),
     pub filter_sbrow_resize: FilterSbrowFn,
     pub filter_sbrow_lr: FilterSbrowFn,
     pub backup_ipred_edge: BackupIpredEdgeFn,
@@ -768,7 +763,7 @@ impl Rav1dFrameContext {
         self.in_cdf.try_read().unwrap()
     }
 
-    pub fn frame_hdr(&self) -> Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>> {
+    pub fn frame_hdr(&self) -> Arc<Rav1dFrameHeader> {
         self.data
             .try_read()
             .unwrap()
@@ -782,8 +777,8 @@ impl Rav1dFrameContext {
 #[derive(Default)]
 #[repr(C)]
 pub(crate) struct Rav1dFrameData {
-    pub seq_hdr: Option<Arc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>>,
-    pub frame_hdr: Option<Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>,
+    pub seq_hdr: Option<Arc<Rav1dSequenceHeader>>,
+    pub frame_hdr: Option<Arc<Rav1dFrameHeader>>,
     pub refp: [Rav1dThreadPicture; 7],
     // during block coding / reconstruction
     pub cur: Rav1dPicture,
@@ -793,16 +788,16 @@ pub(crate) struct Rav1dFrameData {
     pub ref_mvs: [Option<DisjointMutArcSlice<RefMvsTemporalBlock>>; 7],
     pub cur_segmap: Option<DisjointMutArcSlice<SegmentId>>, // Previously pooled.
     pub prev_segmap: Option<DisjointMutArcSlice<SegmentId>>,
-    pub refpoc: [c_uint; 7],
-    pub refrefpoc: [[c_uint; 7]; 7],
+    pub refpoc: [u32; 7],
+    pub refrefpoc: [[u32; 7]; 7],
     pub gmv_warp_allowed: [u8; 7],
     pub out_cdf: CdfThreadContext,
     pub tiles: Vec<Rav1dTileGroup>,
 
     // for scalable references
     pub svc: [[ScalableMotionParams; 2]; 7], /* [2 x,y][7] */
-    pub resize_step: [c_int; 2],             /* y, uv */
-    pub resize_start: [c_int; 2],            /* y, uv */
+    pub resize_step: [i32; 2],             /* y, uv */
+    pub resize_start: [i32; 2],            /* y, uv */
 
     pub ts: Vec<Rav1dTileState>,
     pub dsp: &'static Rav1dBitDepthDSPContext,
@@ -814,29 +809,29 @@ pub(crate) struct Rav1dFrameData {
     pub ipred_edge: DisjointMut<AlignedVec64<u8>>, // DynPixel
     pub ipred_edge_off: usize,
     /// Superblock rows `ipred_edge` holds, a ring when one thread decodes the rows in turn.
-    pub ipred_edge_rows: c_int,
+    pub ipred_edge_rows: i32,
 
-    pub b4_stride: ptrdiff_t,
-    pub w4: c_int,
-    pub h4: c_int,
-    pub bw: c_int,
-    pub bh: c_int,
-    pub sb128w: c_int,
-    pub sb128h: c_int,
-    pub sbh: c_int,
-    pub sb_shift: c_int,
-    pub sb_step: c_int,
-    pub sr_sb128w: c_int,
+    pub b4_stride: isize,
+    pub w4: i32,
+    pub h4: i32,
+    pub bw: i32,
+    pub bh: i32,
+    pub sb128w: i32,
+    pub sb128h: i32,
+    pub sbh: i32,
+    pub sb_shift: i32,
+    pub sb_step: i32,
+    pub sr_sb128w: i32,
     pub dq: [[[RelaxedAtomic<u16>; 2]; 3]; SegmentId::COUNT], /* [SegmentId::COUNT][3 plane][2 dc/ac] */
     pub qm: [[Option<&'static [u8]>; 3]; 19],                 /* [3 plane][19] */
     pub a: Vec<BlockContext>,                                 /* len = w*tile_rows */
     pub rf: RefMvsFrame,
     pub jnt_weights: [[u8; 7]; 7],
-    pub bitdepth_max: c_int,
+    pub bitdepth_max: i32,
 
     pub frame_thread: Rav1dFrameContextFrameThread,
     pub lf: Rav1dFrameContextLf,
-    pub lowest_pixel_mem: DisjointMut<Vec<[[c_int; 2]; 7]>>,
+    pub lowest_pixel_mem: DisjointMut<Vec<[[i32; 2]; 7]>>,
 }
 
 impl Rav1dFrameData {
@@ -854,17 +849,17 @@ impl Rav1dFrameData {
     }
 
     /// The row of `lf.level` holding 4-pixel row `y4` of a plane.
-    pub fn lf_level_row(&self, y4: c_int) -> usize {
+    pub fn lf_level_row(&self, y4: i32) -> usize {
         (if self.lf.ring { 1 + y4.rem_euclid(self.sb_step) } else { y4 }) as usize
     }
 
     /// Where the 128-pixel row `sb128y` starts in `lf.mask`.
-    pub fn lf_mask_row(&self, sb128y: c_int) -> usize {
+    pub fn lf_mask_row(&self, sb128y: i32) -> usize {
         (if self.lf.ring { sb128y.rem_euclid(2) } else { sb128y } * self.sb128w) as usize
     }
 
     /// Where superblock row `sby`'s bottom edge starts in each of `ipred_edge`'s planes.
-    pub fn ipred_edge_row(&self, sby: c_int) -> usize {
+    pub fn ipred_edge_row(&self, sby: i32) -> usize {
         (self.sb128w * 128 * sby.rem_euclid(self.ipred_edge_rows)) as usize
     }
 }
@@ -1144,7 +1139,7 @@ impl TaskContextScratch {
 #[derive(Default)]
 #[repr(C)]
 pub struct Rav1dTaskContextFrameThread {
-    pub pass: c_int,
+    pub pass: i32,
 }
 
 #[repr(C)]
@@ -1173,8 +1168,8 @@ impl Rav1dTaskContextTaskThread {
 
 #[derive(Clone, Copy, Default)]
 pub struct Bxy {
-    pub x: c_int,
-    pub y: c_int,
+    pub x: i32,
+    pub y: i32,
 }
 
 #[repr(C)]
@@ -1192,7 +1187,7 @@ pub(crate) struct Rav1dTaskContext {
     pub warpmv: Rav1dWarpedMotionParams,
     /// Index into the relevant `Rav1dFrameContext::lf.mask` array.
     pub lf_mask: Option<usize>,
-    pub top_pre_cdef_toggle: c_int,
+    pub top_pre_cdef_toggle: i32,
     pub cur_sb_cdef_idx: usize, // index into `Rav1dFrameContext::lf.mask.cdef_idx`
     // for chroma sub8x8, we need to know the filter for all 4 subblocks in
     // a 4x4 area, but the top/left one can go out of cache already, so this

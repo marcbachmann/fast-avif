@@ -1,19 +1,17 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::c_int;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
 use bitflags::bitflags;
 
 use rav1d_shared::error::{Rav1dError, Rav1dResult};
-use rav1d_shared::include::dav1d::common::Rav1dDataProps;
-use crate::include::dav1d::dav1d::Rav1dEventFlags;
-use rav1d_shared::include::dav1d::headers::{
-    DRav1d, Dav1dFrameHeader, Dav1dITUTT35, Dav1dSequenceHeader, Rav1dContentLightLevel,
+use rav1d_shared::props::Rav1dDataProps;
+use crate::settings::Rav1dEventFlags;
+use rav1d_shared::headers::{
+    Rav1dContentLightLevel,
     Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay, Rav1dSequenceHeader,
 };
-use rav1d_shared::include::dav1d::picture::{Rav1dPicAllocator, Rav1dPicture};
+use rav1d_shared::picture::{alloc_picture_data, Rav1dPicAllocator, Rav1dPicture};
 use crate::internal::{Rav1dFrameContext, Rav1dFrameData};
 use crate::log::{Rav1dLog as _, Rav1dLogger};
 
@@ -55,10 +53,10 @@ pub(crate) struct Rav1dThreadPicture {
 fn picture_alloc_with_edges(
     logger: &Option<Rav1dLogger>,
     p: &mut Rav1dPicture,
-    w: c_int,
-    h: c_int,
-    seq_hdr: Option<Arc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>>,
-    frame_hdr: Option<Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>,
+    w: i32,
+    h: i32,
+    seq_hdr: Option<Arc<Rav1dSequenceHeader>>,
+    frame_hdr: Option<Arc<Rav1dFrameHeader>>,
     bpc: u8,
     p_allocator: &Rav1dPicAllocator,
 ) -> Rav1dResult {
@@ -67,7 +65,7 @@ fn picture_alloc_with_edges(
         return Err(Rav1dError::Other);
     }
     assert!(bpc > 0 && bpc <= 16);
-    let pic = p_allocator.alloc_picture_data(w, h, seq_hdr.unwrap(), frame_hdr)?;
+    let pic = alloc_picture_data(p_allocator, w, h, seq_hdr.unwrap(), frame_hdr)?;
     *p = pic;
 
     Ok(())
@@ -77,7 +75,7 @@ pub fn rav1d_picture_copy_props(
     p: &mut Rav1dPicture,
     content_light: Option<Arc<Rav1dContentLightLevel>>,
     mastering_display: Option<Arc<Rav1dMasteringDisplay>>,
-    itut_t35: Arc<DRav1d<Box<[Rav1dITUTT35]>, Box<[Dav1dITUTT35]>>>,
+    itut_t35: Arc<Box<[Rav1dITUTT35]>>,
     props: Rav1dDataProps,
 ) {
     p.m = props;
@@ -103,7 +101,7 @@ pub(crate) fn rav1d_thread_picture_alloc(
 ) -> Rav1dResult {
     let p = &mut f.sr_cur;
     let have_frame_mt = fc.len() > 1;
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
     picture_alloc_with_edges(
         logger,
         &mut p.p,
@@ -147,7 +145,7 @@ pub(crate) fn rav1d_thread_picture_alloc(
 pub(crate) fn rav1d_picture_alloc_copy(
     logger: &Option<Rav1dLogger>,
     dst: &mut Rav1dPicture,
-    w: c_int,
+    w: i32,
     src: &Rav1dPicture,
 ) -> Rav1dResult {
     picture_alloc_with_edges(

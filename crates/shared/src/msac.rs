@@ -1,12 +1,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::{c_int, c_uint};
 use std::ops::{Deref, DerefMut, Range};
 use std::{mem, ptr};
 
-use crate::c_arc::CArc;
-use crate::include::common::attributes::clz;
-use crate::include::common::intops::{inv_recenter, ulog2};
+use crate::shared_bytes::SharedBytes;
+use crate::attributes::clz;
+use crate::intops::{inv_recenter, ulog2};
 use crate::simd128::I16x8;
 
 pub type EcWin = usize;
@@ -57,9 +55,9 @@ impl From<&[u8]> for MsacBuf {
 pub struct MsacState {
     buf: MsacBuf,
     pub dif: EcWin,
-    pub rng: c_uint,
-    pub cnt: c_int,
-    allow_update_cdf: c_int,
+    pub rng: u32,
+    pub cnt: i32,
+    allow_update_cdf: i32,
 }
 
 impl Default for MsacState {
@@ -83,7 +81,7 @@ impl MsacState {
 #[derive(Default)]
 pub struct MsacContext {
     state: MsacState,
-    data: Option<CArc<[u8]>>,
+    data: Option<SharedBytes>,
 }
 
 impl Deref for MsacContext {
@@ -115,16 +113,16 @@ impl MsacContext {
 
 /// Return value uses `n` bits.
 #[inline]
-pub fn rav1d_msac_decode_bools(s: &mut MsacContext, n: u8) -> c_uint {
+pub fn rav1d_msac_decode_bools(s: &mut MsacContext, n: u8) -> u32 {
     let mut v = 0;
     for _ in 0..n {
-        v = v << 1 | rav1d_msac_decode_bool_equi(s) as c_uint;
+        v = v << 1 | rav1d_msac_decode_bool_equi(s) as u32;
     }
     v
 }
 
 #[inline]
-pub fn rav1d_msac_decode_uniform(s: &mut MsacContext, n: c_uint) -> c_int {
+pub fn rav1d_msac_decode_uniform(s: &mut MsacContext, n: u32) -> i32 {
     assert!(n > 0);
     let l = ulog2(n) as u8 + 1;
     assert!(l > 1);
@@ -133,12 +131,12 @@ pub fn rav1d_msac_decode_uniform(s: &mut MsacContext, n: c_uint) -> c_int {
     (if v < m {
         v
     } else {
-        (v << 1) - m + rav1d_msac_decode_bool_equi(s) as c_uint
-    }) as c_int
+        (v << 1) - m + rav1d_msac_decode_bool_equi(s) as u32
+    }) as i32
 }
 
-const EC_PROB_SHIFT: c_uint = 6;
-const EC_MIN_PROB: c_uint = 4;
+const EC_PROB_SHIFT: u32 = 6;
+const EC_MIN_PROB: u32 = 4;
 const _: () = assert!(EC_MIN_PROB <= (1 << EC_PROB_SHIFT) / 16);
 
 const EC_WIN_SIZE: usize = mem::size_of::<EcWin>() << 3;
@@ -152,7 +150,7 @@ const EC_WIN_SIZE: usize = mem::size_of::<EcWin>() << 3;
 #[cfg_attr(target_arch = "x86_64", cold, inline(never))]
 fn ctx_refill(s: &mut MsacContext) {
     const W: usize = mem::size_of::<EcWin>();
-    let c = EC_WIN_SIZE as c_int - 24 - s.cnt;
+    let c = EC_WIN_SIZE as i32 - 24 - s.cnt;
     debug_assert!(c >= 0 && c as usize <= EC_WIN_SIZE - 8);
     let buf = &s.data()[s.buf_index()..];
     // The fallback takes values, not `s`, so the caller's state can stay in registers across it.
@@ -162,7 +160,7 @@ fn ctx_refill(s: &mut MsacContext) {
             let c = c as u32;
             (
                 s.dif | window >> (EC_WIN_SIZE as u32 - 8 - c) & !((1 << (c & 7)) - 1),
-                EC_WIN_SIZE as c_int - 24 - ((c & 7) as c_int - 8),
+                EC_WIN_SIZE as i32 - 24 - ((c & 7) as i32 - 8),
                 c as usize / 8 + 1,
             )
         }
@@ -175,7 +173,7 @@ fn ctx_refill(s: &mut MsacContext) {
 
 /// The new `dif` and `cnt`, and the count of bytes read from `buf`.
 #[cold]
-fn ctx_refill_bytes(buf: &[u8], mut dif: EcWin, mut c: c_int) -> (EcWin, c_int, usize) {
+fn ctx_refill_bytes(buf: &[u8], mut dif: EcWin, mut c: i32) -> (EcWin, i32, usize) {
     let mut read = 0;
     loop {
         let Some(&byte) = buf.get(read) else {
@@ -190,18 +188,18 @@ fn ctx_refill_bytes(buf: &[u8], mut dif: EcWin, mut c: c_int) -> (EcWin, c_int, 
             break;
         }
     }
-    (dif, (EC_WIN_SIZE as c_int) - 24 - c, read)
+    (dif, (EC_WIN_SIZE as i32) - 24 - c, read)
 }
 
 /// The decoder state the symbol decoders work on: in a [`MsacContext`], or in the locals of a
 /// [`MsacLocal`].
 trait Ec {
     fn dif(&self) -> EcWin;
-    fn rng(&self) -> c_uint;
-    fn cnt(&self) -> c_int;
+    fn rng(&self) -> u32;
+    fn cnt(&self) -> i32;
     fn set_dif(&mut self, dif: EcWin);
-    fn set_rng(&mut self, rng: c_uint);
-    fn set_cnt(&mut self, cnt: c_int);
+    fn set_rng(&mut self, rng: u32);
+    fn set_cnt(&mut self, cnt: i32);
     fn update_cdf(&self) -> bool;
     fn refill(&mut self);
 }
@@ -213,12 +211,12 @@ impl Ec for MsacContext {
     }
 
     #[inline(always)]
-    fn rng(&self) -> c_uint {
+    fn rng(&self) -> u32 {
         self.state.rng
     }
 
     #[inline(always)]
-    fn cnt(&self) -> c_int {
+    fn cnt(&self) -> i32 {
         self.state.cnt
     }
 
@@ -228,12 +226,12 @@ impl Ec for MsacContext {
     }
 
     #[inline(always)]
-    fn set_rng(&mut self, rng: c_uint) {
+    fn set_rng(&mut self, rng: u32) {
         self.state.rng = rng;
     }
 
     #[inline(always)]
-    fn set_cnt(&mut self, cnt: c_int) {
+    fn set_cnt(&mut self, cnt: i32) {
         self.state.cnt = cnt;
     }
 
@@ -253,8 +251,8 @@ impl Ec for MsacContext {
 /// passes through memory, a store-to-load forward on the chain from one symbol to the next.
 pub struct MsacLocal<'a> {
     dif: EcWin,
-    rng: c_uint,
-    cnt: c_int,
+    rng: u32,
+    cnt: i32,
     update_cdf: bool,
     s: &'a mut MsacContext,
 }
@@ -297,7 +295,7 @@ impl Ec for MsacLocal<'_> {
     }
 
     #[inline(always)]
-    fn rng(&self) -> c_uint {
+    fn rng(&self) -> u32 {
         if IN_REGS {
             self.rng
         } else {
@@ -306,7 +304,7 @@ impl Ec for MsacLocal<'_> {
     }
 
     #[inline(always)]
-    fn cnt(&self) -> c_int {
+    fn cnt(&self) -> i32 {
         if IN_REGS {
             self.cnt
         } else {
@@ -324,7 +322,7 @@ impl Ec for MsacLocal<'_> {
     }
 
     #[inline(always)]
-    fn set_rng(&mut self, rng: c_uint) {
+    fn set_rng(&mut self, rng: u32) {
         if IN_REGS {
             self.rng = rng
         } else {
@@ -333,7 +331,7 @@ impl Ec for MsacLocal<'_> {
     }
 
     #[inline(always)]
-    fn set_cnt(&mut self, cnt: c_int) {
+    fn set_cnt(&mut self, cnt: i32) {
         if IN_REGS {
             self.cnt = cnt
         } else {
@@ -361,7 +359,7 @@ impl Ec for MsacLocal<'_> {
 
 impl MsacLocal<'_> {
     #[inline]
-    pub fn rng(&self) -> c_uint {
+    pub fn rng(&self) -> u32 {
         Ec::rng(self)
     }
 
@@ -397,10 +395,10 @@ impl MsacLocal<'_> {
 
     /// Return value uses `n` bits.
     #[inline]
-    pub fn bools(&mut self, n: u8) -> c_uint {
+    pub fn bools(&mut self, n: u8) -> u32 {
         let mut v = 0;
         for _ in 0..n {
-            v = v << 1 | self.bool_equi() as c_uint;
+            v = v << 1 | self.bool_equi() as u32;
         }
         v
     }
@@ -412,12 +410,12 @@ impl MsacLocal<'_> {
 }
 
 #[inline]
-fn ctx_norm<S: Ec>(s: &mut S, dif: EcWin, rng: c_uint) {
+fn ctx_norm<S: Ec>(s: &mut S, dif: EcWin, rng: u32) {
     ctx_norm_by(s, dif, rng, 15 ^ (31 ^ clz(rng)));
 }
 
 #[inline]
-fn ctx_norm_by<S: Ec>(s: &mut S, dif: EcWin, rng: c_uint, d: c_int) {
+fn ctx_norm_by<S: Ec>(s: &mut S, dif: EcWin, rng: u32, d: i32) {
     let cnt = s.cnt();
     debug_assert!(rng <= 65535);
     s.set_dif(dif << d);
@@ -437,14 +435,14 @@ fn rav1d_msac_decode_bool_equi_rust<S: Ec>(s: &mut S) -> bool {
     let (bit, dif, v) = split_at(dif, r, (r >> 8 << 7) + EC_MIN_PROB);
     // Half of an `r` of at least 0x8000 is at least 0x3ffc, so the shift is 0, 1 or 2, read off
     // the top bits without a bit scan, as in the asm.
-    let d = (0xbfff - v as c_int) >> 14;
+    let d = (0xbfff - v as i32) >> 14;
     debug_assert_eq!(d, 15 ^ (31 ^ clz(v)));
     ctx_norm_by(s, dif, v, d);
     bit
 }
 
 #[cfg_attr(target_arch = "x86_64", inline(always))]
-fn rav1d_msac_decode_bool_rust<S: Ec>(s: &mut S, f: c_uint) -> bool {
+fn rav1d_msac_decode_bool_rust<S: Ec>(s: &mut S, f: u32) -> bool {
     let r = s.rng();
     let dif = s.dif();
     debug_assert!(dif >> (EC_WIN_SIZE - 16) < r as EcWin);
@@ -458,7 +456,7 @@ fn rav1d_msac_decode_bool_rust<S: Ec>(s: &mut S, f: c_uint) -> bool {
 /// (window, range); selects, as in the asm, rather than products with the bit, which put two
 /// more steps on the chain from one decode to the next.
 #[inline(always)]
-fn split_at(dif: EcWin, r: c_uint, v: c_uint) -> (bool, EcWin, c_uint) {
+fn split_at(dif: EcWin, r: u32, v: u32) -> (bool, EcWin, u32) {
     let (above, below) = dif.overflowing_sub((v as EcWin) << (EC_WIN_SIZE - 16));
     if below {
         (true, dif, v)
@@ -468,7 +466,7 @@ fn split_at(dif: EcWin, r: c_uint, v: c_uint) -> (bool, EcWin, c_uint) {
 }
 
 #[inline]
-pub fn rav1d_msac_decode_subexp(s: &mut MsacContext, r#ref: c_uint, n: c_uint, mut k: u8) -> c_int {
+pub fn rav1d_msac_decode_subexp(s: &mut MsacContext, r#ref: u32, n: u32, mut k: u8) -> i32 {
     assert!(n >> k == 8);
     let mut a = 0;
     if rav1d_msac_decode_bool_equi(s) {
@@ -482,14 +480,14 @@ pub fn rav1d_msac_decode_subexp(s: &mut MsacContext, r#ref: c_uint, n: c_uint, m
         inv_recenter(r#ref, v)
     } else {
         n - 1 - inv_recenter(n - 1 - r#ref, v)
-    }) as c_int
+    }) as i32
 }
 
 /// Return value is in the range `0..=n_symbols`.
 ///
 /// `n_symbols` is in the range `0..16`, so it is really a `u4`.
 fn rav1d_msac_decode_symbol_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16], n_symbols: u8) -> u8 {
-    let c = (s.dif() >> (EC_WIN_SIZE - 16)) as c_uint;
+    let c = (s.dif() >> (EC_WIN_SIZE - 16)) as u32;
     let r = s.rng() >> 8;
     let mut u;
     let mut v = s.rng();
@@ -498,9 +496,9 @@ fn rav1d_msac_decode_symbol_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16], n_symb
     assert!(cdf[n_symbols as usize] <= 32);
     loop {
         u = v;
-        v = r * ((cdf[val as usize] >> EC_PROB_SHIFT) as c_uint);
+        v = r * ((cdf[val as usize] >> EC_PROB_SHIFT) as u32);
         v >>= 7 - EC_PROB_SHIFT;
-        v += EC_MIN_PROB * ((n_symbols as c_uint) - val);
+        v += EC_MIN_PROB * ((n_symbols as u32) - val);
         if !(c < v) {
             break;
         }
@@ -539,7 +537,7 @@ fn rav1d_msac_decode_symbol_adapt_unrolled<S: Ec, const N: usize>(
 ) -> u8 {
     let n = n_symbols as usize;
     debug_assert!(n <= N);
-    let c = (s.dif() >> (EC_WIN_SIZE - 16)) as c_uint;
+    let c = (s.dif() >> (EC_WIN_SIZE - 16)) as u32;
     let r = s.rng() >> 8;
     // `rng`, then the bounds, then 0: the symbol's pair is `[val]` and `[val + 1]`.
     let mut bounds = [0; 17];
@@ -547,8 +545,8 @@ fn rav1d_msac_decode_symbol_adapt_unrolled<S: Ec, const N: usize>(
     let mut val = 0;
     for i in 0..N {
         let v = if i < n {
-            (r * (cdf[i] >> EC_PROB_SHIFT) as c_uint >> (7 - EC_PROB_SHIFT))
-                + EC_MIN_PROB * (n - i) as c_uint
+            (r * (cdf[i] >> EC_PROB_SHIFT) as u32 >> (7 - EC_PROB_SHIFT))
+                + EC_MIN_PROB * (n - i) as u32
         } else {
             0
         };
@@ -602,7 +600,7 @@ static EC_MIN_PROBS: [i16; 31] = {
     let mut t = [0; 31];
     let mut i = 0;
     while i < 15 {
-        t[i] = (EC_MIN_PROB * (15 - i as c_uint)) as i16;
+        t[i] = (EC_MIN_PROB * (15 - i as u32)) as i16;
         i += 1;
     }
     t
@@ -619,7 +617,7 @@ static COUNT_LANE: [i16; 31] = {
 /// `rng`, then the bounds in `vs`, for the symbol's pair to be read from by index; `M` is what is
 /// stored, as a zeroed tail would be a 16-bit immediate store, which stalls x86's legacy decoder.
 #[inline(always)]
-fn rng_then_bounds<const M: usize>(rng: c_uint, vs: &[I16x8; 2]) -> [i16; M] {
+fn rng_then_bounds<const M: usize>(rng: u32, vs: &[I16x8; 2]) -> [i16; M] {
     let mut bounds = [0; M];
     bounds[0] = rng as u16 as i16;
     for k in 0..(M - 1) / 8 {
@@ -690,7 +688,7 @@ fn rav1d_msac_decode_symbol_adapt_simd<S: Ec, const LANES: usize>(
     // At most `n_symbols`, as its lane always is at or past; the mask only drops the check.
     let val = val & (LANES - 1);
     // The symbol's bounds are `[val]` and `[val + 1]` of `rng`, then the bounds.
-    let bound_pair = |rng: c_uint, vs: [I16x8; 2]| {
+    let bound_pair = |rng: u32, vs: [I16x8; 2]| {
         if LANES <= 8 {
             let bounds = rng_then_bounds::<9>(rng, &vs);
             #[cfg(target_arch = "x86_64")]
@@ -732,7 +730,7 @@ fn rav1d_msac_decode_symbol_adapt_simd<S: Ec, const LANES: usize>(
     };
     #[cfg(not(target_arch = "aarch64"))]
     let (u, v) = bound_pair(s.rng(), vs);
-    let (u, v) = (u as c_uint, v as c_uint);
+    let (u, v) = (u as u32, v as u32);
     ctx_norm(
         s,
         s.dif().wrapping_sub((v as EcWin) << (EC_WIN_SIZE - 16)),
@@ -775,7 +773,7 @@ fn rav1d_msac_decode_symbol_adapt_simd<S: Ec, const LANES: usize>(
 
 #[cfg_attr(target_arch = "x86_64", inline(always))]
 fn rav1d_msac_decode_bool_adapt_rust<S: Ec>(s: &mut S, cdf: &mut [u16; 2]) -> bool {
-    let bit = rav1d_msac_decode_bool_rust(s, cdf[0] as c_uint);
+    let bit = rav1d_msac_decode_bool_rust(s, cdf[0] as u32);
     if s.update_cdf() {
         let count = cdf[1];
         let rate = 4 + (count >> 4);
@@ -850,8 +848,8 @@ fn rav1d_msac_decode_hi_tok_simd<S: Ec>(s: &mut S, cdf: &mut [u16; 4]) -> u8 {
                 .add(count_step.and(count_lane));
             count += (count < 32) as u16;
         }
-        let u = bounds[val] as u16 as c_uint;
-        let v = bounds[val + 1] as u16 as c_uint;
+        let u = bounds[val] as u16 as u32;
+        let v = bounds[val + 1] as u16 as u32;
         dif = dif.wrapping_sub((v as EcWin) << (EC_WIN_SIZE - 16));
         rng = u - v;
         let d = 15 ^ (31 ^ clz(rng));
@@ -878,7 +876,7 @@ fn rav1d_msac_decode_hi_tok_simd<S: Ec>(s: &mut S, cdf: &mut [u16; 4]) -> u8 {
 }
 
 impl MsacContext {
-    pub fn new(data: CArc<[u8]>, disable_cdf_update_flag: bool) -> Self {
+    pub fn new(data: SharedBytes, disable_cdf_update_flag: bool) -> Self {
         let state = MsacState {
             buf: data.as_ref().into(),
             dif: 0,
@@ -942,7 +940,7 @@ pub fn rav1d_msac_decode_bool_equi(s: &mut MsacContext) -> bool {
 
 #[cfg_attr(not(target_arch = "x86_64"), inline)]
 #[cfg_attr(target_arch = "x86_64", inline(always))]
-pub fn rav1d_msac_decode_bool(s: &mut MsacContext, f: c_uint) -> bool {
+pub fn rav1d_msac_decode_bool(s: &mut MsacContext, f: u32) -> bool {
     rav1d_msac_decode_bool_rust(s, f)
 }
 
@@ -970,7 +968,6 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::c_box::CRef;
 
     struct Rng(u64);
 
@@ -988,7 +985,7 @@ mod tests {
     }
 
     fn context(data: &[u8], update: bool) -> MsacContext {
-        let data = CArc::wrap(CRef::Box(data.to_vec().into_boxed_slice())).unwrap();
+        let data = SharedBytes::new(data.to_vec());
         MsacContext::new(data, !update)
     }
 
@@ -1010,7 +1007,7 @@ mod tests {
         cdf
     }
 
-    fn state(s: &MsacContext) -> (EcWin, c_uint, c_int, usize) {
+    fn state(s: &MsacContext) -> (EcWin, u32, i32, usize) {
         (s.dif, s.rng, s.cnt, s.buf_index())
     }
 
@@ -1083,15 +1080,15 @@ mod tests {
             let mut a = context(&data, true);
             let pos = rng.below(data.len() as u32 + 1) as usize;
             a.buf.pos = a.data().as_ptr().wrapping_add(pos);
-            a.cnt = rng.below(EC_WIN_SIZE as u32 - 7) as c_int - 16;
-            let c = EC_WIN_SIZE as c_int - 24 - a.cnt;
+            a.cnt = rng.below(EC_WIN_SIZE as u32 - 7) as i32 - 16;
+            let c = EC_WIN_SIZE as i32 - 24 - a.cnt;
             let above = (!0 as EcWin).checked_shl(c as u32 + 8).unwrap_or(0);
             a.dif = ((rng.next() as EcWin) << (EC_WIN_SIZE - 32) | rng.next() as EcWin) & above;
             let mut b = context(&data, true);
             b.buf.pos = b.data().as_ptr().wrapping_add(pos);
             (b.cnt, b.dif) = (a.cnt, a.dif);
             ctx_refill(&mut a);
-            let c = EC_WIN_SIZE as c_int - 24 - b.cnt;
+            let c = EC_WIN_SIZE as i32 - 24 - b.cnt;
             let read;
             (b.dif, b.cnt, read) = ctx_refill_bytes(&data[pos..], b.dif, c);
             b.buf.pos = b.buf.pos.wrapping_add(read);
@@ -1200,7 +1197,7 @@ mod tests {
             time(&format!("bool {name}"), SYMBOLS, || {
                 let mut s = context(&data, true);
                 for i in 0..SYMBOLS {
-                    let f = probs[i % 64][0] as c_uint;
+                    let f = probs[i % 64][0] as u32;
                     black_box(if dispatched {
                         rav1d_msac_decode_bool(&mut s, f)
                     } else {

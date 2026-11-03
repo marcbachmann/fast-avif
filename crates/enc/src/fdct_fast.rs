@@ -267,7 +267,7 @@ mod tests {
         blocks, cpu_levels, decodable, max_error, sizes, Rng, ROUND_TRIP_BOUND,
     };
     use crate::fdct::coded_dimensions;
-    use rav1d_shared::include::common::bitdepth::BitDepth8;
+    use rav1d_shared::bitdepth::BitDepth8;
     use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
 
     fn simd_available() -> bool {

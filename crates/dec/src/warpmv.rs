@@ -1,7 +1,6 @@
-use std::ffi::c_int;
 
-use rav1d_shared::include::common::intops::{apply_sign, apply_sign64, iclip, u64log2, ulog2};
-use rav1d_shared::include::dav1d::headers::Rav1dWarpedMotionParams;
+use rav1d_shared::intops::{apply_sign, apply_sign64, iclip, u64log2, ulog2};
+use rav1d_shared::headers::Rav1dWarpedMotionParams;
 use rav1d_shared::levels::Mv;
 
 static DIV_LUT: [u16; 257] = [
@@ -27,13 +26,13 @@ static DIV_LUT: [u16; 257] = [
 ];
 
 #[inline]
-fn iclip_wmp(v: c_int) -> c_int {
+fn iclip_wmp(v: i32) -> i32 {
     let cv = iclip(v, i16::MIN.into(), i16::MAX.into());
     apply_sign(cv.abs() + 32 >> 6, cv) * (1 << 6)
 }
 
 #[inline]
-fn resolve_divisor_32(d: u32) -> (c_int, c_int) {
+fn resolve_divisor_32(d: u32) -> (i32, i32) {
     let shift = ulog2(d);
     let e = d - (1 << shift);
     let f = if shift > 8 {
@@ -42,7 +41,7 @@ fn resolve_divisor_32(d: u32) -> (c_int, c_int) {
         e << 8 - shift
     };
     // Use f as lookup into the precomputed table of multipliers
-    (shift + 14, DIV_LUT[f as usize] as c_int)
+    (shift + 14, DIV_LUT[f as usize] as i32)
 }
 
 pub(crate) fn rav1d_get_shear_params(wm: &Rav1dWarpedMotionParams) -> bool {
@@ -59,10 +58,10 @@ pub(crate) fn rav1d_get_shear_params(wm: &Rav1dWarpedMotionParams) -> bool {
     let y = apply_sign(y, mat[2]);
     let v1 = mat[4] as i64 * 0x10000 * y as i64;
     let rnd = 1 << shift >> 1;
-    let gamma = iclip_wmp(apply_sign64((v1.abs() + rnd as i64 >> shift) as c_int, v1)) as i16;
+    let gamma = iclip_wmp(apply_sign64((v1.abs() + rnd as i64 >> shift) as i32, v1)) as i16;
     let v2 = mat[3] as i64 * mat[4] as i64 * y as i64;
     let delta =
-        iclip_wmp(mat[5] - apply_sign64((v2.abs() + rnd as i64 >> shift) as c_int, v2) - 0x10000)
+        iclip_wmp(mat[5] - apply_sign64((v2.abs() + rnd as i64 >> shift) as i32, v2) - 0x10000)
             as i16;
     wm.abcd.set([alpha, beta, gamma, delta]);
 
@@ -70,7 +69,7 @@ pub(crate) fn rav1d_get_shear_params(wm: &Rav1dWarpedMotionParams) -> bool {
         || 4 * (gamma as i32).abs() + 4 * (delta as i32).abs() >= 0x10000
 }
 
-fn resolve_divisor_64(d: u64) -> (c_int, c_int) {
+fn resolve_divisor_64(d: u64) -> (i32, i32) {
     let shift = u64log2(d);
     let e = d - (1 << shift);
     let f = if shift > 8 {
@@ -79,28 +78,28 @@ fn resolve_divisor_64(d: u64) -> (c_int, c_int) {
         e << 8 - shift
     };
     // Use f as lookup into the precomputed table of multipliers
-    (shift + 14, DIV_LUT[f as usize] as c_int)
+    (shift + 14, DIV_LUT[f as usize] as i32)
 }
 
-fn get_mult_shift_ndiag(px: i64, idet: c_int, shift: c_int) -> c_int {
+fn get_mult_shift_ndiag(px: i64, idet: i32, shift: i32) -> i32 {
     let v1 = px * idet as i64;
-    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as c_int, v1);
+    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as i32, v1);
     iclip(v2, -0x1fff, 0x1fff)
 }
 
-fn get_mult_shift_diag(px: i64, idet: c_int, shift: c_int) -> c_int {
+fn get_mult_shift_diag(px: i64, idet: i32, shift: i32) -> i32 {
     let v1 = px * idet as i64;
-    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as c_int, v1);
+    let v2 = apply_sign64((v1.abs() + (1 << shift >> 1) >> shift) as i32, v1);
     iclip(v2, 0xe001, 0x11fff)
 }
 
 pub(crate) fn rav1d_set_affine_mv2d(
-    bw4: c_int,
-    bh4: c_int,
+    bw4: i32,
+    bh4: i32,
     mv: Mv,
     wm: &mut Rav1dWarpedMotionParams,
-    bx4: c_int,
-    by4: c_int,
+    bx4: i32,
+    by4: i32,
 ) {
     let mat = &mut wm.matrix;
     let rsuy = 2 * bh4 - 1;
@@ -121,14 +120,14 @@ pub(crate) fn rav1d_set_affine_mv2d(
 }
 
 pub(crate) fn rav1d_find_affine_int(
-    pts: &[[[c_int; 2]; 2]; 8],
+    pts: &[[[i32; 2]; 2]; 8],
     np: usize,
-    bw4: c_int,
-    bh4: c_int,
+    bw4: i32,
+    bh4: i32,
     mv: Mv,
     wm: &mut Rav1dWarpedMotionParams,
-    bx4: c_int,
-    by4: c_int,
+    bx4: i32,
+    by4: i32,
 ) -> bool {
     let mat = &mut wm.matrix;
     let mut a = [[0, 0], [0, 0]];
@@ -138,8 +137,8 @@ pub(crate) fn rav1d_find_affine_int(
     let rsux = 2 * bw4 - 1;
     let suy = rsuy * 8;
     let sux = rsux * 8;
-    let duy = suy + mv.y as c_int;
-    let dux = sux + mv.x as c_int;
+    let duy = suy + mv.y as i32;
+    let dux = sux + mv.x as i32;
     let isuy = by4 * 4 + rsuy;
     let isux = bx4 * 4 + rsux;
 

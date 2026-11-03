@@ -14,7 +14,6 @@ atomig = { version = "0.4.0", features = ["derive"] }
 av-data = "0.4.2"
 bitflags = "2.4.0"
 cfg-if.workspace = true
-libc.workspace = true
 parking_lot = "0.12.2"
 paste = "1.0.14"
 static_assertions = "1.1.0"

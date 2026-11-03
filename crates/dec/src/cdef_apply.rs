@@ -1,18 +1,16 @@
 #![deny(unsafe_code)]
 
 use std::cmp;
-use std::ffi::{c_int, c_uint};
 
 use bitflags::bitflags;
-use rav1d_shared::c_types::ptrdiff_t;
 
 use rav1d_shared::align::{Align16, AlignedVec64};
 use crate::cdef::CdefEdgeFlags;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::include::common::bitdepth::{BitDepth, BPC};
-use rav1d_shared::include::common::intops::ulog2;
-use rav1d_shared::include::dav1d::headers::Rav1dPixelLayout;
-use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use rav1d_shared::bitdepth::{BitDepth, BPC};
+use rav1d_shared::intops::ulog2;
+use rav1d_shared::headers::Rav1dPixelLayout;
+use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
 use crate::internal::{Rav1dContext, Rav1dFrameData, Rav1dTaskContext};
 use rav1d_shared::pic_or_buf::PicOrBuf;
 use rav1d_shared::strided::{Strided as _, WithStride};
@@ -80,7 +78,7 @@ fn backup2lines<BD: BitDepth>(
 fn backup2x8<BD: BitDepth>(
     dst: &mut [[[BD::Pixel; 2]; 8]; 3],
     src: &[Rav1dPictureDataComponentOffset; 3],
-    x_off: c_int,
+    x_off: i32,
     layout: Rav1dPixelLayout,
     flag: Backup2x8Flags,
 ) {
@@ -101,8 +99,8 @@ fn backup2x8<BD: BitDepth>(
         return;
     }
 
-    let ss_ver = (layout == Rav1dPixelLayout::I420) as c_int;
-    let ss_hor = (layout != Rav1dPixelLayout::I444) as c_int;
+    let ss_ver = (layout == Rav1dPixelLayout::I420) as i32;
+    let ss_hor = (layout != Rav1dPixelLayout::I444) as i32;
     let strides = [
         stride_0,
         src[1].pixel_stride::<BD>(),
@@ -120,18 +118,18 @@ fn backup2x8<BD: BitDepth>(
     }
 }
 
-fn adjust_strength(strength: u8, var: c_uint) -> c_int {
+fn adjust_strength(strength: u8, var: u32) -> i32 {
     if var == 0 {
         return 0;
     }
 
     let i = if var >> 6 != 0 {
-        cmp::min(ulog2(var >> 6), 12 as c_int)
+        cmp::min(ulog2(var >> 6), 12 as i32)
     } else {
         0
     };
 
-    strength as c_int * (4 + i) + 8 >> 4
+    strength as i32 * (4 + i) + 8 >> 4
 }
 
 pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
@@ -140,12 +138,12 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
     f: &Rav1dFrameData,
     p: [Rav1dPictureDataComponentOffset; 3],
     lflvl_offset: i32,
-    by_start: c_int,
-    by_end: c_int,
+    by_start: i32,
+    by_end: i32,
     sbrow_start: bool,
-    sby: c_int,
+    sby: i32,
 ) {
-    let bd = BD::from_c(f.bitdepth_max);
+    let bd = BD::from_max(f.bitdepth_max);
 
     let bitdepth_min_8 = match BD::BPC {
         BPC::BPC8 => 0,
@@ -159,12 +157,12 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
     let mut ptrs = p;
     let sbsz = 16;
     let sb64w = f.sb128w << 1;
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
     let damping = frame_hdr.cdef.damping + bitdepth_min_8;
     let layout: Rav1dPixelLayout = f.cur.p.layout;
-    let uv_idx = (Rav1dPixelLayout::I444 as c_uint).wrapping_sub(layout as c_uint) as c_int;
-    let ss_ver = (layout == Rav1dPixelLayout::I420) as c_int;
-    let ss_hor = (layout != Rav1dPixelLayout::I444) as c_int;
+    let uv_idx = (Rav1dPixelLayout::I444 as u32).wrapping_sub(layout as u32) as i32;
+    let ss_ver = (layout == Rav1dPixelLayout::I420) as i32;
+    let ss_hor = (layout != Rav1dPixelLayout::I444) as i32;
 
     static UV_DIRS: [[u8; 8]; 2] = [[0, 1, 2, 3, 4, 5, 6, 7], [7, 0, 2, 4, 5, 6, 6, 6]];
     let uv_dir: &[u8; 8] = &UV_DIRS[(layout == Rav1dPixelLayout::I422) as usize];
@@ -172,8 +170,8 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
     let have_tt = c.tc.len() > 1;
     let sb128 = f.seq_hdr.as_ref().unwrap().sb128;
     let resize = frame_hdr.size.width[0] != frame_hdr.size.width[1];
-    let y_stride: ptrdiff_t = BD::pxstride(f.cur.stride[0]);
-    let uv_stride: ptrdiff_t = BD::pxstride(f.cur.stride[1]);
+    let y_stride: isize = BD::pxstride(f.cur.stride[0]);
+    let uv_stride: isize = BD::pxstride(f.cur.stride[1]);
 
     let mut bit = false;
 
@@ -213,7 +211,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
             let sb128x = sbx >> 1;
             let sb64_idx = ((by & sbsz) >> 3) + (sbx & 1);
             let cdef_idx = f.lf.mask[(lflvl_offset + sb128x) as usize].cdef_idx[sb64_idx as usize]
-                .get() as c_int;
+                .get() as i32;
             if cdef_idx == -1
                 || frame_hdr.cdef.y_strength[cdef_idx as usize] == 0
                     && frame_hdr.cdef.uv_strength[cdef_idx as usize] == 0
@@ -305,7 +303,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                 } + (sby * 4 + 2) as isize * y_stride
                                     + (bx * 4) as isize
                             } else {
-                                let line = sby * (4 << sb128) + 4 * sb128 as c_int + 2;
+                                let line = sby * (4 << sb128) + 4 * sb128 as i32 + 2;
                                 WithOffset {
                                     data: &f.lf.lr_line_buf,
                                     offset: f.lf.lr_lpf_line[0],
@@ -371,7 +369,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                 unreachable!();
                             }
                             let uvdir = if uv_pri_lvl != 0 {
-                                uv_dir[dir as usize] as c_int
+                                uv_dir[dir as usize] as i32
                             } else {
                                 0
                             };
@@ -408,7 +406,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
                                         } + (sby * 4 + 2) as isize * uv_stride
                                             + (bx * 4 >> ss_hor) as isize
                                     } else {
-                                        let line = sby * (4 << sb128) + 4 * sb128 as c_int + 2;
+                                        let line = sby * (4 << sb128) + 4 * sb128 as i32 + 2;
                                         WithOffset {
                                             data: &f.lf.lr_line_buf,
                                             offset: f.lf.lr_lpf_line[pl],
@@ -470,7 +468,7 @@ pub(crate) fn rav1d_cdef_brow<BD: BitDepth>(
         ptrs[0] += 8 * ptrs[0].pixel_stride::<BD>();
         ptrs[1] += 8 * (ptrs[1].pixel_stride::<BD>() >> ss_ver);
         ptrs[2] += 8 * (ptrs[2].pixel_stride::<BD>() >> ss_ver);
-        tc.top_pre_cdef_toggle ^= 1 as c_int;
+        tc.top_pre_cdef_toggle ^= 1 as i32;
         edges.insert(CdefEdgeFlags::HAVE_TOP);
     }
 }

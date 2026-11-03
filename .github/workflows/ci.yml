@@ -18,10 +18,9 @@ jobs:
         build: [
           {name: "release", flags: "--release", timeout_multiplier: 1}
         ]
-        # Test with negative strides, threads and framedelay
+        # Test with threads and framedelay
         variant: [
           "",
-          "-n",
           "-f 1",
           "-f 2"
         ]
@@ -213,10 +212,9 @@ jobs:
   test-on-ubuntu-arm:
     strategy:
       matrix:
-        # Test with negative strides, threads and framedelay
+        # Test with threads and framedelay
         variant: [
           "",
-          "-n",
           "-f 1",
           "-f 2"
         ]
@@ -293,7 +291,7 @@ jobs:
           .github/workflows/test.sh \
             -r ./target/${{ startsWith(matrix.build.name, 'release') && 'release' || matrix.build.name }}/dav1d \
             -t ${{ matrix.build.timeout_multiplier }}
-        # release tests run quickly so we test negative strides and frame delays
+        # release tests run quickly so we test frame delays
       - name: test release build with frame delay of 1
         if: ${{ startsWith(matrix.build.name, 'release') }}
         run: |

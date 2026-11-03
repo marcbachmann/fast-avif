@@ -1,5 +1,4 @@
 use std::cmp;
-use std::ffi::c_int;
 
 use bitflags::bitflags;
 
@@ -7,8 +6,8 @@ use crate::align::AlignedVec64;
 use crate::const_fn::const_for;
 use crate::disjoint_mut::DisjointMut;
 use crate::env::BlockContext;
-use crate::include::common::bitdepth::{AsPrimitive, BitDepth};
-use crate::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use crate::bitdepth::{AsPrimitive, BitDepth};
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::intra_edge::EdgeFlags;
 use crate::levels::{
     IntraPredMode, DC_128_PRED, DC_PRED, FILTER_PRED, HOR_PRED, LEFT_DC_PRED,
@@ -18,7 +17,7 @@ use crate::levels::{
 use crate::strided::Strided as _;
 
 #[inline]
-pub fn sm_flag(b: &BlockContext, idx: usize) -> c_int {
+pub fn sm_flag(b: &BlockContext, idx: usize) -> i32 {
     if *b.intra.index(idx) == 0 {
         return 0;
     }
@@ -31,7 +30,7 @@ pub fn sm_flag(b: &BlockContext, idx: usize) -> c_int {
 }
 
 #[inline]
-pub fn sm_uv_flag(b: &BlockContext, idx: usize) -> c_int {
+pub fn sm_uv_flag(b: &BlockContext, idx: usize) -> i32 {
     let m = *b.uvmode.index(idx);
     if m == SMOOTH_PRED || m == SMOOTH_H_PRED || m == SMOOTH_V_PRED {
         512
@@ -150,21 +149,21 @@ static AV1_INTRA_PREDICTION_EDGES: [Av1IntraPredictionEdge; N_IMPL_INTRA_PRED_MO
 /// is outside the tile dimensions or because edge_flags indicates lack of edge availability),
 /// they will be extended from nearby edges as defined by the AV1 spec.
 pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
-    x: c_int,
+    x: i32,
     have_left: bool,
-    y: c_int,
+    y: i32,
     have_top: bool,
-    w: c_int,
-    h: c_int,
+    w: i32,
+    h: i32,
     edge_flags: EdgeFlags,
     dst: Rav1dPictureDataComponentOffset,
     // Buffer and offset pair. `isize` value is the base offset that should be used
     // when indexing into the buffer.
     prefilter_toplevel_sb_edge: Option<(&DisjointMut<AlignedVec64<u8>>, isize)>,
     mut mode: IntraPredMode,
-    angle: &mut c_int,
-    tw: c_int,
-    th: c_int,
+    angle: &mut i32,
+    tw: i32,
+    th: i32,
     filter_edge: u8,
     topleft_out: &mut [BD::Pixel],
     topleft_out_offset: usize, // position of top-left sample in `topleft_out`
@@ -177,7 +176,7 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
 
     match mode {
         VERT_PRED..=VERT_LEFT_PRED => {
-            *angle = AV1_MODE_TO_ANGLE_MAP[(mode - VERT_PRED) as usize] as c_int + 3 * *angle;
+            *angle = AV1_MODE_TO_ANGLE_MAP[(mode - VERT_PRED) as usize] as i32 + 3 * *angle;
             if *angle <= 90 {
                 mode = if *angle < 90 && have_top {
                     Z1_PRED
@@ -336,8 +335,8 @@ pub fn rav1d_prepare_intra_edges<BD: BitDepth>(
             (1 << bitdepth >> 1).as_::<BD::Pixel>()
         };
         if mode == Z2_PRED && tw + th >= 6 && filter_edge != 0 {
-            corner[1] = ((corner[0].as_::<c_int>() + corner[2].as_::<c_int>()) * 5
-                + corner[1].as_::<c_int>() * 6
+            corner[1] = ((corner[0].as_::<i32>() + corner[2].as_::<i32>()) * 5
+                + corner[1].as_::<i32>() * 6
                 + 8
                 >> 4)
                 .as_::<BD::Pixel>();

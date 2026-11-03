@@ -4,9 +4,9 @@ use std::cmp;
 
 use rav1d_shared::align::ArrayDefault;
 use crate::filmgrain::{Rav1dFilmGrainDSPContext, FG_BLOCK_SIZE};
-use rav1d_shared::include::common::bitdepth::{BitDepth, BPC};
-use rav1d_shared::include::dav1d::headers::{Rav1dMatrixCoefficients, Rav1dPixelLayout};
-use rav1d_shared::include::dav1d::picture::Rav1dPicture;
+use rav1d_shared::bitdepth::{BitDepth, BPC};
+use rav1d_shared::headers::{Rav1dMatrixCoefficients, Rav1dPixelLayout};
+use rav1d_shared::picture::Rav1dPicture;
 use crate::internal::GrainBD;
 use rav1d_shared::strided::Strided as _;
 
@@ -77,10 +77,10 @@ pub(crate) fn rav1d_prep_grain<BD: BitDepth>(
     grain: &mut GrainBD<BD>,
 ) {
     let GrainBD { grain_lut, scaling } = grain;
-    let frame_hdr = &***out.frame_hdr.as_ref().unwrap();
+    let frame_hdr = &**out.frame_hdr.as_ref().unwrap();
     let data = &frame_hdr.film_grain.data;
     let bitdepth_max = (1 << out.p.bpc) - 1;
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     let layout = || r#in.p.layout.try_into().unwrap();
 
     // Generate grain LUTs as needed
@@ -94,7 +94,7 @@ pub(crate) fn rav1d_prep_grain<BD: BitDepth>(
     }
 
     // Generate scaling LUTs as needed
-    let bd = BD::from_c((1 << r#in.p.bpc) - 1);
+    let bd = BD::from_max((1 << r#in.p.bpc) - 1);
     scaling[0] = generate_scaling::<BD>(bd, &data.y_points[..data.num_y_points as usize]);
     scaling[1] = generate_scaling::<BD>(bd, &data.uv_points[0][..data.num_uv_points[0] as usize]);
     scaling[2] = generate_scaling::<BD>(bd, &data.uv_points[1][..data.num_uv_points[1] as usize]);
@@ -128,8 +128,8 @@ pub(crate) fn rav1d_apply_grain_row<BD: BitDepth>(
 ) {
     // Synthesize grain for the affected planes
     let GrainBD { grain_lut, scaling } = grain;
-    let seq_hdr = &***out.seq_hdr.as_ref().unwrap();
-    let frame_hdr = &***out.frame_hdr.as_ref().unwrap();
+    let seq_hdr = &**out.seq_hdr.as_ref().unwrap();
+    let frame_hdr = &**out.frame_hdr.as_ref().unwrap();
     let data = &frame_hdr.film_grain.data;
     let in_data = &r#in.data.as_ref().unwrap().data;
     let out_data = &out.data.as_ref().unwrap().data;
@@ -141,7 +141,7 @@ pub(crate) fn rav1d_apply_grain_row<BD: BitDepth>(
     let cpw = w + ss_x >> ss_x;
     let is_id = seq_hdr.mtrx == Rav1dMatrixCoefficients::Identity;
     let bitdepth_max = (1 << out.p.bpc) - 1;
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
 
     if data.num_y_points != 0 {
         let bh = cmp::min(h - row * FG_BLOCK_SIZE, FG_BLOCK_SIZE);

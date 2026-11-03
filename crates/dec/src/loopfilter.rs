@@ -1,19 +1,15 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::cmp;
-use std::ffi::c_int;
-
-use rav1d_shared::c_types::ptrdiff_t;
 use strum::FromRepr;
 
 use rav1d_shared::align::{Align16, AlignedVec2};
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::disjoint_mut::{DisjointMut, DisjointMutGuard};
-use rav1d_shared::ffi_safe::FFISafe;
-use rav1d_shared::include::common::bitdepth::{AsPrimitive, BitDepth, DynPixel};
-use rav1d_shared::include::common::intops::iclip;
-use rav1d_shared::include::dav1d::picture::{
-    FFISafeRav1dPictureDataComponentOffset, Rav1dPictureDataComponentInner,
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth};
+use rav1d_shared::intops::iclip;
+use rav1d_shared::picture::{
+    Rav1dPictureDataComponentInner,
     Rav1dPictureDataComponentOffset,
 };
 use crate::internal::Rav1dFrameData;
@@ -22,21 +18,18 @@ use rav1d_shared::strided::Strided as _;
 use rav1d_shared::with_offset::WithOffset;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
 
-wrap_fn_ptr!(pub unsafe extern "C" fn loopfilter_sb(
-    dst_ptr: *mut DynPixel,
-    stride: ptrdiff_t,
+wrap_fn_ptr!(pub unsafe fn loopfilter_sb(
     mask: &[u32; 3],
-    lvl_ptr: *const [u8; 4],
-    b4_stride: ptrdiff_t,
+    b4_stride: isize,
     lut: &Align16<Av1FilterLUT>,
-    w: c_int,
-    bitdepth_max: c_int,
-    _dst: FFISafeRav1dPictureDataComponentOffset,
-    _lvl: WithOffset<*const FFISafe<DisjointMut<AlignedVec2<u8>>>>,
+    w: i32,
+    bitdepth_max: i32,
+    dst: Rav1dPictureDataComponentOffset,
+    lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
 ) -> ());
 
 impl loopfilter_sb::Fn {
-    pub fn call<BD: BitDepth>(
+    pub fn call(
         &self,
         f: &Rav1dFrameData,
         dst: Rav1dPictureDataComponentOffset,
@@ -44,24 +37,12 @@ impl loopfilter_sb::Fn {
         lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
         w: usize,
     ) {
-        let dst_ptr = dst.as_mut_ptr::<BD>().cast();
-        let stride = dst.stride();
-        assert!(lvl.offset <= lvl.data.len());
-        // SAFETY: `lvl.offset` is in bounds, just checked above.
-        let lvl_ptr = unsafe { lvl.data.as_mut_ptr().add(lvl.offset) };
-        let lvl_ptr = lvl_ptr.cast::<[u8; 4]>();
         let b4_stride = f.b4_stride;
         let lut = &f.lf.lim_lut;
-        let w = w as c_int;
+        let w = w as i32;
         let bd = f.bitdepth_max;
-        let dst = dst.into_ffi_safe();
-        let lvl = lvl.into_ffi_safe();
-        // SAFETY: Fallback `fn loop_filter_sb128_rust` is safe; asm is supposed to do the same.
-        unsafe {
-            self.get()(
-                dst_ptr, stride, mask, lvl_ptr, b4_stride, lut, w, bd, dst, lvl,
-            )
-        }
+        // SAFETY: Fallback `fn loop_filter_sb128_rust` is safe; the SIMD kernels read and write the same memory.
+        unsafe { self.get()(mask, b4_stride, lut, w, bd, dst, lvl) }
     }
 
     const fn default<BD: BitDepth, const HV: usize, const YUV: usize>() -> Self {
@@ -89,9 +70,9 @@ fn loop_filter<BD: BitDepth>(
     e: u8,
     i: u8,
     h: u8,
-    stridea: ptrdiff_t,
-    strideb: ptrdiff_t,
-    wd: c_int,
+    stridea: isize,
+    strideb: isize,
+    wd: i32,
     bd: BD,
 ) {
     let bitdepth_min_8 = bd.bitdepth() - 8;
@@ -238,7 +219,7 @@ fn loop_filter<BD: BitDepth>(
         } else {
             let hev = (p1 - p0).abs() > h || (q1 - q0).abs() > h;
 
-            fn iclip_diff(v: c_int, bitdepth_min_8: u8) -> i32 {
+            fn iclip_diff(v: i32, bitdepth_min_8: u8) -> i32 {
                 iclip(
                     v,
                     -128 * (1 << bitdepth_min_8),
@@ -1427,7 +1408,7 @@ mod rust_simd {
         for j in 0..n {
             if let Some(Seg { e, i, h, wd }) = at.seg(j, lut) {
                 let dst = at.dst + (4 * j) as isize * stridea;
-                loop_filter(dst, e, i, h, stridea, strideb, wd as c_int, bd);
+                loop_filter(dst, e, i, h, stridea, strideb, wd as i32, bd);
             }
         }
     }
@@ -1634,7 +1615,7 @@ mod rust_simd {
         lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
         b4_stride: usize,
         lut: &Align16<Av1FilterLUT>,
-        wh: c_int,
+        wh: i32,
         bd: BD,
     ) {
         let hv = super::HV::from_repr(HV).unwrap();
@@ -1687,7 +1668,7 @@ mod rust_simd {
         lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
         b4_stride: usize,
         lut: &Align16<Av1FilterLUT>,
-        wh: c_int,
+        wh: i32,
         bd: BD,
     ) {
         if BD::BITDEPTH == 8 {
@@ -1706,7 +1687,7 @@ mod rust_simd {
         lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
         b4_stride: usize,
         lut: &Align16<Av1FilterLUT>,
-        wh: c_int,
+        wh: i32,
         bd: BD,
     ) {
         if BD::BITDEPTH == 8 {
@@ -1723,29 +1704,22 @@ mod rust_simd {
     /// SSE41, and with `WIDE` once they hold AVX2.
     #[deny(unsafe_op_in_unsafe_fn)]
     #[allow(unused_unsafe)]
-    pub unsafe extern "C" fn loop_filter_sb_simd_erased<
+    pub unsafe fn loop_filter_sb_simd_erased<
         BD: BitDepth,
         const HV: usize,
         const YUV: usize,
         const WIDE: bool,
     >(
-        _dst_ptr: *mut DynPixel,
-        _stride: ptrdiff_t,
         vmask: &[u32; 3],
-        _lvl_ptr: *const [u8; 4],
         b4_stride: isize,
         lut: &Align16<Av1FilterLUT>,
-        wh: c_int,
-        bitdepth_max: c_int,
-        dst: FFISafeRav1dPictureDataComponentOffset,
-        lvl: WithOffset<*const FFISafe<DisjointMut<AlignedVec2<u8>>>>,
-    ) {
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `loopfilter_sb::Fn::call`.
-        let dst = unsafe { FFISafe::from_with_offset(dst) };
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `loopfilter_sb::Fn::call`.
-        let lvl = unsafe { FFISafe::from_with_offset(lvl) };
+        wh: i32,
+        bitdepth_max: i32,
+        dst: Rav1dPictureDataComponentOffset,
+        lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
+) {
         let b4_stride = b4_stride as usize;
-        let bd = BD::from_c(bitdepth_max);
+        let bd = BD::from_max(bitdepth_max);
         // Above 10 bits the flat filters' sums leave `i16`.
         if bitdepth_max > 1023 {
             return loop_filter_sb128_rust::<BD, { HV }, { YUV }>(
@@ -1784,7 +1758,7 @@ fn loop_filter_sb128_rust<BD: BitDepth, const HV: usize, const YUV: usize>(
     mut lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
     b4_stride: usize,
     lut: &Align16<Av1FilterLUT>,
-    _wh: c_int,
+    _wh: i32,
     bd: BD,
 ) {
     let hv = HV::from_repr(HV).unwrap();
@@ -1828,12 +1802,12 @@ fn loop_filter_sb128_rust<BD: BitDepth, const HV: usize, const YUV: usize>(
                     let idx = if vmask[2] & xy != 0 {
                         2
                     } else {
-                        (vmask[1] & xy != 0) as c_int
+                        (vmask[1] & xy != 0) as i32
                     };
                     4 << idx
                 }
                 YUV::UV => {
-                    let idx = (vmask[1] & xy != 0) as c_int;
+                    let idx = (vmask[1] & xy != 0) as i32;
                     4 + 2 * idx
                 }
             };
@@ -1849,24 +1823,17 @@ fn loop_filter_sb128_rust<BD: BitDepth, const HV: usize, const YUV: usize>(
 ///
 /// Must be called by [`loopfilter_sb::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe extern "C" fn loop_filter_sb128_c_erased<BD: BitDepth, const HV: usize, const YUV: usize>(
-    _dst_ptr: *mut DynPixel,
-    _stride: ptrdiff_t,
+unsafe fn loop_filter_sb128_c_erased<BD: BitDepth, const HV: usize, const YUV: usize>(
     vmask: &[u32; 3],
-    _lvl_ptr: *const [u8; 4],
     b4_stride: isize,
     lut: &Align16<Av1FilterLUT>,
-    wh: c_int,
-    bitdepth_max: c_int,
-    dst: FFISafeRav1dPictureDataComponentOffset,
-    lvl: WithOffset<*const FFISafe<DisjointMut<AlignedVec2<u8>>>>,
+    wh: i32,
+    bitdepth_max: i32,
+    dst: Rav1dPictureDataComponentOffset,
+    lvl: WithOffset<&DisjointMut<AlignedVec2<u8>>>,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `loopfilter_sb::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `loopfilter_sb::Fn::call`.
-    let lvl = unsafe { FFISafe::from_with_offset(lvl) };
     let b4_stride = b4_stride as usize;
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     loop_filter_sb128_rust::<BD, { HV }, { YUV }>(dst, vmask, lvl, b4_stride, lut, wh, bd)
 }
 
@@ -1933,8 +1900,8 @@ mod tests {
     use super::*;
     use rav1d_shared::align::AlignedVec64;
     use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use rav1d_shared::include::common::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponent;
+    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::picture::Rav1dPictureDataComponent;
     use crate::lf_mask::rav1d_calc_eih;
 
     struct Rng(u64);
@@ -1962,7 +1929,7 @@ mod tests {
         lvl: &DisjointMut<AlignedVec2<u8>>,
         lut: &Align16<Av1FilterLUT>,
         wh: usize,
-        bitdepth_max: c_int,
+        bitdepth_max: i32,
     ) -> Vec<BD::Pixel> {
         let mut buf = AlignedVec64::<BD::Pixel>::new();
         buf.resize(orig.len(), 0.into());
@@ -1980,21 +1947,16 @@ mod tests {
             data: lvl,
             offset: 8 * B4_STRIDE,
         };
-        let dst_ptr = dst.as_mut_ptr::<BD>().cast();
-        let lvl_ptr = lvl.data.as_mut_ptr().wrapping_add(lvl.offset).cast();
         // SAFETY: The arguments are what `loopfilter_sb::Fn::call` passes.
         unsafe {
             f.get()(
-                dst_ptr,
-                dst.stride(),
                 mask,
-                lvl_ptr,
                 B4_STRIDE as isize,
                 lut,
-                wh as c_int,
+                wh as i32,
                 bitdepth_max,
-                dst.into_ffi_safe(),
-                lvl.into_ffi_safe(),
+                dst,
+                lvl,
             )
         };
         drop(comp);
@@ -2003,7 +1965,7 @@ mod tests {
 
     /// Mostly smooth areas a step apart at the edges, so the flat filters fire, with noise; the
     /// values and steps scaled to the bit depth.
-    fn plane<BD: BitDepth>(rng: &mut Rng, bitdepth_max: c_int) -> Vec<BD::Pixel> {
+    fn plane<BD: BitDepth>(rng: &mut Rng, bitdepth_max: i32) -> Vec<BD::Pixel> {
         let scale = (bitdepth_max + 1) / 256;
         let base = [rng.next() % 256, rng.next() % 256];
         let noise = [1, 2, 4, 16][rng.next() as usize % 4] * scale as u32;
@@ -2054,7 +2016,7 @@ mod tests {
         time_lf_at::<BitDepth16>(1023);
     }
 
-    fn time_lf_at<BD: BitDepth>(bitdepth_max: c_int) {
+    fn time_lf_at<BD: BitDepth>(bitdepth_max: i32) {
         use std::time::Instant;
 
         const N: usize = 32;
@@ -2113,21 +2075,16 @@ mod tests {
                                 };
                                 let dst = WithOffset { data: &comp, offset };
                                 let l = WithOffset { data: &lvl, offset: 8 * B4_STRIDE };
-                                let dst_ptr = dst.as_mut_ptr::<BD>().cast();
-                                let lvl_ptr = l.data.as_mut_ptr().wrapping_add(l.offset).cast();
                                 // SAFETY: The arguments are what `loopfilter_sb::Fn::call` passes.
                                 unsafe {
                                     f.get()(
-                                        dst_ptr,
-                                        dst.stride(),
                                         &mask,
-                                        lvl_ptr,
                                         B4_STRIDE as isize,
                                         &lut,
                                         32,
                                         bitdepth_max,
-                                        dst.into_ffi_safe(),
-                                        l.into_ffi_safe(),
+                                        dst,
+                                        l,
                                     )
                                 };
                             }
@@ -2141,7 +2098,7 @@ mod tests {
         }
     }
 
-    fn matches_scalar<BD: BitDepth>(bitdepth_max: c_int, rounds: usize) {
+    fn matches_scalar<BD: BitDepth>(bitdepth_max: i32, rounds: usize) {
         let scalar = Rav1dLoopFilterDSPContext::default::<BD>();
         let simds = contexts::<BD>();
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);

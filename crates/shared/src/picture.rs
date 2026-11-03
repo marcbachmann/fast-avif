@@ -1,34 +1,25 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::{c_int, c_void};
 use std::hint::assert_unchecked;
 use std::marker::PhantomData;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ops::Range;
-use std::ptr::{fn_addr_eq, NonNull};
+use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{array, mem, ptr};
-
-use crate::c_types::{ptrdiff_t, uintptr_t};
-use to_method::To as _;
+use std::{array, mem};
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
-use crate::c_arc::RawArc;
 use crate::disjoint_mut::{
     AsMutPtr, DisjointImmutGuard, DisjointMut, DisjointMutGuard, SliceBounds,
 };
-use crate::error::{Dav1dResult, Rav1dError, Rav1dResult};
-use crate::ffi_safe::FFISafe;
-use crate::include::common::bitdepth::BitDepth;
-use crate::include::common::validate::validate_input;
-use crate::include::dav1d::common::{Dav1dDataProps, Rav1dDataProps};
-use crate::include::dav1d::headers::{
-    DRav1d, Dav1dFrameHeader, Dav1dITUTT35, Dav1dPixelLayout, Dav1dSequenceHeader,
+use crate::error::{Rav1dError, Rav1dResult};
+use crate::bitdepth::BitDepth;
+use crate::props::Rav1dDataProps;
+use crate::headers::{
     Rav1dContentLightLevel, Rav1dFrameHeader, Rav1dITUTT35, Rav1dMasteringDisplay,
     Rav1dPixelLayout, Rav1dSequenceHeader,
 };
 use crate::pixels::Pixels;
 use crate::pool::MemPool;
-use crate::send_sync_non_null::SendSyncNonNull;
 use crate::strided::Strided;
 use crate::with_offset::WithOffset;
 
@@ -36,73 +27,14 @@ use crate::with_offset::WithOffset;
 // implementations can over-read by a few bytes, and use aligned read/write
 // instructions.
 pub const RAV1D_PICTURE_ALIGNMENT: usize = 64;
-pub const DAV1D_PICTURE_ALIGNMENT: usize = RAV1D_PICTURE_ALIGNMENT;
-
-#[derive(Default)]
-#[repr(C)]
-pub struct Dav1dPictureParameters {
-    pub w: c_int,
-    pub h: c_int,
-    pub layout: Dav1dPixelLayout,
-    pub bpc: c_int,
-}
-
 // TODO(kkysen) Eventually the [`impl Default`] might not be needed.
 #[derive(Clone, Default)]
 #[repr(C)]
 pub struct Rav1dPictureParameters {
-    pub w: c_int,
-    pub h: c_int,
+    pub w: i32,
+    pub h: i32,
     pub layout: Rav1dPixelLayout,
     pub bpc: u8,
-}
-
-impl From<Dav1dPictureParameters> for Rav1dPictureParameters {
-    fn from(value: Dav1dPictureParameters) -> Self {
-        let Dav1dPictureParameters { w, h, layout, bpc } = value;
-        Self {
-            w,
-            h,
-            layout: layout.try_into().unwrap(),
-            bpc: bpc.try_into().unwrap(),
-        }
-    }
-}
-
-impl From<Rav1dPictureParameters> for Dav1dPictureParameters {
-    fn from(value: Rav1dPictureParameters) -> Self {
-        let Rav1dPictureParameters { w, h, layout, bpc } = value;
-        Self {
-            w,
-            h,
-            layout: layout.into(),
-            bpc: bpc.into(),
-        }
-    }
-}
-
-#[derive(Default)]
-#[repr(C)]
-pub struct Dav1dPicture {
-    pub seq_hdr: Option<NonNull<Dav1dSequenceHeader>>,
-    pub frame_hdr: Option<NonNull<Dav1dFrameHeader>>,
-    pub data: [Option<NonNull<c_void>>; 3],
-    pub stride: [ptrdiff_t; 2],
-    pub p: Dav1dPictureParameters,
-    pub m: Dav1dDataProps,
-    pub content_light: Option<NonNull<Rav1dContentLightLevel>>,
-    pub mastering_display: Option<NonNull<Rav1dMasteringDisplay>>,
-    pub itut_t35: Option<NonNull<Dav1dITUTT35>>,
-    pub n_itut_t35: usize,
-    pub reserved: [uintptr_t; 4],
-    pub frame_hdr_ref: Option<RawArc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>, // opaque, so we can change this
-    pub seq_hdr_ref: Option<RawArc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>>, // opaque, so we can change this
-    pub content_light_ref: Option<RawArc<Rav1dContentLightLevel>>, // opaque, so we can change this
-    pub mastering_display_ref: Option<RawArc<Rav1dMasteringDisplay>>, // opaque, so we can change this
-    pub itut_t35_ref: Option<RawArc<DRav1d<Box<[Rav1dITUTT35]>, Box<[Dav1dITUTT35]>>>>, // opaque, so we can change this
-    pub reserved_ref: [uintptr_t; 4],
-    pub r#ref: Option<RawArc<Rav1dPictureData>>, // opaque, so we can change this
-    pub allocator_data: Option<SendSyncNonNull<c_void>>,
 }
 
 #[derive(Clone, FromZeroes, FromBytes, AsBytes)]
@@ -142,7 +74,7 @@ impl Rav1dPictureDataComponentInner {
     ///
     /// # Safety
     ///
-    /// `ptr`, `len`, and `stride` must follow the requirements of [`Dav1dPicAllocator::alloc_picture_callback`].
+    /// `ptr`, `len`, and `stride` must be as [`place`] checks them.
     unsafe fn new(ptr: Option<NonNull<u8>>, len: usize, stride: isize) -> Self {
         let ptr = match ptr {
             None => {
@@ -161,8 +93,7 @@ impl Rav1dPictureDataComponentInner {
 
         let ptr = if stride < 0 {
             let ptr = ptr.as_ptr();
-            // SAFETY: According to `Dav1dPicAllocator::alloc_picture_callback`,
-            // if the `stride` is negative, this is how we get the start of the data.
+            // SAFETY: If the `stride` is negative, this is how we get the start of the data.
             // `.offset(-stride)` puts us at one element past the end of the slice,
             // and `.sub(len)` puts us back at the start of the slice.
             let ptr = unsafe { ptr.offset(-stride).sub(len) };
@@ -170,7 +101,7 @@ impl Rav1dPictureDataComponentInner {
         } else {
             ptr
         };
-        // Guaranteed by `Dav1dPicAllocator::alloc_picture_callback`.
+        // Guaranteed by `place`.
         assert!(len % RAV1D_PICTURE_MULTIPLE == 0);
         Self { ptr, len, stride }
     }
@@ -227,10 +158,12 @@ unsafe impl AsMutPtr for Rav1dPictureDataComponentInner {
 pub struct Rav1dPictureDataComponent(DisjointMut<Rav1dPictureDataComponentInner>);
 
 impl Pixels for Rav1dPictureDataComponent {
+    #[inline]
     fn byte_len(&self) -> usize {
         self.0.len()
     }
 
+    #[inline]
     fn as_byte_mut_ptr(&self) -> *mut u8 {
         self.0.as_mut_ptr()
     }
@@ -266,6 +199,7 @@ impl Rav1dPictureDataComponent {
     }
 
     /// Strided ptr to [`u8`] bytes.
+    #[inline]
     fn as_strided_byte_mut_ptr(&self) -> *mut u8 {
         let ptr = self.0.as_mut_ptr();
         let stride = self.stride();
@@ -292,11 +226,13 @@ impl Rav1dPictureDataComponent {
     }
 
     #[doc(hidden)]
-    pub fn as_dav1d(&self) -> Option<NonNull<c_void>> {
+    /// The first byte of the plane, null where the component has none; the rows are the
+    /// stride apart.
+    pub fn as_ptr(&self) -> *const u8 {
         if self.byte_len() == 0 {
-            None
+            std::ptr::null()
         } else {
-            NonNull::new(self.as_strided_byte_mut_ptr().cast())
+            self.as_strided_byte_mut_ptr().cast_const()
         }
     }
 
@@ -368,8 +304,6 @@ impl Rav1dPictureDataComponent {
 }
 
 pub type Rav1dPictureDataComponentOffset<'a> = WithOffset<&'a Rav1dPictureDataComponent>;
-pub type FFISafeRav1dPictureDataComponentOffset<'a> =
-    WithOffset<*const FFISafe<'a, Rav1dPictureDataComponent>>;
 
 impl<'a> Rav1dPictureDataComponentOffset<'a> {
     #[inline] // Inline to see bounds checks in order to potentially elide them.
@@ -598,22 +532,31 @@ impl<'a, BD: BitDepth, const CHECKED: bool> PicBlock<'a, BD, CHECKED> {
     }
 }
 
+/// The planes of a picture and the memory they sit in, which goes back to its allocator when
+/// the last picture of it drops.
 pub struct Rav1dPictureData {
     pub data: [Rav1dPictureDataComponent; 3],
     #[doc(hidden)]
-    pub allocator_data: Option<SendSyncNonNull<c_void>>,
+    pub memory: HeldMemory,
+    /// The allocator of a copy of the picture.
     #[doc(hidden)]
     pub allocator: Rav1dPicAllocator,
 }
 
-impl Drop for Rav1dPictureData {
+/// A picture's memory behind a raw pointer, as its planes point into it. A picture drops on any
+/// thread and inside the decoder, so a panic in the memory's `Drop` stays here.
+pub struct HeldMemory(NonNull<PictureMemory>);
+
+// SAFETY: `PictureMemory` is `Send + Sync`, and this is its only owner.
+unsafe impl Send for HeldMemory {}
+// SAFETY: As above; a `&HeldMemory` gives no access to the memory.
+unsafe impl Sync for HeldMemory {}
+
+impl Drop for HeldMemory {
     fn drop(&mut self) {
-        let Self {
-            data,
-            allocator_data,
-            allocator,
-        } = self;
-        allocator.dealloc_picture_data(data, *allocator_data);
+        // SAFETY: From `Box::leak` in `alloc_picture_data`, and dropped only here.
+        let memory = unsafe { Box::from_raw(self.0.as_ptr()) };
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(memory)));
     }
 }
 
@@ -625,123 +568,19 @@ impl Drop for Rav1dPictureData {
 #[derive(Clone, Default)]
 #[repr(C)]
 pub struct Rav1dPicture {
-    pub seq_hdr: Option<Arc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>>,
-    pub frame_hdr: Option<Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>,
+    pub seq_hdr: Option<Arc<Rav1dSequenceHeader>>,
+    pub frame_hdr: Option<Arc<Rav1dFrameHeader>>,
     pub data: Option<Arc<Rav1dPictureData>>,
-    pub stride: [ptrdiff_t; 2],
+    pub stride: [isize; 2],
     pub p: Rav1dPictureParameters,
     pub m: Rav1dDataProps,
     pub content_light: Option<Arc<Rav1dContentLightLevel>>,
     pub mastering_display: Option<Arc<Rav1dMasteringDisplay>>,
-    pub itut_t35: Arc<DRav1d<Box<[Rav1dITUTT35]>, Box<[Dav1dITUTT35]>>>,
-}
-
-impl From<Dav1dPicture> for Rav1dPicture {
-    fn from(value: Dav1dPicture) -> Self {
-        let Dav1dPicture {
-            seq_hdr: _,
-            frame_hdr: _,
-            data: _,
-            stride,
-            p,
-            m,
-            content_light: _,
-            mastering_display: _,
-            itut_t35: _,
-            n_itut_t35: _,
-            reserved: _,
-            frame_hdr_ref,
-            seq_hdr_ref,
-            content_light_ref,
-            mastering_display_ref,
-            itut_t35_ref,
-            reserved_ref: _,
-            r#ref: data_ref,
-            allocator_data: _,
-        } = value;
-        Self {
-            // We don't `.update_rav1d()` [`Rav1dSequenceHeader`] because it's meant to be read-only.
-            seq_hdr: seq_hdr_ref.map(|raw| {
-                // SAFETY: `raw` came from [`RawArc::from_arc`].
-                unsafe { raw.into_arc() }
-            }),
-            // We don't `.update_rav1d()` [`Rav1dFrameHeader`] because it's meant to be read-only.
-            frame_hdr: frame_hdr_ref.map(|raw| {
-                // SAFETY: `raw` came from [`RawArc::from_arc`].
-                unsafe { raw.into_arc() }
-            }),
-            data: data_ref.map(|raw| {
-                // SAFETY: `raw` came from [`RawArc::from_arc`].
-                unsafe { raw.into_arc() }
-            }),
-            stride,
-            p: p.into(),
-            m: m.into(),
-            content_light: content_light_ref.map(|raw| {
-                // SAFETY: `raw` came from [`RawArc::from_arc`].
-                unsafe { raw.into_arc() }
-            }),
-            mastering_display: mastering_display_ref.map(|raw| {
-                // Safety: `raw` came from [`RawArc::from_arc`].
-                unsafe { raw.into_arc() }
-            }),
-            // We don't `.update_rav1d` [`Rav1dITUTT35`] because never read it.
-            itut_t35: itut_t35_ref
-                .map(|raw| {
-                    // SAFETY: `raw` came from [`RawArc::from_arc`].
-                    unsafe { raw.into_arc() }
-                })
-                .unwrap_or_default(),
-        }
-    }
-}
-
-impl From<Rav1dPicture> for Dav1dPicture {
-    fn from(value: Rav1dPicture) -> Self {
-        let Rav1dPicture {
-            seq_hdr,
-            frame_hdr,
-            data,
-            stride,
-            p,
-            m,
-            content_light,
-            mastering_display,
-            itut_t35,
-        } = value;
-        Self {
-            // [`DRav1d::from_rav1d`] is called right after [`parse_seq_hdr`].
-            seq_hdr: seq_hdr.as_ref().map(|arc| (&arc.as_ref().dav1d).into()),
-            // [`DRav1d::from_rav1d`] is called in [`parse_frame_hdr`].
-            frame_hdr: frame_hdr.as_ref().map(|arc| (&arc.as_ref().dav1d).into()),
-            data: data
-                .as_ref()
-                .map(|arc| arc.data.each_ref().map(|data| data.as_dav1d()))
-                .unwrap_or_default(),
-            stride,
-            p: p.into(),
-            m: m.into(),
-            content_light: content_light.as_ref().map(|arc| arc.as_ref().into()),
-            mastering_display: mastering_display.as_ref().map(|arc| arc.as_ref().into()),
-            // [`DRav1d::from_rav1d`] is called in [`rav1d_parse_obus`].
-            itut_t35: Some(NonNull::new(itut_t35.dav1d.as_ptr().cast_mut()).unwrap()),
-            n_itut_t35: itut_t35.len(),
-            reserved: Default::default(),
-            frame_hdr_ref: frame_hdr.map(RawArc::from_arc),
-            seq_hdr_ref: seq_hdr.map(RawArc::from_arc),
-            content_light_ref: content_light.map(RawArc::from_arc),
-            mastering_display_ref: mastering_display.map(RawArc::from_arc),
-            itut_t35_ref: Some(itut_t35).map(RawArc::from_arc),
-            reserved_ref: Default::default(),
-            // Order flipped so that the borrow comes before the move.
-            allocator_data: data.as_ref().and_then(|arc| arc.allocator_data),
-            r#ref: data.map(RawArc::from_arc),
-        }
-    }
+    pub itut_t35: Arc<Box<[Rav1dITUTT35]>>,
 }
 
 impl Rav1dPicture {
-    pub fn lf_offsets<BD: BitDepth>(&self, y: c_int) -> [Rav1dPictureDataComponentOffset<'_>; 3] {
+    pub fn lf_offsets<BD: BitDepth>(&self, y: i32) -> [Rav1dPictureDataComponentOffset<'_>; 3] {
         // Init loopfilter offsets. Point the chroma offsets in 4:0:0 to the luma
         // plane here to avoid having additional in-loop branches in various places.
         // We never use those values, so it doesn't really matter what they point
@@ -757,282 +596,11 @@ impl Rav1dPicture {
     }
 }
 
-#[derive(Clone)]
-#[repr(C)]
-pub struct Dav1dPicAllocator {
-    /// Custom data to pass to the allocator callbacks.
-    ///
-    /// # Safety
-    ///
-    /// All accesses to [`Self::cookie`] must be thread-safe
-    /// (i.e. [`Self::cookie`] must be [`Send`]` + `[`Sync`]).
-    ///
-    /// If used from Rust, [`Self::cookie`] is a [`SendSyncNonNull`],
-    /// whose constructors ensure this [`Send`]` + `[`Sync`] safety.
-    pub cookie: Option<SendSyncNonNull<c_void>>,
-
-    /// Allocate the picture buffer based on the [`Dav1dPictureParameters`].
-    ///
-    /// [`data`]`[0]`, [`data`]`[1]` and [`data`]`[2]`
-    /// must be [`DAV1D_PICTURE_ALIGNMENT`]-byte aligned
-    /// and with a pixel width/height multiple of 128 pixels.
-    /// Any allocated memory area should also be padded by [`DAV1D_PICTURE_ALIGNMENT`] bytes.
-    /// [`data`]`[1]` and [`data`]`[2]` must share the same [`stride`]`[1]`.
-    ///
-    /// # Safety
-    ///
-    /// See [`Self::cookie`]'s safety requirements.
-    ///
-    /// ### Additional `rav1d` requirement:
-    ///
-    /// The allocated data must be initialized.
-    /// If newly (e.x. not reused) allocated data is zero initialized using OS APIs,
-    /// it is possible for this to not be slower than an uninitialized allocation.
-    /// For example, see `dav1d_default_picture_alloc` and `MemPool::pop_init`.
-    ///
-    /// If the allocated data is not initialized,
-    /// it is possible there will be reads of uninitialized data.
-    /// `rav1d` should not read this data before writing to it first,
-    /// but it does not guarantee that it does so.
-    /// Instead, initializing the allocated data guarantees all uses of it will be sound.
-    ///
-    /// # Args
-    ///
-    /// * `pic`: The picture to allocate the buffer for.
-    ///     The callback needs to fill the picture
-    ///     [`data`]`[0]`, [`data`]`[1]`, [`data`]`[2]`,
-    ///     [`stride`]`[0]`, and [`stride`]`[1]`.
-    ///     The allocator can fill the pic [`allocator_data`] pointer
-    ///     with a custom pointer that will be passed to
-    ///     [`release_picture_callback`].
-    ///
-    ///     The only fields of `pic` that will be already set are:
-    ///     * [`Dav1dPicture::p`]
-    ///     * [`Dav1dPicture::seq_hdr`]
-    ///     * [`Dav1dPicture::frame_hdr`]
-    ///
-    ///     This is not a change from the original `DAV1D_API`,
-    ///     just a clarification of it.
-    ///
-    /// * `cookie`: Custom pointer passed to all calls.
-    ///
-    /// *Note*: No fields other than [`data`], [`stride`] and [`allocator_data`]
-    /// must be filled by this callback.
-    ///
-    /// # Return
-    ///
-    /// 0 on success. A negative `DAV1D_ERR` value on error.
-    /// <!--- TODO(kkysen) Translate `DAV1D_ERR` -->
-    ///
-    /// [`data`]: Dav1dPicture::data
-    /// [`stride`]: Dav1dPicture::data
-    /// [`allocator_data`]: Dav1dPicture::allocator_data
-    /// [`release_picture_callback`]: Self::release_picture_callback
-    pub alloc_picture_callback: Option<
-        unsafe extern "C" fn(
-            pic: *mut Dav1dPicture,
-            cookie: Option<SendSyncNonNull<c_void>>,
-        ) -> Dav1dResult,
-    >,
-
-    /// Release the picture buffer.
-    ///
-    /// # Safety
-    ///
-    /// If frame threading is used, accesses to `cookie` must be thread-safe.
-    ///
-    /// If frame threading is used, this function may be called by the main thread
-    /// (the thread which calls [`dav1d_get_picture`]),
-    /// or any of the frame threads and thus must be thread-safe.
-    /// If frame threading is not used, this function will only be called on the main thread.
-    ///
-    /// # Args
-    ///
-    /// * `pic`: The picture that was filled by [`alloc_picture_callback`].
-    ///
-    ///     The only fields of `pic` that will be set are
-    ///     the ones allocated by [`Self::alloc_picture_callback`]:
-    ///     * [`Dav1dPicture::data`]
-    ///     * [`Dav1dPicture::allocator_data`]
-    ///
-    ///     NOTE: This is a slight change from the original `DAV1D_API`, which was underspecified.
-    ///     However, all known uses of this API follow this already:
-    ///     * `libdav1d`: [`dav1d_default_picture_release`](https://code.videolan.org/videolan/dav1d/-/blob/16ed8e8b99f2fcfffe016e929d3626e15267ad3e/src/picture.c#L85-87)
-    ///     * `dav1d`: [`picture_release`](https://code.videolan.org/videolan/dav1d/-/blob/16ed8e8b99f2fcfffe016e929d3626e15267ad3e/tools/dav1d.c#L180-182)
-    ///     * `dav1dplay`: [`placebo_release_pic`](https://code.videolan.org/videolan/dav1d/-/blob/16ed8e8b99f2fcfffe016e929d3626e15267ad3e/examples/dp_renderer_placebo.c#L375-383)
-    ///     * `libplacebo`: [`pl_release_dav1dpicture`](https://github.com/haasn/libplacebo/blob/34e019bfedaa5a64f268d8f9263db352c0a8f67f/src/include/libplacebo/utils/dav1d_internal.h#L594-L607)
-    ///     * `ffmpeg`: [`libdav1d_picture_release`](https://github.com/FFmpeg/FFmpeg/blob/00b288da73f45acb78b74bcc40f73c7ba1fff7cb/libavcodec/libdav1d.c#L124-L129)
-    ///
-    ///     Making this API safe without this slight tightening of the API
-    ///     [is very difficult](https://github.com/memorysafety/rav1d/pull/685#discussion_r1458171639).
-    ///
-    /// * `cookie`: Custom pointer passed to all calls.
-    ///
-    /// [`dav1d_get_picture`]: crate::lib::dav1d_get_picture
-    /// [`alloc_picture_callback`]: Self::alloc_picture_callback
-    pub release_picture_callback: Option<
-        unsafe extern "C" fn(pic: *mut Dav1dPicture, cookie: Option<SendSyncNonNull<c_void>>) -> (),
-    >,
-}
-
-#[derive(Clone)]
-#[repr(C)]
-pub struct Rav1dPicAllocator {
-    /// See [`Dav1dPicAllocator::cookie`].
-    ///
-    /// # Safety
-    ///
-    /// If [`Self::is_default`]`()`, then this cookie is a reference to
-    /// [`Rav1dContext::picture_pool`], a `&Arc<MemPool<u8>`.
-    /// Thus, its lifetime is that of `&c.picture_pool`,
-    /// so the lifetime of the `&`[`Rav1dContext`].
-    /// This is used from `dav1d_default_picture_alloc`
-    /// ([`Self::default`]`().alloc_picture_callback`),
-    /// which is called from [`Self::alloc_picture_data`],
-    /// which is called further up on the call stack with a `&`[`Rav1dContext`].
-    /// Thus, the lifetime will always be valid where used.
-    ///
-    /// Note that this is an `&Arc<MemPool<u8>` turned into a raw pointer,
-    /// not an [`Arc::into_raw`] of that [`Arc`].
-    /// This is because storing the [`Arc`] would require C to
-    /// free data owned by a [`Dav1dPicAllocator`] potentially,
-    /// which it may not do, as there are no current APIs for doing so.
-    ///
-    /// [`Rav1dContext::picture_pool`]: crate::internal::Rav1dContext::picture_pool
-    /// [`Rav1dContext`]: crate::internal::Rav1dContext
-    pub cookie: Option<SendSyncNonNull<c_void>>,
-
-    /// See [`Dav1dPicAllocator::alloc_picture_callback`].
-    ///
-    /// # Safety
-    ///
-    /// `pic` is passed as a `&mut`.
-    ///
-    /// If frame threading is used, accesses to [`Self::cookie`] must be thread-safe,
-    /// i.e. [`Self::cookie`] must be [`Send`]` + `[`Sync`].
-    pub alloc_picture_callback: unsafe extern "C" fn(
-        pic: *mut Dav1dPicture,
-        cookie: Option<SendSyncNonNull<c_void>>,
-    ) -> Dav1dResult,
-
-    /// See [`Dav1dPicAllocator::release_picture_callback`].
-    ///
-    /// # Safety
-    ///
-    /// `pic` is passed as a `&mut`.
-    ///
-    /// If frame threading is used, accesses to [`Self::cookie`] must be thread-safe,
-    /// i.e. [`Self::cookie`] must be [`Send`]` + `[`Sync`].
-    pub release_picture_callback:
-        unsafe extern "C" fn(pic: *mut Dav1dPicture, cookie: Option<SendSyncNonNull<c_void>>) -> (),
-}
-
-impl TryFrom<Dav1dPicAllocator> for Rav1dPicAllocator {
-    type Error = Rav1dError;
-
-    fn try_from(value: Dav1dPicAllocator) -> Result<Self, Self::Error> {
-        let Dav1dPicAllocator {
-            cookie,
-            alloc_picture_callback,
-            release_picture_callback,
-        } = value;
-        Ok(Self {
-            cookie,
-            alloc_picture_callback: validate_input!(
-                alloc_picture_callback.ok_or(Rav1dError::InvalidArgument)
-            )?,
-            release_picture_callback: validate_input!(
-                release_picture_callback.ok_or(Rav1dError::InvalidArgument)
-            )?,
-        })
-    }
-}
-
-impl From<Rav1dPicAllocator> for Dav1dPicAllocator {
-    fn from(value: Rav1dPicAllocator) -> Self {
-        let Rav1dPicAllocator {
-            cookie,
-            alloc_picture_callback,
-            release_picture_callback,
-        } = value;
-        Self {
-            cookie,
-            alloc_picture_callback: Some(alloc_picture_callback),
-            release_picture_callback: Some(release_picture_callback),
-        }
-    }
-}
-
-impl Rav1dPicAllocator {
-    pub fn alloc_picture_data(
-        &self,
-        w: c_int,
-        h: c_int,
-        seq_hdr: Arc<DRav1d<Rav1dSequenceHeader, Dav1dSequenceHeader>>,
-        frame_hdr: Option<Arc<DRav1d<Rav1dFrameHeader, Dav1dFrameHeader>>>,
-    ) -> Rav1dResult<Rav1dPicture> {
-        let pic = Rav1dPicture {
-            p: Rav1dPictureParameters {
-                w,
-                h,
-                layout: seq_hdr.layout,
-                bpc: 8 + 2 * seq_hdr.hbd,
-            },
-            seq_hdr: Some(seq_hdr),
-            frame_hdr,
-            ..Default::default()
-        };
-        let mut pic_c = pic.to::<Dav1dPicture>();
-        // SAFETY: `pic_c` is a valid `Dav1dPicture` with `data`, `stride`, `allocator_data` unset.
-        let result = unsafe { (self.alloc_picture_callback)(&mut pic_c, self.cookie) };
-        result.try_to::<Rav1dResult>().unwrap()?;
-        // `data`, `stride`, and `allocator_data` are the only fields set by the allocator.
-        // Of those, only `data` and `allocator_data` are read through `r#ref`,
-        // so we need to read those directly first and allocate the `Arc`.
-        let data = pic_c.data;
-        let allocator_data = pic_c.allocator_data;
-        let mut pic = pic_c.to::<Rav1dPicture>();
-        let len = pic.p.pic_len(pic.stride);
-        // TODO fallible allocation
-        pic.data = Some(Arc::new(Rav1dPictureData {
-            data: array::from_fn(|i| {
-                let ptr = data[i].map(|ptr| ptr.cast::<u8>());
-                let len = len[(i != 0) as usize];
-                let stride = pic.stride[(i != 0) as usize];
-                // SAFETY: These args come from `Self::alloc_picture_callback`.
-                let component = unsafe { Rav1dPictureDataComponentInner::new(ptr, len, stride) };
-                Rav1dPictureDataComponent(DisjointMut::new(component))
-            }),
-            allocator_data,
-            allocator: self.clone(),
-        }));
-        Ok(pic)
-    }
-
-    pub fn dealloc_picture_data(
-        &self,
-        data: &mut [Rav1dPictureDataComponent; 3],
-        allocator_data: Option<SendSyncNonNull<c_void>>,
-    ) {
-        let data = data.each_mut().map(|data| data.as_dav1d());
-        let mut pic_c = Dav1dPicture {
-            data,
-            allocator_data,
-            ..Default::default()
-        };
-        // SAFETY: `pic_c` contains the same `data` and `allocator_data`
-        // that `Self::alloc_picture_data` set, which now get deallocated here.
-        unsafe {
-            (self.release_picture_callback)(&mut pic_c, self.cookie);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::align::AlignedVec64;
-    use crate::include::common::bitdepth::{BitDepth16, BitDepth8};
+    use crate::bitdepth::{BitDepth16, BitDepth8};
 
     const S: usize = 64;
     const H: usize = 6;
@@ -1222,6 +790,188 @@ mod tests {
     }
 }
 
+/// The size and format of a picture to allocate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureParameters {
+    pub width: u32,
+    pub height: u32,
+    /// 8, 10 or 12; samples above 8 bits take 2 bytes.
+    pub bpc: u8,
+    pub layout: Rav1dPixelLayout,
+}
+
+/// Where a picture's planes lie in its memory, in bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaneLayout {
+    /// Of Y, U and V from the start of the memory; U and V are ignored for [`Rav1dPixelLayout::I400`].
+    pub offsets: [usize; 3],
+    /// Of Y, and of U and V.
+    pub strides: [usize; 2],
+    /// The memory's length.
+    pub len: usize,
+}
+
+impl PictureParameters {
+    fn subsampling(&self) -> (usize, usize) {
+        (
+            (self.layout != Rav1dPixelLayout::I444) as usize,
+            (self.layout == Rav1dPixelLayout::I420) as usize,
+        )
+    }
+
+    /// The planes `0..planes()` in memory: Y alone for [`Rav1dPixelLayout::I400`].
+    pub fn planes(&self) -> usize {
+        if self.layout == Rav1dPixelLayout::I400 {
+            1
+        } else {
+            3
+        }
+    }
+
+    /// The bytes of plane `i` with rows `stride` apart: its height rounded up to a multiple of
+    /// 128 luma rows.
+    pub fn plane_len(&self, i: usize, stride: usize) -> Option<usize> {
+        let ss_ver = if i > 0 { self.subsampling().1 } else { 0 };
+        stride.checked_mul((self.height as usize).next_multiple_of(128) >> ss_ver)
+    }
+
+    /// The smallest stride of plane `i`: its width rounded up to a multiple of 128 luma samples.
+    pub fn min_stride(&self, i: usize) -> usize {
+        let ss_hor = if i > 0 { self.subsampling().0 } else { 0 };
+        ((self.width as usize).next_multiple_of(128) << (self.bpc > 8) as usize) >> ss_hor
+    }
+
+    /// The planes laid out as rav1d's own allocator lays them out: each at its
+    /// [`PictureParameters::min_stride`], plus [`RAV1D_PICTURE_ALIGNMENT`] where that is a multiple
+    /// of 1024 bytes (for the caches' sake), Y, U and V back to back, and
+    /// [`RAV1D_PICTURE_ALIGNMENT`] bytes after the last.
+    pub fn plane_layout(&self) -> Option<PlaneLayout> {
+        let pad = |stride: usize| {
+            if stride % 1024 == 0 {
+                stride + RAV1D_PICTURE_ALIGNMENT
+            } else {
+                stride
+            }
+        };
+        let strides = [pad(self.min_stride(0)), pad(self.min_stride(1))];
+        let y = self.plane_len(0, strides[0])?;
+        let uv = if self.planes() > 1 {
+            self.plane_len(1, strides[1])?
+        } else {
+            0
+        };
+        Some(PlaneLayout {
+            offsets: [0, y, y.checked_add(uv)?],
+            strides,
+            len: y.checked_add(uv.checked_mul(2)?)?.checked_add(RAV1D_PICTURE_ALIGNMENT)?,
+        })
+    }
+}
+
+/// The memory of one picture, and where its planes lie in it.
+pub struct PictureBuffer {
+    /// Borrowed mutably once, to decode into, and then dropped once the last picture of it is,
+    /// on whichever thread drops that picture.
+    pub memory: PictureMemory,
+    pub layout: PlaneLayout,
+}
+
+pub type PictureMemory = Box<dyn AsMut<[u8]> + Send + Sync>;
+
+/// Allocates the memory of the pictures a decoder decodes into, in place of rav1d's own pool.
+///
+/// rav1d checks each buffer and fails the frame with [`Rav1dError::InvalidArgument`] unless each of
+/// the [`PictureParameters::planes`] starts at an address that is a multiple of
+/// [`RAV1D_PICTURE_ALIGNMENT`], has a stride that is a multiple of it and at least
+/// [`PictureParameters::min_stride`], takes [`PictureParameters::plane_len`] bytes that overlap no
+/// other plane's, and ends at least [`RAV1D_PICTURE_ALIGNMENT`] bytes before the memory does (SIMD
+/// reads that far past it). [`PictureParameters::plane_layout`] is what rav1d's own allocator uses.
+///
+/// Called from the threads that decode; a panic fails the frame.
+pub trait PictureAllocator: Send + Sync + 'static {
+    fn alloc(&self, picture: &PictureParameters) -> Result<PictureBuffer, Rav1dError>;
+}
+
+/// Each decoder's own allocator unless the caller gave one: a pool of buffers of its pictures.
+#[derive(Clone)]
+pub struct Rav1dPicAllocator(pub Arc<dyn PictureAllocator>);
+
+impl Default for Rav1dPicAllocator {
+    fn default() -> Self {
+        Self(Arc::new(PoolAllocator(Default::default())))
+    }
+}
+
+struct PoolAllocator(Arc<MemPool<u8>>);
+
+struct PoolBuf {
+    pool: Arc<MemPool<u8>>,
+    buf: Vec<u8>,
+}
+
+impl AsMut<[u8]> for PoolBuf {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+}
+
+impl Drop for PoolBuf {
+    fn drop(&mut self) {
+        self.pool.push(mem::take(&mut self.buf));
+    }
+}
+
+impl PictureAllocator for PoolAllocator {
+    fn alloc(&self, picture: &PictureParameters) -> Result<PictureBuffer, Rav1dError> {
+        let mut layout = picture.plane_layout().ok_or(Rav1dError::OutOfMemory)?;
+        let buf = self.0.pop_init(layout.len.checked_add(RAV1D_PICTURE_ALIGNMENT).ok_or(Rav1dError::OutOfMemory)?, 0);
+        let skip = buf.as_ptr().align_offset(RAV1D_PICTURE_ALIGNMENT);
+        layout.offsets = layout.offsets.map(|o| o + skip);
+        layout.len = buf.len();
+        Ok(PictureBuffer {
+            memory: Box::new(PoolBuf { pool: self.0.clone(), buf }),
+            layout,
+        })
+    }
+}
+
+/// The plane pointers and strides of `buffer`, checked against what [`PictureAllocator`] promises.
+fn place(
+    picture: &PictureParameters,
+    buffer: &mut [u8],
+    layout: &PlaneLayout,
+) -> Result<([Option<NonNull<u8>>; 3], [isize; 2]), Rav1dError> {
+    let invalid = Rav1dError::InvalidArgument;
+    let base = buffer.as_mut_ptr();
+    let mut planes = [(0, 0); 3];
+    let mut data = [None; 3];
+    for i in 0..picture.planes() {
+        let (offset, stride) = (layout.offsets[i], layout.strides[i.min(1)]);
+        let len = picture.plane_len(i, stride).ok_or(invalid)?;
+        let end = offset.checked_add(len).ok_or(invalid)?;
+        let aligned = (base as usize).wrapping_add(offset) % RAV1D_PICTURE_ALIGNMENT == 0;
+        if !aligned
+            || stride % RAV1D_PICTURE_ALIGNMENT != 0
+            || stride < picture.min_stride(i)
+            || stride > isize::MAX as usize
+            || len == 0
+            || end.checked_add(RAV1D_PICTURE_ALIGNMENT).ok_or(invalid)? > buffer.len()
+            || planes[..i].iter().any(|&(s, e)| offset < e && s < end)
+        {
+            return Err(invalid);
+        }
+        planes[i] = (offset, end);
+        // SAFETY: `offset < buffer.len()`.
+        data[i] = NonNull::new(unsafe { base.add(offset) });
+    }
+    let chroma = if picture.planes() > 1 {
+        layout.strides[1] as isize
+    } else {
+        0
+    };
+    Ok((data, [layout.strides[0] as isize, chroma]))
+}
+
 impl Rav1dPictureParameters {
     pub fn pic_len(&self, [y_stride, uv_stride]: [isize; 2]) -> [usize; 2] {
         let ss_ver = (self.layout == Rav1dPixelLayout::I420) as u8;
@@ -1232,135 +982,52 @@ impl Rav1dPictureParameters {
     }
 }
 
-struct MemPoolBuf<T> {
-    /// This is an [`Arc`] because a [`Rav1dPicture`] can outlive
-    /// its [`Rav1dContext`], and that's how the API was designed.
-    /// If it were changed to require [`Rav1dContext`] to outlive
-    /// any [`Rav1dPicture`]s it creates (a reasonable API I think,
-    /// and easy to do with Rust lifetimes), then we wouldn't need
-    /// the [`Arc`] here.  But it's not the round-tripping through C
-    /// that requires this, just how the API was designed.
-    pool: Arc<MemPool<T>>,
-    buf: Vec<T>,
-}
-
-/// # Safety
-///
-/// * `p_c` must be from a `&mut Dav1dPicture`.
-/// * `cookie` must be from a `&Arc<MemPool<u8>>`.
-unsafe extern "C" fn dav1d_default_picture_alloc(
-    p_c: *mut Dav1dPicture,
-    cookie: Option<SendSyncNonNull<c_void>>,
-) -> Dav1dResult {
-    // SAFETY: Guaranteed by safety preconditions.
-    let p = unsafe { p_c.read() }.to::<Rav1dPicture>();
-    let hbd = (p.p.bpc > 8) as c_int;
-    let aligned_w = p.p.w + 127 & !127;
-    let has_chroma = p.p.layout != Rav1dPixelLayout::I400;
-    let ss_hor = (p.p.layout != Rav1dPixelLayout::I444) as c_int;
-    let mut y_stride = (aligned_w << hbd) as ptrdiff_t;
-    let mut uv_stride = if has_chroma { y_stride >> ss_hor } else { 0 };
-    if y_stride & 1023 == 0 {
-        y_stride += RAV1D_PICTURE_ALIGNMENT as isize;
-    }
-    if uv_stride & 1023 == 0 && has_chroma {
-        uv_stride += RAV1D_PICTURE_ALIGNMENT as isize;
-    }
-    let stride = [y_stride, uv_stride];
-    let [y_sz, uv_sz] = p.p.pic_len(stride);
-    let pic_size = y_sz + 2 * uv_sz;
-
-    let pool = cookie.unwrap().cast::<Arc<MemPool<u8>>>();
-    // SAFETY: Guaranteed by safety preconditions.
-    let pool = unsafe { pool.as_ref() };
-    let pool = pool.clone();
-    let pic_cap = pic_size + RAV1D_PICTURE_ALIGNMENT;
-    // TODO fallible allocation
-    let buf = pool.pop_init(pic_cap, 0);
-    // We have to `Box` this because `Dav1dPicture::allocator_data` is only 8 bytes.
-    let mut buf = Box::new(MemPoolBuf { pool, buf });
-    let data = &mut buf.buf[..pic_cap];
-    // SAFETY: `Rav1dPicAllocator::alloc_picture_callback` requires that these are `RAV1D_PICTURE_ALIGNMENT`-aligned.
-    let align_offset = data.as_ptr().align_offset(RAV1D_PICTURE_ALIGNMENT);
-    let data = &mut data[align_offset..][..pic_size];
-
-    let (data0, data12) = data.split_at_mut(y_sz);
-    let (data1, data2) = data12.split_at_mut(uv_sz);
-    // Note that `data[1]` and `data[2]`
-    // were previously null instead of an empty slice when `!has_chroma`,
-    // but this way is simpler and more uniform, especially when we move to slices.
-    let data = [data0, data1, data2].map(|data| {
-        if data.is_empty() {
-            ptr::null_mut()
-        } else {
-            data.as_mut_ptr().cast()
-        }
+/// A picture of `w` by `h` under the headers, its planes allocated by `allocator`. A panic in the
+/// allocator or in its memory is an allocation failure.
+pub fn alloc_picture_data(
+    allocator: &Rav1dPicAllocator,
+    w: i32,
+    h: i32,
+    seq_hdr: Arc<Rav1dSequenceHeader>,
+    frame_hdr: Option<Arc<Rav1dFrameHeader>>,
+) -> Rav1dResult<Rav1dPicture> {
+    let p = Rav1dPictureParameters {
+        w,
+        h,
+        layout: seq_hdr.layout,
+        bpc: 8 + 2 * seq_hdr.hbd,
+    };
+    let picture = PictureParameters {
+        width: w as u32,
+        height: h as u32,
+        bpc: p.bpc as u8,
+        layout: p.layout,
+    };
+    let Ok(Ok(PictureBuffer { memory, layout })) = catch_unwind(AssertUnwindSafe(|| allocator.0.alloc(&picture))) else {
+        return Err(Rav1dError::OutOfMemory);
+    };
+    let memory = NonNull::from(Box::leak(Box::new(memory)));
+    let held = HeldMemory(memory);
+    // SAFETY: `memory` is valid and unaliased until `held` drops; nothing else reads it here.
+    let Ok(bytes) = catch_unwind(AssertUnwindSafe(|| unsafe { (**memory.as_ptr()).as_mut() })) else {
+        return Err(Rav1dError::OutOfMemory);
+    };
+    let (data, stride) = place(&picture, bytes, &layout)?;
+    let len = p.pic_len(stride);
+    let data = array::from_fn(|i| {
+        let plane = (i != 0) as usize;
+        // SAFETY: `place` checked the pointer, length and stride against the memory.
+        let component = unsafe { Rav1dPictureDataComponentInner::new(data[i], len[plane], stride[plane]) };
+        Rav1dPictureDataComponent(DisjointMut::new(component))
     });
-
-    // SAFETY: Guaranteed by safety preconditions.
-    let p_c = unsafe { &mut *p_c };
-    p_c.stride = stride;
-    p_c.data = data.map(NonNull::new);
-    p_c.allocator_data = Some(SendSyncNonNull::from_box(buf).cast::<c_void>());
-    // The caller will create the real `Rav1dPicture` from the `Dav1dPicture` fields set above,
-    // so we don't want to drop the `Rav1dPicture` we created for convenience here.
-    mem::forget(p);
-
-    Rav1dResult::Ok(()).into()
-}
-
-/// # Safety
-///
-/// * `p` is from a `&mut Dav1dPicture` initialized by [`dav1d_default_picture_alloc`].
-unsafe extern "C" fn dav1d_default_picture_release(
-    p: *mut Dav1dPicture,
-    _cookie: Option<SendSyncNonNull<c_void>>,
-) {
-    // SAFETY: Guaranteed by safety preconditions.
-    let p = unsafe { &mut *p };
-    let buf = p.allocator_data.unwrap().cast::<MemPoolBuf<u8>>();
-    // SAFETY: `dav1d_default_picture_alloc` stores `SendSyncNonNull::from_box` of a `Box<MemPoolBuf<u8>>` in `Dav1dPicture::allocator_data`,
-    // and `(Rav1dPicAllocator::release_picture_callback == dav1d_default_picture_release) == (Rav1dPicAllocator::alloc_picture_callback == dav1d_default_picture_alloc)`.
-    let buf = unsafe { buf.into_box() };
-    let MemPoolBuf { pool, buf } = *buf;
-    pool.push(buf);
-}
-
-impl Default for Rav1dPicAllocator {
-    fn default() -> Self {
-        Self {
-            cookie: None,
-            // SAFETY: `dav1d_default_picture_alloc` requires `p_c` be from a `&mut Dav1dPicture`,
-            // `Self::alloc_picture_callback` safety preconditions guarantee that.
-            // `dav1d_default_picture_alloc` also requires that `cookie` be from a `&Arc<MemPool<u8>>`,
-            // which is set if `Self::is_default()` in `rav1d_open`.
-            alloc_picture_callback: dav1d_default_picture_alloc,
-            // SAFETY: `dav1d_default_picture_release` requires `p` be from a `&mut Dav1dPicture`
-            // initialized by `dav1d_default_picture_alloc`.
-            // Since these `fn`s are private and we only use them here, that is guaranteed.
-            release_picture_callback: dav1d_default_picture_release,
-        }
-    }
-}
-
-impl Rav1dPicAllocator {
-    pub fn is_default(&self) -> bool {
-        let alloc = fn_addr_eq(
-            self.alloc_picture_callback,
-            dav1d_default_picture_alloc
-                as unsafe extern "C" fn(
-                    *mut Dav1dPicture,
-                    Option<SendSyncNonNull<c_void>>,
-                ) -> Dav1dResult,
-        );
-        let release = fn_addr_eq(
-            self.release_picture_callback,
-            dav1d_default_picture_release
-                as unsafe extern "C" fn(*mut Dav1dPicture, Option<SendSyncNonNull<c_void>>),
-        );
-        assert!(alloc == release); // This should be impossible since these `fn`s are private.
-        alloc && release
-    }
+    Ok(Rav1dPicture {
+        p,
+        seq_hdr: Some(seq_hdr),
+        frame_hdr,
+        stride,
+        data: Some(Arc::new(Rav1dPictureData { data, memory: held, allocator: allocator.clone() })),
+        ..Default::default()
+    })
 }
 
 impl Rav1dPicture {

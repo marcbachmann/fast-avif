@@ -1,13 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::{c_int, c_uint};
 use std::{array, cmp};
 
 use rav1d_shared::align::{AlignedVec2, AlignedVec64};
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::include::common::bitdepth::BitDepth;
-use rav1d_shared::include::dav1d::headers::{Rav1dFrameHeader, Rav1dPixelLayout};
-use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use rav1d_shared::bitdepth::BitDepth;
+use rav1d_shared::headers::{Rav1dFrameHeader, Rav1dPixelLayout};
+use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
 use crate::internal::{Rav1dBitDepthDSPContext, Rav1dContext, Rav1dFrameData};
 use crate::lr_apply::LrRestorePlanes;
 use rav1d_shared::relaxed_atomic::RelaxedAtomic;
@@ -23,30 +21,30 @@ fn backup_lpf<BD: BitDepth>(
     c: &Rav1dContext,
     mut dst: WithOffset<WithStride<&DisjointMut<AlignedVec64<u8>>>>,
     mut src: Rav1dPictureDataComponentOffset,
-    ss_ver: c_int,
+    ss_ver: i32,
     sb128: u8,
-    mut row: c_int,
-    row_h: c_int,
-    src_w: c_int,
-    h: c_int,
-    ss_hor: c_int,
-    lr_backup: c_int,
+    mut row: i32,
+    row_h: i32,
+    src_w: i32,
+    h: i32,
+    ss_hor: i32,
+    lr_backup: i32,
     frame_hdr: &Rav1dFrameHeader,
     dsp: &Rav1dBitDepthDSPContext,
-    resize_step: [c_int; 2],
-    resize_start: [c_int; 2],
+    resize_step: [i32; 2],
+    resize_start: [i32; 2],
     bd: BD,
 ) {
     let src_w = src_w as usize;
 
-    let cdef_backup = (lr_backup == 0) as c_int;
+    let cdef_backup = (lr_backup == 0) as i32;
     let dst_w = if frame_hdr.size.super_res.enabled {
         (frame_hdr.size.width[1] + ss_hor) as usize >> ss_hor
     } else {
         src_w
     };
     // The first stripe of the frame is shorter by 8 luma pixel rows.
-    let mut stripe_h = (64 << (cdef_backup & sb128 as c_int)) - 8 * (row == 0) as c_int >> ss_ver;
+    let mut stripe_h = (64 << (cdef_backup & sb128 as i32)) - 8 * (row == 0) as i32 >> ss_ver;
     src += (stripe_h - 2) as isize * src.pixel_stride::<BD>();
     if c.tc.len() == 1 {
         if row != 0 {
@@ -78,7 +76,7 @@ fn backup_lpf<BD: BitDepth>(
     }
     if lr_backup != 0 && frame_hdr.size.width[0] != frame_hdr.size.width[1] {
         while row + stripe_h <= row_h {
-            let n_lines = 4 - (row + stripe_h + 1 == h) as c_int;
+            let n_lines = 4 - (row + stripe_h + 1 == h) as i32;
             dsp.mc.resize.call::<BD>(
                 WithOffset::buf(dst),
                 src,
@@ -111,7 +109,7 @@ fn backup_lpf<BD: BitDepth>(
         }
     } else {
         while row + stripe_h <= row_h {
-            let n_lines = 4 - (row + stripe_h + 1 == h) as c_int;
+            let n_lines = 4 - (row + stripe_h + 1 == h) as i32;
             for i in 0..4 {
                 let dst_abs_px_stride = dst.pixel_stride::<BD>().unsigned_abs();
                 if i != n_lines {
@@ -146,15 +144,15 @@ pub(crate) fn rav1d_copy_lpf<BD: BitDepth>(
     c: &Rav1dContext,
     f: &Rav1dFrameData,
     src: [Rav1dPictureDataComponentOffset; 3],
-    sby: c_int,
+    sby: i32,
 ) {
-    let bd = BD::from_c(f.bitdepth_max);
+    let bd = BD::from_max(f.bitdepth_max);
 
-    let have_tt = (c.tc.len() > 1) as c_int;
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
-    let resize = (frame_hdr.size.width[0] != frame_hdr.size.width[1]) as c_int;
-    let offset_y = 8 * (sby != 0) as c_int;
-    let seq_hdr = &***f.seq_hdr.as_ref().unwrap();
+    let have_tt = (c.tc.len() > 1) as i32;
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
+    let resize = (frame_hdr.size.width[0] != frame_hdr.size.width[1]) as i32;
+    let offset_y = 8 * (sby != 0) as i32;
+    let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
     let tt_off = have_tt * sby * (4 << seq_hdr.sb128);
     let sr_cur_data = &f.sr_cur.p.data.as_ref().unwrap().data;
     let dst = array::from_fn::<_, 3, _>(|i| {
@@ -232,13 +230,13 @@ pub(crate) fn rav1d_copy_lpf<BD: BitDepth>(
     if (seq_hdr.cdef != 0 || restore_planes.intersects(LrRestorePlanes::UV))
         && f.cur.p.layout != Rav1dPixelLayout::I400
     {
-        let ss_ver = (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as c_int;
-        let ss_hor = (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as c_int;
+        let ss_ver = (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
+        let ss_hor = (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as i32;
         let h_0 = f.cur.p.h + ss_ver >> ss_ver;
         let w_0 = f.bw << 2 - ss_hor;
-        let row_h_0 = cmp::min((sby + 1) << 6 - ss_ver + seq_hdr.sb128 as c_int, h_0 - 1);
+        let row_h_0 = cmp::min((sby + 1) << 6 - ss_ver + seq_hdr.sb128 as i32, h_0 - 1);
         let offset_uv = offset_y >> ss_ver;
-        let y_stripe_0 = (sby << 6 - ss_ver + seq_hdr.sb128 as c_int) - offset_uv;
+        let y_stripe_0 = (sby << 6 - ss_ver + seq_hdr.sb128 as i32) - offset_uv;
         let cdef_off_uv = sby as isize * 4 * src[1].pixel_stride::<BD>();
         if seq_hdr.cdef != 0 || restore_planes.contains(LrRestorePlanes::U) {
             if restore_planes.contains(LrRestorePlanes::U) || resize == 0 {
@@ -392,7 +390,7 @@ fn filter_plane_cols_y<BD: BitDepth>(
             mask.each_ref().map(|[_, b]| b.get() as u32)
         };
         let lvl = |y| lvl + (4 * x + y);
-        lf_sb.y.h.call::<BD>(f, y_dst(x), &hmask, lvl(0), len);
+        lf_sb.y.h.call(f, y_dst(x), &hmask, lvl(0), len);
     }
 }
 
@@ -424,7 +422,7 @@ fn filter_plane_rows_y<BD: BitDepth>(
             .each_ref()
             .map(|[a, b]| a.get() as u32 | ((b.get() as u32) << 16));
         let lvl = |y| lvl + (4 * i * b4_stride + y);
-        lf_sb.y.v.call::<BD>(f, y_dst(i), &vmask, lvl(1), w);
+        lf_sb.y.v.call(f, y_dst(i), &vmask, lvl(1), w);
     }
 }
 
@@ -439,7 +437,7 @@ fn filter_plane_cols_uv<BD: BitDepth>(
     w: usize,
     starty4: usize,
     endy4: usize,
-    ss_ver: c_int,
+    ss_ver: i32,
 ) {
     // filter edges between columns (e.g. block1 | block2)
     let lf_sb = &f.dsp.lf.loop_filter_sb;
@@ -466,8 +464,8 @@ fn filter_plane_cols_uv<BD: BitDepth>(
         };
         let hmask = [hmask[0], hmask[1], 0];
         let lvl = |y| lvl + (4 * x + y);
-        lf_sb.uv.h.call::<BD>(f, u_dst(x), &hmask, lvl(2), len);
-        lf_sb.uv.h.call::<BD>(f, v_dst(x), &hmask, lvl(3), len);
+        lf_sb.uv.h.call(f, u_dst(x), &hmask, lvl(2), len);
+        lf_sb.uv.h.call(f, v_dst(x), &hmask, lvl(3), len);
     }
 }
 
@@ -483,7 +481,7 @@ fn filter_plane_rows_uv<BD: BitDepth>(
     w: usize,
     starty4: usize,
     endy4: usize,
-    ss_hor: c_int,
+    ss_hor: i32,
 ) {
     //                                 block1
     // filter edges between rows (e.g. ------)
@@ -504,8 +502,8 @@ fn filter_plane_rows_uv<BD: BitDepth>(
             .map(|[a, b]| a.get() as u32 | ((b.get() as u32) << (16 >> ss_hor)));
         let vmask = [vmask[0], vmask[1], 0];
         let lvl = |y| lvl + (4 * i * b4_stride + y);
-        lf_sb.uv.v.call::<BD>(f, u_dst(i), &vmask, lvl(2), w);
-        lf_sb.uv.v.call::<BD>(f, v_dst(i), &vmask, lvl(3), w);
+        lf_sb.uv.v.call(f, u_dst(i), &vmask, lvl(2), w);
+        lf_sb.uv.v.call(f, v_dst(i), &vmask, lvl(3), w);
     }
 }
 
@@ -513,37 +511,37 @@ pub(crate) fn rav1d_loopfilter_sbrow_cols<BD: BitDepth>(
     f: &Rav1dFrameData,
     [py, pu, pv]: [Rav1dPictureDataComponentOffset; 3],
     lflvl_offset: usize,
-    sby: c_int,
-    start_of_tile_row: c_int,
+    sby: i32,
+    start_of_tile_row: i32,
 ) {
     let lflvl = &f.lf.mask[lflvl_offset..];
     let mut have_left; // Don't filter outside the frame
-    let seq_hdr = &***f.seq_hdr.as_ref().unwrap();
-    let is_sb64 = (seq_hdr.sb128 == 0) as c_int;
+    let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
+    let is_sb64 = (seq_hdr.sb128 == 0) as i32;
     let starty4 = ((sby & is_sb64) as u32) << 4;
     let sbsz = 32 >> is_sb64;
     let sbl2 = 5 - is_sb64;
     let halign = (f.bh + 31 & !31) as usize;
-    let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as c_int;
-    let ss_hor = (f.cur.p.layout != Rav1dPixelLayout::I444) as c_int;
+    let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as i32;
+    let ss_hor = (f.cur.p.layout != Rav1dPixelLayout::I444) as i32;
     let vmask = 16 >> ss_ver;
     let hmask = 16 >> ss_hor;
-    let vmax = (1 as c_uint) << vmask;
-    let hmax = (1 as c_uint) << hmask;
+    let vmax = (1 as u32) << vmask;
+    let hmax = (1 as u32) << hmask;
     let endy4 = starty4 + cmp::min(f.h4 - sby * sbsz, sbsz) as u32;
     let uv_endy4 = (endy4 + ss_ver as u32) >> ss_ver;
     let mut lpf_y_idx = (sby << sbl2) as usize;
     let mut lpf_uv_idx = (sby << sbl2 - ss_ver) as usize;
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
 
     // fix lpf strength at tile col boundaries
     let mut tile_col = 1;
     loop {
-        let mut x = frame_hdr.tiling.col_start_sb[tile_col as usize] as c_int;
+        let mut x = frame_hdr.tiling.col_start_sb[tile_col as usize] as i32;
         if x << sbl2 >= f.bw {
             break;
         }
-        let bx4: c_int = if x & is_sb64 != 0 { 16 } else { 0 };
+        let bx4: i32 = if x & is_sb64 != 0 { 16 } else { 0 };
         let cbx4 = bx4 >> ss_hor;
         x >>= is_sb64;
         let y_hmask = &lflvl[x as usize].filter_y[0][bx4 as usize];
@@ -600,7 +598,7 @@ pub(crate) fn rav1d_loopfilter_sbrow_cols<BD: BitDepth>(
                     .update(|it| it | smask);
             }
             if f.cur.p.layout != Rav1dPixelLayout::I400 {
-                let cw: c_uint = w.wrapping_add(ss_hor as c_uint) >> ss_hor;
+                let cw: u32 = w.wrapping_add(ss_hor as u32) >> ss_hor;
                 let uv_vmask = &lflvl[x as usize].filter_uv[1][(starty4 >> ss_ver) as usize];
                 for i in 0..cw {
                     let uv_mask: u32 = 1 << i;
@@ -629,7 +627,7 @@ pub(crate) fn rav1d_loopfilter_sbrow_cols<BD: BitDepth>(
             lvl + 4 * x * 32,
             &lflvl[x].filter_y[0],
             py + x * 128,
-            cmp::min(32, f.w4 - x as c_int * 32) as usize,
+            cmp::min(32, f.w4 - x as i32 * 32) as usize,
             starty4 as usize,
             endy4 as usize,
         );
@@ -651,7 +649,7 @@ pub(crate) fn rav1d_loopfilter_sbrow_cols<BD: BitDepth>(
             &lflvl[x].filter_uv[0],
             pu + x * (128 >> ss_hor),
             pv + x * (128 >> ss_hor),
-            (cmp::min(32, f.w4 - x as c_int * 32) + ss_hor >> ss_hor) as usize,
+            (cmp::min(32, f.w4 - x as i32 * 32) + ss_hor >> ss_hor) as usize,
             starty4 as usize >> ss_ver,
             uv_endy4 as usize,
             ss_ver,
@@ -664,20 +662,20 @@ pub(crate) fn rav1d_loopfilter_sbrow_rows<BD: BitDepth>(
     f: &Rav1dFrameData,
     p: [Rav1dPictureDataComponentOffset; 3],
     lflvl_offset: usize,
-    sby: c_int,
+    sby: i32,
 ) {
     let lflvl = &f.lf.mask[lflvl_offset..];
 
     // Don't filter outside the frame
     let have_top = sby > 0;
-    let seq_hdr = &***f.seq_hdr.as_ref().unwrap();
-    let is_sb64 = (seq_hdr.sb128 == 0) as c_int;
+    let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
+    let is_sb64 = (seq_hdr.sb128 == 0) as i32;
     let starty4 = (sby & is_sb64) << 4;
     let sbsz = 32 >> is_sb64;
-    let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as c_int;
-    let ss_hor = (f.cur.p.layout != Rav1dPixelLayout::I444) as c_int;
-    let endy4: c_uint = (starty4 + cmp::min(f.h4 - sby * sbsz, sbsz)) as c_uint;
-    let uv_endy4: c_uint = endy4.wrapping_add(ss_ver as c_uint) >> ss_ver;
+    let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as i32;
+    let ss_hor = (f.cur.p.layout != Rav1dPixelLayout::I444) as i32;
+    let endy4: u32 = (starty4 + cmp::min(f.h4 - sby * sbsz, sbsz)) as u32;
+    let uv_endy4: u32 = endy4.wrapping_add(ss_ver as u32) >> ss_ver;
 
     let lvl = WithOffset {
         data: &f.lf.level,
@@ -691,13 +689,13 @@ pub(crate) fn rav1d_loopfilter_sbrow_rows<BD: BitDepth>(
             f.b4_stride as usize,
             &lflvl[x].filter_y[1],
             p[0] + 128 * x,
-            cmp::min(32, f.w4 - x as c_int * 32) as usize,
+            cmp::min(32, f.w4 - x as i32 * 32) as usize,
             starty4 as usize,
             endy4 as usize,
         );
     }
 
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
     if frame_hdr.loopfilter.level_u == 0 && frame_hdr.loopfilter.level_v == 0 {
         return;
     }
@@ -716,7 +714,7 @@ pub(crate) fn rav1d_loopfilter_sbrow_rows<BD: BitDepth>(
             &lflvl[x].filter_uv[1],
             pu + (x * 128 >> ss_hor),
             pv + (x * 128 >> ss_hor),
-            (cmp::min(32 as c_int, f.w4 - x as c_int * 32) + ss_hor >> ss_hor) as usize,
+            (cmp::min(32 as i32, f.w4 - x as i32 * 32) + ss_hor >> ss_hor) as usize,
             starty4 as usize >> ss_ver,
             uv_endy4 as usize,
             ss_hor,

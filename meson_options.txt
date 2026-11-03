@@ -17,8 +17,3 @@ option('test_rust_path',
     type: 'string',
     value: '',
     description: 'Path of the cargo-built dav1d binary, relative to the project root')
-
-option('seek_stress_test_rust_path',
-    type: 'string',
-    value: '',
-    description: 'Path of the cargo-built seek_stress binary, relative to the project root')

@@ -1,7 +1,6 @@
-use std::ffi::{c_int, c_uint, c_ulonglong};
 
-use crate::include::common::attributes::{clz, clzll};
-use crate::include::common::bitdepth::{AsPrimitive, ToPrimitive};
+use crate::attributes::{clz, clzll};
+use crate::bitdepth::{AsPrimitive, ToPrimitive};
 
 /// # Safety
 ///
@@ -38,12 +37,12 @@ where
 }
 
 #[inline]
-pub fn iclip(v: c_int, min: c_int, max: c_int) -> c_int {
+pub fn iclip(v: i32, min: i32, max: i32) -> i32 {
     clip(v, min, max)
 }
 
 #[inline]
-pub fn apply_sign(v: c_int, s: c_int) -> c_int {
+pub fn apply_sign(v: i32, s: i32) -> i32 {
     if s < 0 {
         -v
     } else {
@@ -52,7 +51,7 @@ pub fn apply_sign(v: c_int, s: c_int) -> c_int {
 }
 
 #[inline]
-pub fn apply_sign64(v: c_int, s: i64) -> c_int {
+pub fn apply_sign64(v: i32, s: i64) -> i32 {
     if s < 0 {
         -v
     } else {
@@ -61,17 +60,17 @@ pub fn apply_sign64(v: c_int, s: i64) -> c_int {
 }
 
 #[inline]
-pub fn ulog2(v: c_uint) -> c_int {
+pub fn ulog2(v: u32) -> i32 {
     return 31 - clz(v);
 }
 
 #[inline]
-pub fn u64log2(v: u64) -> c_int {
-    return 63 - clzll(v as c_ulonglong);
+pub fn u64log2(v: u64) -> i32 {
+    return 63 - clzll(v as u64);
 }
 
 #[inline]
-pub fn inv_recenter(r: c_uint, v: c_uint) -> c_uint {
+pub fn inv_recenter(r: u32, v: u32) -> u32 {
     if v > r << 1 {
         v
     } else if v & 1 == 0 {

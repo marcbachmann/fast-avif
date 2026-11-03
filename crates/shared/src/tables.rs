@@ -1,4 +1,3 @@
-use std::ffi::c_uint;
 
 use strum::EnumCount;
 
@@ -6,7 +5,7 @@ use crate::align::{Align16, Align4, Align64, Align8};
 use crate::const_fn::const_for;
 use crate::enum_map::DefaultValue;
 use crate::in_range::InRange;
-use crate::include::dav1d::headers::{
+use crate::headers::{
     Rav1dFilterMode, Rav1dWarpedMotionParams, Rav1dWarpedMotionType,
 };
 use crate::levels::{
@@ -590,7 +589,7 @@ pub static DAV1D_WEDGE_CTX_LUT: [u8; BlockSize::COUNT] = [
     0, 0, 0, 0, 0, 0, 0, 6, 5, 8, 0, 4, 3, 2, 0, 7, 1, 0, 0, 0, 0, 0,
 ];
 
-pub const CFL_ALLOWED_MASK: c_uint = {
+pub const CFL_ALLOWED_MASK: u32 = {
     use BlockSize::*;
 
     1 << Bs32x32 as u8
@@ -609,7 +608,7 @@ pub const CFL_ALLOWED_MASK: c_uint = {
         | 1 << Bs4x4 as u8
 };
 
-pub const WEDGE_ALLOWED_MASK: c_uint = {
+pub const WEDGE_ALLOWED_MASK: u32 = {
     use BlockSize::*;
 
     1 << Bs32x32 as u8
@@ -623,7 +622,7 @@ pub const WEDGE_ALLOWED_MASK: c_uint = {
         | 1 << Bs8x8 as u8
 };
 
-pub const INTERINTRA_ALLOWED_MASK: c_uint = {
+pub const INTERINTRA_ALLOWED_MASK: u32 = {
     use BlockSize::*;
 
     1 << Bs32x32 as u8

@@ -1,16 +1,13 @@
 use std::cmp;
-use std::ffi::c_int;
 use std::mem::MaybeUninit;
-
-use rav1d_shared::c_types::ptrdiff_t;
 use parking_lot::RwLock;
 use zerocopy::FromBytes;
 
 use rav1d_shared::align::{Align16, AlignedVec2, ArrayDefault};
 use crate::ctx::CaseSet;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::include::common::intops::{clip, iclip};
-use rav1d_shared::include::dav1d::headers::{
+use rav1d_shared::intops::{clip, iclip};
+use rav1d_shared::headers::{
     Rav1dFrameHeader, Rav1dLoopfilterModeRefDeltas, Rav1dPixelLayout, Rav1dRestorationType,
 };
 use crate::internal::Bxy;
@@ -424,12 +421,12 @@ fn mask_edges_chroma(
 pub(crate) fn rav1d_create_lf_mask_intra(
     lflvl: &Av1Filter,
     level_cache: &DisjointMut<AlignedVec2<u8>>,
-    b4_stride: ptrdiff_t,
+    b4_stride: isize,
     level_rows: [usize; 2],
     filter_level: &Align16<[[[u8; 2]; 8]; 4]>,
     b: Bxy,
-    iw: c_int,
-    ih: c_int,
+    iw: i32,
+    ih: i32,
     bs: BlockSize,
     ytx: TxfmSize,
     uvtx: TxfmSize,
@@ -519,14 +516,14 @@ pub(crate) fn rav1d_create_lf_mask_intra(
 pub(crate) fn rav1d_create_lf_mask_inter(
     lflvl: &Av1Filter,
     level_cache: &DisjointMut<AlignedVec2<u8>>,
-    b4_stride: ptrdiff_t,
+    b4_stride: isize,
     level_rows: [usize; 2],
     filter_level: &Align16<[[[u8; 2]; 8]; 4]>,
     r#ref: usize,
     is_gmv: bool,
     b: Bxy,
-    iw: c_int,
-    ih: c_int,
+    iw: i32,
+    ih: i32,
     skip: bool,
     bs: BlockSize,
     max_ytx: TxfmSize,
@@ -654,13 +651,13 @@ fn calc_lf_value(
     mr_delta: Option<&Rav1dLoopfilterModeRefDeltas>,
 ) {
     let base = iclip(
-        iclip(base_lvl as c_int + lf_delta as c_int, 0, 63) + seg_delta as c_int,
+        iclip(base_lvl as i32 + lf_delta as i32, 0, 63) + seg_delta as i32,
         0,
         63,
     );
 
     if let Some(mr_delta) = mr_delta {
-        let sh = (base >= 32) as c_int;
+        let sh = (base >= 32) as i32;
         lflvl_values[0] = [clip(base + mr_delta.ref_delta[0] as i32 * (1 << sh), 0, 63); 2];
         for r in 1..8 {
             for m in 0..2 {

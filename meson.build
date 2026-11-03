@@ -31,13 +31,9 @@ if get_option('test_rust_path') == ''
 endif
 dav1d = files(get_option('test_rust_path'))
 
-# Without a seek_stress binary its tests are registered against dav1d but only
-# run when the testdata_seek-stress suite is asked for.
-if get_option('seek_stress_test_rust_path') != ''
-    seek_stress = files(get_option('seek_stress_test_rust_path'))
-else
-    seek_stress = dav1d
-endif
+# The test data registers seek tests under this name, in a suite nothing runs: the flush test in
+# tests/rust_api_rows.rs took their place.
+seek_stress = dav1d
 
 dav1d_bitdepths = get_option('bitdepths')
 

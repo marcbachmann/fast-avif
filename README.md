@@ -131,7 +131,6 @@ The test script accepts additional arguments to configure how tests are run:
   to take longer to run, e.g. if running tests with a debug build.
 * `-f DELAY` - Specify a frame delay for the tests. If specified the tests will
   also be run with multiple threads.
-* `-n` - Test with negative strides.
 * `-w WRAPPER` - Specify a wrapper binary to use to run the tests. This is
   necessary for testing under QEMU for platforms other than the host platform.
 

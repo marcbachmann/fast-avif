@@ -1,4 +1,3 @@
-use std::ffi::{c_int, c_uint, c_void};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Rem, Shr};
@@ -6,7 +5,7 @@ use std::ops::{Add, Div, Mul, Rem, Shr};
 use zerocopy::{AsBytes, FromBytes};
 
 use crate::align::{Align16, Align8, ArrayDefault};
-use crate::include::common::intops::clip;
+use crate::intops::clip;
 
 pub trait FromPrimitive<T> {
     fn from_prim(t: T) -> Self;
@@ -84,7 +83,7 @@ pub enum BPC {
 
 impl BPC {
     #[inline]
-    pub fn from_bitdepth_max(bitdepth_max: c_int) -> Self {
+    pub fn from_bitdepth_max(bitdepth_max: i32) -> Self {
         if bitdepth_max == BitDepth8::new(()).bitdepth_max().into() {
             Self::BPC8
         } else {
@@ -140,11 +139,11 @@ pub trait BitDepth: Clone + Copy {
         + Into<i32>
         + TryFrom<i32>
         + FromPrimitive<u16>
-        + FromPrimitive<c_int>
-        + FromPrimitive<c_uint>
+        + FromPrimitive<i32>
+        + FromPrimitive<u32>
         + ToPrimitive<i16>
-        + ToPrimitive<c_int>
-        + ToPrimitive<c_uint>
+        + ToPrimitive<i32>
+        + ToPrimitive<u32>
         + FromBytes
         + AsBytes;
 
@@ -155,10 +154,10 @@ pub trait BitDepth: Clone + Copy {
         + Into<i32>
         + FromPrimitive<i16>
         + FromPrimitive<u16>
-        + FromPrimitive<c_int>
-        + FromPrimitive<c_uint>
-        + ToPrimitive<c_int>
-        + ToPrimitive<c_uint>
+        + FromPrimitive<i32>
+        + FromPrimitive<u32>
+        + ToPrimitive<i32>
+        + ToPrimitive<u32>
         + Add<Output = Self::Coef>
         + FromBytes
         + AsBytes
@@ -168,8 +167,8 @@ pub trait BitDepth: Clone + Copy {
         + Default
         + ArrayDefault
         + FromPrimitive<i16>
-        + FromPrimitive<c_int>
-        + ToPrimitive<c_int>;
+        + FromPrimitive<i32>
+        + ToPrimitive<i32>;
 
     type Scaling: AsRef<[u8]> + AsMut<[u8]> + ArrayDefault + Copy;
     const SCALING_BITS: usize;
@@ -181,18 +180,12 @@ pub trait BitDepth: Clone + Copy {
 
     fn new(bitdepth_max: Self::BitDepthMax) -> Self;
 
-    /// While [`BitDepth::new`] is the implementation specific way to
-    /// construct a [`BitDepth`], [`BitDepth::from_c`] is a uniform way to
-    /// construct a [`BitDepth`] from its C representation, a [`c_int`].
-    ///
-    /// Since [`BitDepth`]-dependent `fn` ptr types use type erasure, they
-    /// always pass the `bitdepth_max` last argument (even for `8bpc``fn`s
-    /// where it's superfluous (it's constant)), so we need to convert from
-    /// that `bitdepth_max: c_int` arg back to a [`BitDepth`].
-    fn from_c(bitdepth_max: c_int) -> Self;
+    /// The [`BitDepth`] from the `bitdepth_max` that the type-erased `fn` ptrs pass, which at 8 bpc
+    /// is constant.
+    fn from_max(bitdepth_max: i32) -> Self;
 
-    /// The opposite of [`BitDepth::from_c`].
-    fn into_c(self) -> c_int {
+    /// The opposite of [`BitDepth::from_max`].
+    fn into_max(self) -> i32 {
         self.bitdepth_max().into()
     }
 
@@ -263,7 +256,7 @@ impl BitDepth for BitDepth8 {
         Self { bitdepth_max }
     }
 
-    fn from_c(_bitdepth_max: c_int) -> Self {
+    fn from_max(_bitdepth_max: i32) -> Self {
         Self::new(())
     }
 
@@ -314,7 +307,7 @@ impl BitDepth for BitDepth16 {
         Self { bitdepth_max }
     }
 
-    fn from_c(bitdepth_max: c_int) -> Self {
+    fn from_max(bitdepth_max: i32) -> Self {
         Self::new(bitdepth_max.as_())
     }
 
@@ -358,13 +351,13 @@ impl Display for DisplayPixel16 {
 }
 
 #[repr(transparent)]
-pub struct DynPixel(c_void);
+pub struct DynPixel(u8);
 
 #[repr(transparent)]
-pub struct DynCoef(c_void);
+pub struct DynCoef(u8);
 
 #[repr(transparent)]
-pub struct DynEntry(c_void);
+pub struct DynEntry(u8);
 
 #[repr(transparent)]
 pub struct DynScaling([u8; 1]);

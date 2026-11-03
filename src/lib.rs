@@ -1,22 +1,11 @@
-//! The AV1 still-image encoder and the decoder it is checked against: `rav1d_shared`, the
-//! decoder `rav1d_dec` and the encoder, re-exported under the paths they always had.
+//! The AV1 still-image encoder and the decoder it is checked against, `rav1d_enc` and `rav1d_dec`.
 #![deny(unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
-
-pub mod include {
-    pub mod common {}
-    pub mod dav1d {
-        pub use rav1d_dec::include::dav1d::dav1d;
-        pub use rav1d_shared::include::dav1d::{common, data, headers, picture};
-    }
-}
 
 pub use rav1d_dec::rust_api;
 pub use rav1d_dec::rust_api::*;
-pub use rav1d_dec::{
-    rav1d_version, DAV1D_API_VERSION_MAJOR, DAV1D_API_VERSION_MINOR, DAV1D_API_VERSION_PATCH,
-};
-pub use rav1d_shared::error::{Dav1dResult, Rav1dError, Rav1dResult};
-pub use rav1d_shared::{align, cpu, send_sync_non_null, Spawner};
+pub use rav1d_dec::rav1d_version;
+pub use rav1d_shared::error::{Rav1dError, Rav1dResult};
+pub use rav1d_shared::{align, cpu, headers, Spawner};
 
 /// The encoder, its filter search decoding through `rav1d_dec`.
 #[cfg(feature = "encoder")]

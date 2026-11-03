@@ -1,5 +1,5 @@
 use crate::disjoint_mut::{AsMutPtr, DisjointMut};
-use crate::include::dav1d::picture::Rav1dPictureDataComponent;
+use crate::picture::Rav1dPictureDataComponent;
 use crate::pixels::Pixels;
 use crate::strided::{Strided, WithStride};
 use crate::with_offset::WithOffset;

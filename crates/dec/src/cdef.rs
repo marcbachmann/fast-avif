@@ -1,19 +1,15 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::{c_int, c_uint};
 use std::{cmp, ptr};
 
 use bitflags::bitflags;
-use rav1d_shared::c_types::ptrdiff_t;
 
 use rav1d_shared::align::AlignedVec64;
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::disjoint_mut::DisjointMut;
-use rav1d_shared::ffi_safe::FFISafe;
-use rav1d_shared::include::common::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
-use rav1d_shared::include::common::intops::{apply_sign, iclip};
-use rav1d_shared::include::dav1d::picture::{
-    FFISafeRav1dPictureDataComponentOffset, Rav1dPictureDataComponentOffset,
+use rav1d_shared::bitdepth::{AsPrimitive, BitDepth, DynPixel, LeftPixelRow2px};
+use rav1d_shared::intops::{apply_sign, iclip};
+use rav1d_shared::picture::{
+    Rav1dPictureDataComponentOffset,
 };
 use rav1d_shared::pic_or_buf::PicOrBuf;
 use rav1d_shared::strided::Strided as _;
@@ -32,21 +28,17 @@ bitflags! {
     }
 }
 
-wrap_fn_ptr!(pub unsafe extern "C" fn cdef(
-    dst_ptr: *mut DynPixel,
-    stride: ptrdiff_t,
+wrap_fn_ptr!(pub unsafe fn cdef(
     left: *const [LeftPixelRow2px<DynPixel>; 8],
-    top_ptr: *const DynPixel,
-    bottom_ptr: *const DynPixel,
-    pri_strength: c_int,
-    sec_strength: c_int,
-    dir: c_int,
-    damping: c_int,
+    pri_strength: i32,
+    sec_strength: i32,
+    dir: i32,
+    damping: i32,
     edges: CdefEdgeFlags,
-    bitdepth_max: c_int,
-    _dst: FFISafeRav1dPictureDataComponentOffset,
-    _top: WithOffset<*const FFISafe<DisjointMut<AlignedVec64<u8>>>>,
-    _bottom: WithOffset<*const FFISafe<PicOrBuf<'_, AlignedVec64<u8>>>>,
+    bitdepth_max: i32,
+    dst: Rav1dPictureDataComponentOffset,
+    top: WithOffset<&DisjointMut<AlignedVec64<u8>>>,
+    bottom: WithOffset<&PicOrBuf<'_, AlignedVec64<u8>>>,
 ) -> ());
 
 pub type CdefTop<'a> = WithOffset<&'a DisjointMut<AlignedVec64<u8>>>;
@@ -64,34 +56,24 @@ impl cdef::Fn {
         left: &[LeftPixelRow2px<BD::Pixel>; 8],
         top: CdefTop,
         bottom: CdefBottom,
-        pri_strength: c_int,
+        pri_strength: i32,
         sec_strength: u8,
-        dir: c_int,
+        dir: i32,
         damping: u8,
         edges: CdefEdgeFlags,
         bd: BD,
     ) {
-        let dst_ptr = dst.as_mut_ptr::<BD>().cast();
-        let stride = dst.stride();
         let left = ptr::from_ref(left).cast();
-        let top_ptr = top.as_ptr::<BD>().cast();
-        let bottom_ptr = bottom.wrapping_as_ptr::<BD>().cast();
-        let sec_strength = sec_strength as c_int;
-        let damping = damping as c_int;
-        let bd = bd.into_c();
+        let sec_strength = sec_strength as i32;
+        let damping = damping as i32;
+        let bd = bd.into_max();
 
-        let dst = dst.into_ffi_safe();
-        let top = top.into_ffi_safe();
-        let bottom = bottom.as_ref().into_ffi_safe();
+        let bottom = bottom.as_ref();
 
-        // SAFETY: Rust fallback is safe, asm is assumed to do the same.
+        // SAFETY: Rust fallback is safe; the SIMD kernels read and write the same memory.
         unsafe {
             self.get()(
-                dst_ptr,
-                stride,
                 left,
-                top_ptr,
-                bottom_ptr,
                 pri_strength,
                 sec_strength,
                 dir,
@@ -106,27 +88,22 @@ impl cdef::Fn {
     }
 }
 
-wrap_fn_ptr!(pub unsafe extern "C" fn cdef_dir(
-    dst_ptr: *const DynPixel,
-    dst_stride: ptrdiff_t,
-    variance: &mut c_uint,
-    bitdepth_max: c_int,
-    _dst: FFISafeRav1dPictureDataComponentOffset,
-) -> c_int);
+wrap_fn_ptr!(pub unsafe fn cdef_dir(
+    variance: &mut u32,
+    bitdepth_max: i32,
+    dst: Rav1dPictureDataComponentOffset,
+) -> i32);
 
 impl cdef_dir::Fn {
     pub fn call<BD: BitDepth>(
         &self,
         dst: Rav1dPictureDataComponentOffset,
-        variance: &mut c_uint,
+        variance: &mut u32,
         bd: BD,
-    ) -> c_int {
-        let dst_ptr = dst.as_ptr::<BD>().cast();
-        let dst_stride = dst.stride();
-        let bd = bd.into_c();
-        let dst = dst.into_ffi_safe();
-        // SAFETY: Fallback `fn cdef_find_dir_rust` is safe; asm is supposed to do the same.
-        unsafe { self.get()(dst_ptr, dst_stride, variance, bd, dst) }
+    ) -> i32 {
+        let bd = bd.into_max();
+        // SAFETY: Fallback `fn cdef_find_dir_rust` is safe; the SIMD kernels read and write the same memory.
+        unsafe { self.get()(variance, bd, dst) }
     }
 }
 
@@ -138,7 +115,7 @@ pub struct Rav1dCdefDSPContext {
 }
 
 #[inline]
-pub fn constrain(diff: c_int, threshold: c_int, shift: c_int) -> c_int {
+pub fn constrain(diff: i32, threshold: i32, shift: i32) -> i32 {
     let adiff = diff.abs();
     apply_sign(
         cmp::min(adiff, cmp::max(0, threshold - (adiff >> shift))),
@@ -239,10 +216,10 @@ fn cdef_filter_block_rust<BD: BitDepth>(
     left: &[LeftPixelRow2px<BD::Pixel>; 8],
     top: CdefTop,
     bottom: CdefBottom,
-    pri_strength: c_int,
-    sec_strength: c_int,
-    dir: c_int,
-    damping: c_int,
+    pri_strength: i32,
+    sec_strength: i32,
+    dir: i32,
+    damping: i32,
     w: usize,
     h: usize,
     edges: CdefEdgeFlags,
@@ -267,52 +244,52 @@ fn cdef_filter_block_rust<BD: BitDepth>(
     if pri_strength != 0 {
         let bitdepth_min_8 = bd.bitdepth() - 8;
         let pri_tap = 4 - (pri_strength >> bitdepth_min_8 & 1);
-        let pri_shift = cmp::max(0, damping - pri_strength.ilog2() as c_int);
+        let pri_shift = cmp::max(0, damping - pri_strength.ilog2() as i32);
         if sec_strength != 0 {
-            let sec_shift = damping - sec_strength.ilog2() as c_int;
+            let sec_shift = damping - sec_strength.ilog2() as i32;
             for y in 0..h {
                 let tmp = &tmp[y * TMP_STRIDE..];
                 let dst = &mut *dst(y);
                 for x in 0..w {
-                    let px = dst[x].as_::<c_int>();
+                    let px = dst[x].as_::<i32>();
                     let mut sum = 0;
                     let mut max = px;
                     let mut min = px;
                     let mut pri_tap_k = pri_tap;
                     for k in 0..2 {
                         let off1 = DAV1D_CDEF_DIRECTIONS[dir + 2][k] as isize; // dir
-                        let p0 = tmp[tmp_index(x, off1)] as c_int;
-                        let p1 = tmp[tmp_index(x, -off1)] as c_int;
+                        let p0 = tmp[tmp_index(x, off1)] as i32;
+                        let p1 = tmp[tmp_index(x, -off1)] as i32;
                         sum += pri_tap_k * constrain(p0 - px, pri_strength, pri_shift);
                         sum += pri_tap_k * constrain(p1 - px, pri_strength, pri_shift);
                         // If `pri_tap_k == 4`, then it becomes 2, else it remains 3.
                         pri_tap_k = pri_tap_k & 3 | 2;
-                        min = cmp::min(p0 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(p0 as u32, min as u32) as i32;
                         max = cmp::max(p0, max);
-                        min = cmp::min(p1 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(p1 as u32, min as u32) as i32;
                         max = cmp::max(p1, max);
                         let off2 = DAV1D_CDEF_DIRECTIONS[dir + 4][k] as isize;
                         let off3 = DAV1D_CDEF_DIRECTIONS[dir + 0][k] as isize;
-                        let s0 = tmp[tmp_index(x, off2)] as c_int;
-                        let s1 = tmp[tmp_index(x, -off2)] as c_int;
-                        let s2 = tmp[tmp_index(x, off3)] as c_int;
-                        let s3 = tmp[tmp_index(x, -off3)] as c_int;
+                        let s0 = tmp[tmp_index(x, off2)] as i32;
+                        let s1 = tmp[tmp_index(x, -off2)] as i32;
+                        let s2 = tmp[tmp_index(x, off3)] as i32;
+                        let s3 = tmp[tmp_index(x, -off3)] as i32;
                         // `sec_tap` starts at 2 and becomes 1.
-                        let sec_tap = 2 - k as c_int;
+                        let sec_tap = 2 - k as i32;
                         sum += sec_tap * constrain(s0 - px, sec_strength, sec_shift);
                         sum += sec_tap * constrain(s1 - px, sec_strength, sec_shift);
                         sum += sec_tap * constrain(s2 - px, sec_strength, sec_shift);
                         sum += sec_tap * constrain(s3 - px, sec_strength, sec_shift);
-                        min = cmp::min(s0 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(s0 as u32, min as u32) as i32;
                         max = cmp::max(s0, max);
-                        min = cmp::min(s1 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(s1 as u32, min as u32) as i32;
                         max = cmp::max(s1, max);
-                        min = cmp::min(s2 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(s2 as u32, min as u32) as i32;
                         max = cmp::max(s2, max);
-                        min = cmp::min(s3 as c_uint, min as c_uint) as c_int;
+                        min = cmp::min(s3 as u32, min as u32) as i32;
                         max = cmp::max(s3, max);
                     }
-                    dst[x] = iclip(px + (sum - (sum < 0) as c_int + 8 >> 4), min, max)
+                    dst[x] = iclip(px + (sum - (sum < 0) as i32 + 8 >> 4), min, max)
                         .as_::<BD::Pixel>();
                 }
             }
@@ -322,44 +299,44 @@ fn cdef_filter_block_rust<BD: BitDepth>(
                 let tmp = &tmp[y * TMP_STRIDE..];
                 let dst = &mut *dst(y);
                 for x in 0..w {
-                    let px = dst[x].as_::<c_int>();
+                    let px = dst[x].as_::<i32>();
                     let mut sum = 0;
                     let mut pri_tap_k = pri_tap;
                     for k in 0..2 {
                         let off = DAV1D_CDEF_DIRECTIONS[dir + 2][k] as isize;
-                        let p0 = tmp[tmp_index(x, off)] as c_int;
-                        let p1 = tmp[tmp_index(x, -off)] as c_int;
+                        let p0 = tmp[tmp_index(x, off)] as i32;
+                        let p1 = tmp[tmp_index(x, -off)] as i32;
                         sum += pri_tap_k * constrain(p0 - px, pri_strength, pri_shift);
                         sum += pri_tap_k * constrain(p1 - px, pri_strength, pri_shift);
                         pri_tap_k = pri_tap_k & 3 | 2;
                     }
-                    dst[x] = (px + (sum - (sum < 0) as c_int + 8 >> 4)).as_::<BD::Pixel>();
+                    dst[x] = (px + (sum - (sum < 0) as i32 + 8 >> 4)).as_::<BD::Pixel>();
                 }
             }
         }
     } else {
         // sec_strength only
-        let sec_shift = damping - sec_strength.ilog2() as c_int;
+        let sec_shift = damping - sec_strength.ilog2() as i32;
         for y in 0..h {
             let tmp = &tmp[y * TMP_STRIDE..];
             let dst = &mut *dst(y);
             for x in 0..w {
-                let px = dst[x].as_::<c_int>();
+                let px = dst[x].as_::<i32>();
                 let mut sum = 0;
                 for k in 0..2 {
                     let off1 = DAV1D_CDEF_DIRECTIONS[dir + 4][k] as isize;
                     let off2 = DAV1D_CDEF_DIRECTIONS[dir + 0][k] as isize;
-                    let s0 = tmp[tmp_index(x, off1)] as c_int;
-                    let s1 = tmp[tmp_index(x, -off1)] as c_int;
-                    let s2 = tmp[tmp_index(x, off2)] as c_int;
-                    let s3 = tmp[tmp_index(x, -off2)] as c_int;
-                    let sec_tap = 2 - k as c_int;
+                    let s0 = tmp[tmp_index(x, off1)] as i32;
+                    let s1 = tmp[tmp_index(x, -off1)] as i32;
+                    let s2 = tmp[tmp_index(x, off2)] as i32;
+                    let s3 = tmp[tmp_index(x, -off2)] as i32;
+                    let sec_tap = 2 - k as i32;
                     sum += sec_tap * constrain(s0 - px, sec_strength, sec_shift);
                     sum += sec_tap * constrain(s1 - px, sec_strength, sec_shift);
                     sum += sec_tap * constrain(s2 - px, sec_strength, sec_shift);
                     sum += sec_tap * constrain(s3 - px, sec_strength, sec_shift);
                 }
-                dst[x] = (px + (sum - (sum < 0) as c_int + 8 >> 4)).as_::<BD::Pixel>();
+                dst[x] = (px + (sum - (sum < 0) as i32 + 8 >> 4)).as_::<BD::Pixel>();
             }
         }
     };
@@ -369,35 +346,25 @@ fn cdef_filter_block_rust<BD: BitDepth>(
 ///
 /// Must be called by [`cdef::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe extern "C" fn cdef_filter_block_c_erased<BD: BitDepth, const W: usize, const H: usize>(
-    _dst_ptr: *mut DynPixel,
-    _stride: ptrdiff_t,
+unsafe fn cdef_filter_block_c_erased<BD: BitDepth, const W: usize, const H: usize>(
     left: *const [LeftPixelRow2px<DynPixel>; 8],
-    _top_ptr: *const DynPixel,
-    _bottom_ptr: *const DynPixel,
-    pri_strength: c_int,
-    sec_strength: c_int,
-    dir: c_int,
-    damping: c_int,
+    pri_strength: i32,
+    sec_strength: i32,
+    dir: i32,
+    damping: i32,
     edges: CdefEdgeFlags,
-    bitdepth_max: c_int,
-    dst: FFISafeRav1dPictureDataComponentOffset,
-    top: WithOffset<*const FFISafe<DisjointMut<AlignedVec64<u8>>>>,
-    bottom: WithOffset<*const FFISafe<PicOrBuf<'_, AlignedVec64<u8>>>>,
+    bitdepth_max: i32,
+    dst: Rav1dPictureDataComponentOffset,
+    top: WithOffset<&DisjointMut<AlignedVec64<u8>>>,
+    bottom: WithOffset<&PicOrBuf<'_, AlignedVec64<u8>>>,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
 
     // SAFETY: Reverse of cast in `cdef::Fn::call`.
     let left = unsafe { &*left.cast() };
 
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-    let top = unsafe { FFISafe::from_with_offset(top) };
 
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-    let bottom = unsafe { FFISafe::from_with_offset(bottom) };
 
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     cdef_filter_block_rust(
         dst,
         left,
@@ -418,24 +385,20 @@ unsafe extern "C" fn cdef_filter_block_c_erased<BD: BitDepth, const W: usize, co
 ///
 /// Must be called by [`cdef_dir::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe extern "C" fn cdef_find_dir_c_erased<BD: BitDepth>(
-    _img_ptr: *const DynPixel,
-    _stride: ptrdiff_t,
-    variance: &mut c_uint,
-    bitdepth_max: c_int,
-    img: FFISafeRav1dPictureDataComponentOffset,
-) -> c_int {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef_dir::Fn::call`.
-    let img = unsafe { FFISafe::from_with_offset(img) };
-    let bd = BD::from_c(bitdepth_max);
+unsafe fn cdef_find_dir_c_erased<BD: BitDepth>(
+    variance: &mut u32,
+    bitdepth_max: i32,
+    img: Rav1dPictureDataComponentOffset,
+) -> i32 {
+    let bd = BD::from_max(bitdepth_max);
     cdef_find_dir_rust(img, variance, bd)
 }
 
 fn cdef_find_dir_rust<BD: BitDepth>(
     img: Rav1dPictureDataComponentOffset,
-    variance: &mut c_uint,
+    variance: &mut u32,
     bd: BD,
-) -> c_int {
+) -> i32 {
     let bitdepth_min_8 = bd.bitdepth() - 8;
     let mut partial_sum_hv = [[0; 8]; 2];
     let mut partial_sum_diag = [[0; 15]; 2];
@@ -446,7 +409,7 @@ fn cdef_find_dir_rust<BD: BitDepth>(
         let img = img + (y as isize * img.pixel_stride::<BD>());
         let img = &*img.slice::<BD>(w);
         for x in 0..w {
-            let px = (img[x].as_::<c_int>() >> bitdepth_min_8) - 128;
+            let px = (img[x].as_::<i32>() >> bitdepth_min_8) - 128;
 
             partial_sum_diag[0][y + x] += px;
             partial_sum_alt[0][y + (x >> 1)] += px;
@@ -461,36 +424,36 @@ fn cdef_find_dir_rust<BD: BitDepth>(
 
     let mut cost = [0; 8];
     for n in 0..8 {
-        cost[2] += (partial_sum_hv[0][n] * partial_sum_hv[0][n]) as c_uint;
-        cost[6] += (partial_sum_hv[1][n] * partial_sum_hv[1][n]) as c_uint;
+        cost[2] += (partial_sum_hv[0][n] * partial_sum_hv[0][n]) as u32;
+        cost[6] += (partial_sum_hv[1][n] * partial_sum_hv[1][n]) as u32;
     }
     cost[2] *= 105;
     cost[6] *= 105;
 
     static DIV_TABLE: [u16; 7] = [840, 420, 280, 210, 168, 140, 120];
     for n in 0..7 {
-        let d = DIV_TABLE[n] as c_int;
+        let d = DIV_TABLE[n] as i32;
         cost[0] += ((partial_sum_diag[0][n] * partial_sum_diag[0][n]
             + partial_sum_diag[0][14 - n] * partial_sum_diag[0][14 - n])
-            * d) as c_uint;
+            * d) as u32;
         cost[4] += ((partial_sum_diag[1][n] * partial_sum_diag[1][n]
             + partial_sum_diag[1][14 - n] * partial_sum_diag[1][14 - n])
-            * d) as c_uint;
+            * d) as u32;
     }
-    cost[0] += (partial_sum_diag[0][7] * partial_sum_diag[0][7] * 105) as c_uint;
-    cost[4] += (partial_sum_diag[1][7] * partial_sum_diag[1][7] * 105) as c_uint;
+    cost[0] += (partial_sum_diag[0][7] * partial_sum_diag[0][7] * 105) as u32;
+    cost[4] += (partial_sum_diag[1][7] * partial_sum_diag[1][7] * 105) as u32;
 
     for n in 0..4 {
         let cost_ptr = &mut cost[n * 2 + 1];
         for m in 0..5 {
-            *cost_ptr += (partial_sum_alt[n][3 + m] * partial_sum_alt[n][3 + m]) as c_uint;
+            *cost_ptr += (partial_sum_alt[n][3 + m] * partial_sum_alt[n][3 + m]) as u32;
         }
         *cost_ptr *= 105;
         for m in 0..3 {
-            let d = DIV_TABLE[2 * m + 1] as c_int;
+            let d = DIV_TABLE[2 * m + 1] as i32;
             *cost_ptr += ((partial_sum_alt[n][m] * partial_sum_alt[n][m]
                 + partial_sum_alt[n][10 - m] * partial_sum_alt[n][10 - m])
-                * d) as c_uint;
+                * d) as u32;
         }
     }
 
@@ -504,7 +467,7 @@ fn cdef_find_dir_rust<BD: BitDepth>(
     }
 
     *variance = (best_cost - cost[best_dir ^ 4]) >> 10;
-    best_dir as c_int
+    best_dir as i32
 }
 
 /// [`cdef_filter_block_rust`] eight `i16` lanes at a time: a row of an 8-wide block or two rows
@@ -515,7 +478,7 @@ mod rust_simd {
     use zerocopy::AsBytes;
 
     use super::*;
-    use rav1d_shared::include::common::bitdepth::BPC;
+    use rav1d_shared::bitdepth::BPC;
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::I16x16;
     use rav1d_shared::simd128::{I16x8, I32x4};
@@ -737,10 +700,10 @@ mod rust_simd {
         tmp: &[i16; TMP_STRIDE * TMP_STRIDE],
         dst: Rav1dPictureDataComponentOffset,
         h: usize,
-        pri_strength: c_int,
-        sec_strength: c_int,
+        pri_strength: i32,
+        sec_strength: i32,
         dir: usize,
-        damping: c_int,
+        damping: i32,
         bd: BD,
     ) {
         let rows = V::N / W;
@@ -748,8 +711,8 @@ mod rust_simd {
         let sec = V::splat(sec_strength as i16);
         let pri_tap = 4 - (pri_strength >> (bd.bitdepth() - 8) & 1);
         let pri_taps = [V::splat(pri_tap as i16), V::splat((pri_tap & 3 | 2) as i16)];
-        let pri_shift = cmp::max(0, damping - (pri_strength | 1).ilog2() as c_int) as u32;
-        let sec_shift = (damping - (sec_strength | 1).ilog2() as c_int) as u32;
+        let pri_shift = cmp::max(0, damping - (pri_strength | 1).ilog2() as i32) as u32;
+        let sec_shift = (damping - (sec_strength | 1).ilog2() as i32) as u32;
         // The taps' rows start at most this far in, which no offset exceeds: clamping to it
         // proves every load in bounds once instead of at each load.
         let s = TMP_STRIDE;
@@ -946,10 +909,10 @@ mod rust_simd {
         left: &[LeftPixelRow2px<BD::Pixel>; 8],
         top: CdefTop,
         bottom: CdefBottom,
-        pri_strength: c_int,
-        sec_strength: c_int,
-        dir: c_int,
-        damping: c_int,
+        pri_strength: i32,
+        sec_strength: i32,
+        dir: i32,
+        damping: i32,
         edges: CdefEdgeFlags,
         bd: BD,
     ) {
@@ -972,10 +935,10 @@ mod rust_simd {
                 left: &[LeftPixelRow2px<BD::Pixel>; 8],
                 top: CdefTop,
                 bottom: CdefBottom,
-                pri_strength: c_int,
-                sec_strength: c_int,
-                dir: c_int,
-                damping: c_int,
+                pri_strength: i32,
+                sec_strength: i32,
+                dir: i32,
+                damping: i32,
                 edges: CdefEdgeFlags,
                 bd: BD,
             ) {
@@ -1041,8 +1004,8 @@ mod rust_simd {
     )]
     fn find_dir<BD: BitDepth, const SHIFT: i32>(
         img: Rav1dPictureDataComponentOffset,
-        variance: &mut c_uint,
-    ) -> c_int {
+        variance: &mut u32,
+    ) -> i32 {
         const DIAG: [i32; 16] = [
             840, 420, 280, 210, 168, 140, 120, 105, 120, 140, 168, 210, 280, 420, 840, 0,
         ];
@@ -1110,7 +1073,7 @@ mod rust_simd {
         let mut cost = [0; 8];
         c[0].hadd(c[1]).hadd(c[2].hadd(c[3])).store(&mut cost[..4]);
         c[4].hadd(c[5]).hadd(c[6].hadd(c[7])).store(&mut cost[4..]);
-        let cost = cost.map(|c| c as c_uint);
+        let cost = cost.map(|c| c as u32);
         let mut best_dir = 0;
         let mut best_cost = cost[0];
         for n in 1..8 {
@@ -1120,7 +1083,7 @@ mod rust_simd {
             }
         }
         *variance = (best_cost - cost[best_dir ^ 4]) >> 10;
-        best_dir as c_int
+        best_dir as i32
     }
 
     /// # Safety
@@ -1128,18 +1091,14 @@ mod rust_simd {
     /// Must be called by [`cdef_dir::Fn::call`], on x86 once the CPU flags hold SSE41.
     #[deny(unsafe_op_in_unsafe_fn)]
     #[allow(unused_unsafe)]
-    pub unsafe extern "C" fn cdef_find_dir_simd_erased<BD: BitDepth>(
-        _img_ptr: *const DynPixel,
-        _stride: ptrdiff_t,
-        variance: &mut c_uint,
-        bitdepth_max: c_int,
-        img: FFISafeRav1dPictureDataComponentOffset,
-    ) -> c_int {
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef_dir::Fn::call`.
-        let img = unsafe { FFISafe::from_with_offset(img) };
+    pub unsafe fn cdef_find_dir_simd_erased<BD: BitDepth>(
+        variance: &mut u32,
+        bitdepth_max: i32,
+        img: Rav1dPictureDataComponentOffset,
+) -> i32 {
         // SAFETY: SSE4.1 is checked before this `fn` is chosen on x86; elsewhere it is safe.
         unsafe {
-            match (BD::BPC, BD::from_c(bitdepth_max).bitdepth()) {
+            match (BD::BPC, BD::from_max(bitdepth_max).bitdepth()) {
                 (BPC::BPC16, 12) => find_dir::<BD, 4>(img, variance),
                 _ => find_dir::<BD, 2>(img, variance),
             }
@@ -1152,36 +1111,26 @@ mod rust_simd {
     /// with `WIDE`.
     #[deny(unsafe_op_in_unsafe_fn)]
     #[allow(unused_unsafe)]
-    pub unsafe extern "C" fn cdef_filter_block_simd_erased<
+    pub unsafe fn cdef_filter_block_simd_erased<
         BD: BitDepth,
         const W: usize,
         const H: usize,
         const WIDE: bool,
     >(
-        _dst_ptr: *mut DynPixel,
-        _stride: ptrdiff_t,
         left: *const [LeftPixelRow2px<DynPixel>; 8],
-        _top_ptr: *const DynPixel,
-        _bottom_ptr: *const DynPixel,
-        pri_strength: c_int,
-        sec_strength: c_int,
-        dir: c_int,
-        damping: c_int,
+        pri_strength: i32,
+        sec_strength: i32,
+        dir: i32,
+        damping: i32,
         edges: CdefEdgeFlags,
-        bitdepth_max: c_int,
-        dst: FFISafeRav1dPictureDataComponentOffset,
-        top: WithOffset<*const FFISafe<DisjointMut<AlignedVec64<u8>>>>,
-        bottom: WithOffset<*const FFISafe<PicOrBuf<'_, AlignedVec64<u8>>>>,
-    ) {
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-        let dst = unsafe { FFISafe::from_with_offset(dst) };
+        bitdepth_max: i32,
+        dst: Rav1dPictureDataComponentOffset,
+        top: WithOffset<&DisjointMut<AlignedVec64<u8>>>,
+        bottom: WithOffset<&PicOrBuf<'_, AlignedVec64<u8>>>,
+) {
         // SAFETY: Reverse of cast in `cdef::Fn::call`.
         let left = unsafe { &*left.cast() };
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-        let top = unsafe { FFISafe::from_with_offset(top) };
-        // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `cdef::Fn::call`.
-        let bottom = unsafe { FFISafe::from_with_offset(bottom) };
-        let bd = BD::from_c(bitdepth_max);
+        let bd = BD::from_max(bitdepth_max);
         let bottom = bottom.map(|bot| *bot);
         let (p, s) = (pri_strength, sec_strength);
         #[cfg(target_arch = "x86_64")]
@@ -1251,8 +1200,8 @@ mod tests {
 
     use super::*;
     use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use rav1d_shared::include::common::bitdepth::{BitDepth16, BitDepth8};
-    use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponent;
+    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::picture::Rav1dPictureDataComponent;
 
     const STRIDE: usize = 64;
     const ROWS: usize = 32;
@@ -1271,22 +1220,22 @@ mod tests {
         }
 
         /// Mostly a smooth area with small noise, one in four a jump anywhere in range.
-        fn pixel(&mut self, bits: u8) -> c_int {
+        fn pixel(&mut self, bits: u8) -> i32 {
             let max = (1 << bits) - 1;
             if self.next() % 4 == 0 {
-                return (self.next() % (max as u32 + 1)) as c_int;
+                return (self.next() % (max as u32 + 1)) as i32;
             }
             let mid = 1 << (bits - 1);
-            (mid + ((self.next() % 41) as c_int - 20 << (bits - 8))).clamp(0, max)
+            (mid + ((self.next() % 41) as i32 - 20 << (bits - 8))).clamp(0, max)
         }
     }
 
     #[derive(Clone, Copy)]
     struct Case {
         size: usize,
-        pri: c_int,
+        pri: i32,
         sec: u8,
-        dir: c_int,
+        dir: i32,
         damping: u8,
         edges: CdefEdgeFlags,
     }
@@ -1411,7 +1360,7 @@ mod tests {
     }
 
     fn matches_scalar<BD: BitDepth>(bits: u8) {
-        let bd = BD::from_c((1 << bits) - 1);
+        let bd = BD::from_max((1 << bits) - 1);
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
         let dsps = contexts::<BD>();
         for (i, c) in cases(bits).into_iter().enumerate() {
@@ -1450,7 +1399,7 @@ mod tests {
     /// The direction and variance of blocks of noise, flat blocks at both ends of the range,
     /// full-range noise and stripes along each direction.
     fn dir_matches_scalar<BD: BitDepth>(bits: u8) {
-        let bd = BD::from_c((1 << bits) - 1);
+        let bd = BD::from_max((1 << bits) - 1);
         let max = (1 << bits) - 1;
         let mut rng = Rng(0x243f_6a88_85a3_08d3);
         let dsps = contexts::<BD>();
@@ -1465,7 +1414,7 @@ mod tests {
                     let v = match kind {
                         0 => 0,
                         1 => max,
-                        2 => (rng.next() % (max as u32 + 1)) as c_int,
+                        2 => (rng.next() % (max as u32 + 1)) as i32,
                         3 => [0, max][(x * dx as usize + y * dy as usize) / 3 % 2],
                         _ => continue,
                     };
@@ -1507,7 +1456,7 @@ mod tests {
 
     /// ns per direction search, scalar, Rust and asm.
     fn time_dir<BD: BitDepth>(bits: u8) {
-        let bd = BD::from_c((1 << bits) - 1);
+        let bd = BD::from_max((1 << bits) - 1);
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
         let fxs: Vec<_> = (0..64)
             .map(|_| Fixture::<BD>::new(&mut rng, bits))
@@ -1545,7 +1494,7 @@ mod tests {
 
     /// `cargo test --release --lib cdef::tests::time -- --ignored --nocapture`
     fn time<BD: BitDepth>(bits: u8) {
-        let bd = BD::from_c((1 << bits) - 1);
+        let bd = BD::from_max((1 << bits) - 1);
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
         let fx = Fixture::<BD>::new(&mut rng, bits);
         let all = cases(bits);

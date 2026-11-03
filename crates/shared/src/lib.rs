@@ -63,38 +63,22 @@
 //! What the decoder and the encoder share: headers, tables, contexts and the DSP of intra
 //! prediction and the inverse transforms. Public for them, not an API.
 
-pub mod include {
-    pub mod common {
-        pub mod attributes;
-        pub mod bitdepth;
-        pub mod dump;
-        pub mod intops;
-        pub mod validate;
-    }
-    pub mod dav1d {
-        pub mod common;
-        pub mod data;
-        pub mod headers;
-        pub mod picture;
-    }
-}
-
 pub mod align;
-pub mod c_arc;
-pub mod c_box;
-pub mod c_types;
+pub mod attributes;
+pub mod bitdepth;
 pub mod cdf;
 pub mod const_fn;
 pub mod cpu;
 pub mod data;
+pub mod dump;
 pub mod dequant_tables;
 pub mod disjoint_mut;
 pub mod enum_map;
 pub mod env;
 pub mod error;
 pub mod extensions;
-pub mod ffi_safe;
 pub mod filter_trials;
+pub mod headers;
 pub mod in_range;
 pub mod intra_edge;
 pub mod ipred;
@@ -103,18 +87,22 @@ pub mod iter;
 pub mod itx;
 pub mod itx_1d;
 pub mod itx_simd;
+pub mod intops;
 pub mod levels;
 pub mod msac;
 pub mod pic_or_buf;
+pub mod picture;
 pub mod pixels;
 pub mod pool;
+pub mod props;
 pub mod qm;
 pub mod relaxed_atomic;
 pub mod scan;
-pub mod send_sync_non_null;
+pub mod shared_bytes;
 pub mod simd128;
 pub mod strided;
 pub mod tables;
+pub mod validate;
 pub mod with_offset;
 pub mod wrap_fn_ptr;
 

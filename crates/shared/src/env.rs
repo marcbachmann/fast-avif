@@ -1,13 +1,12 @@
 use std::cmp;
 use std::cmp::Ordering;
 use std::ops::BitOr;
-use std::ffi::{c_int, c_uint};
 
 use crate::align::Align8;
 use crate::disjoint_mut::DisjointMut;
-use crate::include::common::intops::apply_sign;
+use crate::intops::apply_sign;
 use crate::in_range::InRange;
-use crate::include::dav1d::headers::{
+use crate::headers::{
     Rav1dFilterMode, Rav1dFrameHeader, Rav1dPixelLayout, Rav1dWarpedMotionParams,
     Rav1dWarpedMotionType,
 };
@@ -46,8 +45,8 @@ pub struct BlockContext {
 pub fn get_intra_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -72,8 +71,8 @@ pub fn get_tx_ctx(
     a: &BlockContext,
     l: &BlockContext,
     max_tx: &TxfmInfo,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
 ) -> u8 {
     (*l.tx_intra.index(yb4 as usize) as i32 >= max_tx.lh as i32) as u8
         + (*a.tx_intra.index(xb4 as usize) as i32 >= max_tx.lw as i32) as u8
@@ -84,8 +83,8 @@ pub fn get_partition_ctx(
     a: &BlockContext,
     l: &BlockContext,
     bl: BlockLevel,
-    yb8: c_int,
-    xb8: c_int,
+    yb8: i32,
+    xb8: i32,
 ) -> u8 {
     // the right-most ("index zero") bit of the partition represents the 8x8 block level,
     // but the BlockLevel enum represents the variants numerically in the opposite order
@@ -150,8 +149,8 @@ pub fn get_filter_ctx(
     comp: bool,
     dir: bool,
     r#ref: i8,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
 ) -> u8 {
     let [a_filter, l_filter] = [(a, xb4), (l, yb4)].map(|(al, b4)| {
         if *al.r#ref[0].index(b4 as usize) == r#ref || *al.r#ref[1].index(b4 as usize) == r#ref {
@@ -177,8 +176,8 @@ pub fn get_filter_ctx(
 pub fn get_comp_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -189,11 +188,11 @@ pub fn get_comp_ctx(
                     4
                 } else {
                     // 4U means intra (-1) or bwd (>= 4)
-                    2 + (*l.r#ref[0].index(yb4 as usize) as c_uint >= 4) as u8
+                    2 + (*l.r#ref[0].index(yb4 as usize) as u32 >= 4) as u8
                 }
             } else if l.comp_type.index(yb4 as usize).is_some() {
                 // 4U means intra (-1) or bwd (>= 4)
-                2 + (*a.r#ref[0].index(xb4 as usize) as c_uint >= 4) as u8
+                2 + (*a.r#ref[0].index(xb4 as usize) as u32 >= 4) as u8
             } else {
                 ((*l.r#ref[0].index(yb4 as usize) >= 4) ^ (*a.r#ref[0].index(xb4 as usize) >= 4))
                     as u8
@@ -220,8 +219,8 @@ pub fn get_comp_ctx(
 pub fn get_comp_dir_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -290,7 +289,7 @@ pub fn get_comp_dir_ctx(
 }
 
 #[inline]
-pub fn get_poc_diff(order_hint_n_bits: u8, poc0: c_int, poc1: c_int) -> c_int {
+pub fn get_poc_diff(order_hint_n_bits: u8, poc0: i32, poc1: i32) -> i32 {
     if order_hint_n_bits == 0 {
         return 0;
     }
@@ -302,16 +301,16 @@ pub fn get_poc_diff(order_hint_n_bits: u8, poc0: c_int, poc1: c_int) -> c_int {
 #[inline]
 pub fn get_jnt_comp_ctx(
     order_hint_n_bits: u8,
-    poc: c_uint,
-    ref0poc: c_uint,
-    ref1poc: c_uint,
+    poc: u32,
+    ref0poc: u32,
+    ref1poc: u32,
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
 ) -> u8 {
-    let d0 = get_poc_diff(order_hint_n_bits, ref0poc as c_int, poc as c_int).abs();
-    let d1 = get_poc_diff(order_hint_n_bits, poc as c_int, ref1poc as c_int).abs();
+    let d0 = get_poc_diff(order_hint_n_bits, ref0poc as i32, poc as i32).abs();
+    let d1 = get_poc_diff(order_hint_n_bits, poc as i32, ref1poc as i32).abs();
     let offset = (d0 == d1) as u8;
     let [a_ctx, l_ctx] = [(a, xb4), (l, yb4)].map(|(al, b4)| {
         (*al.comp_type.index(b4 as usize) >= Some(CompInterType::Avg)
@@ -322,7 +321,7 @@ pub fn get_jnt_comp_ctx(
 }
 
 #[inline]
-pub fn get_mask_comp_ctx(a: &BlockContext, l: &BlockContext, yb4: c_int, xb4: c_int) -> u8 {
+pub fn get_mask_comp_ctx(a: &BlockContext, l: &BlockContext, yb4: i32, xb4: i32) -> u8 {
     let [a_ctx, l_ctx] = [(a, xb4), (l, yb4)].map(|(al, b4)| {
         if *al.comp_type.index(b4 as usize) >= Some(CompInterType::Seg) {
             1
@@ -349,8 +348,8 @@ fn cmp_counts(c1: u8, c2: u8) -> u8 {
 pub fn av1_get_ref_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -377,8 +376,8 @@ pub fn av1_get_ref_ctx(
 pub fn av1_get_fwd_ref_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -416,8 +415,8 @@ pub fn av1_get_fwd_ref_ctx(
 pub fn av1_get_fwd_ref_1_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -452,8 +451,8 @@ pub fn av1_get_fwd_ref_1_ctx(
 pub fn av1_get_fwd_ref_2_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -488,8 +487,8 @@ pub fn av1_get_fwd_ref_2_ctx(
 pub fn av1_get_bwd_ref_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -526,8 +525,8 @@ pub fn av1_get_bwd_ref_ctx(
 pub fn av1_get_bwd_ref_1_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -562,8 +561,8 @@ pub fn av1_get_bwd_ref_1_ctx(
 pub fn av1_get_uni_p1_ctx(
     a: &BlockContext,
     l: &BlockContext,
-    yb4: c_int,
-    xb4: c_int,
+    yb4: i32,
+    xb4: i32,
     have_top: bool,
     have_left: bool,
 ) -> u8 {
@@ -615,10 +614,10 @@ pub fn fix_mv_precision(hdr: &Rav1dFrameHeader, mv: &mut Mv) {
 #[inline]
 pub fn get_gmv_2d(
     gmv: &Rav1dWarpedMotionParams,
-    bx4: c_int,
-    by4: c_int,
-    bw4: c_int,
-    bh4: c_int,
+    bx4: i32,
+    by4: i32,
+    bw4: i32,
+    bh4: i32,
     hdr: &Rav1dFrameHeader,
 ) -> Mv {
     match gmv.r#type {
@@ -645,11 +644,11 @@ pub fn get_gmv_2d(
     let y = by4 * 4 + bh4 * 2 - 1;
     let xc = (gmv.matrix[2] - (1 << 16)) * x + gmv.matrix[3] * y + gmv.matrix[0];
     let yc = (gmv.matrix[5] - (1 << 16)) * y + gmv.matrix[4] * x + gmv.matrix[1];
-    let shift = 16 - (3 - !hdr.hp as c_int);
+    let shift = 16 - (3 - !hdr.hp as i32);
     let round = 1 << shift >> 1;
     let mut res = Mv {
-        y: apply_sign(yc.abs() + round >> shift << !hdr.hp as c_int, yc) as i16,
-        x: apply_sign(xc.abs() + round >> shift << !hdr.hp as c_int, xc) as i16,
+        y: apply_sign(yc.abs() + round >> shift << !hdr.hp as i32, yc) as i16,
+        x: apply_sign(xc.abs() + round >> shift << !hdr.hp as i32, xc) as i16,
     };
     if hdr.force_integer_mv {
         fix_int_mv_precision(&mut res);
@@ -796,7 +795,7 @@ pub fn get_skip_ctx(
 }
 
 #[inline]
-pub fn get_dc_sign_ctx(tx: TxfmSize, a: &[u8], l: &[u8]) -> c_uint {
+pub fn get_dc_sign_ctx(tx: TxfmSize, a: &[u8], l: &[u8]) -> u32 {
     let mask = 0xc0c0c0c0c0c0c0c0 as u64;
     let mul = 0x101010101010101 as u64;
 
@@ -853,7 +852,7 @@ pub fn get_dc_sign_ctx(tx: TxfmSize, a: &[u8], l: &[u8]) -> c_uint {
         }
         R16x8 => {
             let mut t = u32::read_ne(a) & mask as u32;
-            t += u16::read_ne(l) as c_uint & mask as u32;
+            t += u16::read_ne(l) as u32 & mask as u32;
             t = (t >> 6).wrapping_mul(mul as u32);
             (t >> 24) as i32 - 4 - 2
         }
@@ -923,5 +922,5 @@ pub fn get_dc_sign_ctx(tx: TxfmSize, a: &[u8], l: &[u8]) -> c_uint {
         }
     };
 
-    (s != 0) as c_uint + (s > 0) as c_uint
+    (s != 0) as u32 + (s > 0) as u32
 }

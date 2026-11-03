@@ -3,7 +3,7 @@ use std::ops::Shr;
 use bitflags::bitflags;
 
 use crate::enum_map::DefaultValue;
-use crate::include::dav1d::headers::Rav1dPixelLayout;
+use crate::headers::Rav1dPixelLayout;
 use crate::levels::BlockLevel;
 
 bitflags! {

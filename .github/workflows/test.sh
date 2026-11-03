@@ -5,20 +5,16 @@ set -o pipefail
 
 timeout_multiplier=1
 rust_test_path=
-seek_stress_test_rust_path=
 debug_opt=
 frame_delay=
-negative_stride=
 wrapper=
-while getopts t:r:ds:f:nw: flag
+while getopts t:r:df:w: flag
 do
     case "${flag}" in
         t) timeout_multiplier=${OPTARG};;
         r) rust_test_path="-Dtest_rust_path=${OPTARG}";;
-        s) seek_stress_test_rust_path="-Dseek_stress_test_rust_path=${OPTARG}";;
         d) debug_opt="-Ddebug=true";;
         f) frame_delay=${OPTARG};;
-        n) negative_stride=1;;
         w) wrapper=${OPTARG};;
     esac
 done
@@ -30,11 +26,10 @@ if [ -d "./build" ]
 then
     # also pass --reconfigure since $rust_test_path, etc. may have changed
     meson setup build $debug_opt -Dtest_rust=true $rust_test_path \
-        $seek_stress_test_rust_path --reconfigure
+        --reconfigure
 else
     # since build doesn't exist, it would be an error if we passed --reconfigure
-    meson setup build $debug_opt -Dtest_rust=true $rust_test_path \
-        $seek_stress_test_rust_path
+    meson setup build $debug_opt -Dtest_rust=true $rust_test_path
 fi
 
 test_args=(
@@ -59,23 +54,10 @@ test_args=(
 export RUST_BACKTRACE=1
 export RUST_LIB_BACKTRACE=${RUST_LIB_BACKTRACE:-0}
 
-if [[ -z $seek_stress_test_rust_path ]]; then
-    : # stress test binary not provided; don't include seek stress tests
-else
-    test_args+=(--suite testdata_seek-stress)
-fi
-
-if [[ -n $frame_delay && -n $negative_stride ]]; then
-    # Frame delay is tested with two threads; negative strides with one.
-    echo "Error: frame_delay and negative_stride options can't be used together. Exiting."
-    exit 1
-elif [[ -n $frame_delay ]]; then
+if [[ -n $frame_delay ]]; then
     # These test args override the args from test-data, resulting in 2 threads
     # and a frame delay
     test_args+=(--test-args "--threads 2 --framedelay $frame_delay")
-elif [[ -n $negative_stride ]]; then
-    # Run all tests with negative strides and multi-threading disabled
-    test_args+=(--test-args "--threads 1 --negstride")
 fi
 
 if [[ -n $wrapper ]]; then

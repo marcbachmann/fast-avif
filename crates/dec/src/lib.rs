@@ -3,7 +3,7 @@
     feature(stdarch_neon_dotprod)
 )]
 #![allow(clippy::derivable_impls, clippy::erasing_op, clippy::ptr_eq)]
-#![expect(
+#![allow(
     clippy::borrow_deref_ref,
     clippy::borrowed_box,
     clippy::cast_abs_to_unsigned,
@@ -54,15 +54,9 @@
 #[cfg(not(any(feature = "bitdepth_8", feature = "bitdepth_16")))]
 compile_error!("No bitdepths enabled. Enable one or more of the following features: `bitdepth_8`, `bitdepth_16`");
 
-pub mod include {
-    pub mod common {}
-    pub mod dav1d {
-        pub mod dav1d;
-        pub use rav1d_shared::include::dav1d::{common, data, headers, picture};
-    }
-}
+pub mod settings;
 
-pub use rav1d_shared::{align, cpu, send_sync_non_null, Spawner};
+pub use rav1d_shared::{align, cpu, Spawner};
 
 mod cdef;
 mod cdef_apply;
@@ -91,7 +85,6 @@ mod thread_task;
 mod warpmv;
 mod wedge;
 
-use std::ffi::{c_void, CStr};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Once};
 use std::{cmp, mem, thread};
@@ -99,23 +92,22 @@ use std::{cmp, mem, thread};
 use parking_lot::Mutex;
 pub use rust_api::*;
 
-use rav1d_shared::c_box::CRef;
 use rav1d_shared::cpu::{rav1d_init_cpu, rav1d_num_logical_processors};
 use crate::decode::{rav1d_abandon_rows, rav1d_decode_frame_exit};
-pub use rav1d_shared::error::{Dav1dResult, Rav1dError, Rav1dResult};
+pub use rav1d_shared::error::{Rav1dError, Rav1dResult};
 use rav1d_shared::extensions::OptionError as _;
 use rav1d_shared::in_range::InRange;
 #[cfg(feature = "bitdepth_16")]
-use rav1d_shared::include::common::bitdepth::BitDepth16;
+use rav1d_shared::bitdepth::BitDepth16;
 #[cfg(feature = "bitdepth_8")]
-use rav1d_shared::include::common::bitdepth::BitDepth8;
-use rav1d_shared::include::common::intops::clip;
-use rav1d_shared::include::common::validate::validate_input;
-use rav1d_shared::include::dav1d::data::Rav1dData;
-use crate::include::dav1d::dav1d::{
+use rav1d_shared::bitdepth::BitDepth8;
+use rav1d_shared::intops::clip;
+use rav1d_shared::validate::validate_input;
+use rav1d_shared::data::Rav1dData;
+use crate::settings::{
     Rav1dDecodeFrameType, Rav1dInloopFilterType, Rav1dSettings, RAV1D_MAX_THREADS,
 };
-use rav1d_shared::include::dav1d::picture::Rav1dPicture;
+use rav1d_shared::picture::Rav1dPicture;
 use crate::internal::{
     Helping, Rav1dBitDepthDSPContext, Rav1dContext, Rav1dContextFrameThread,
     Rav1dContextTaskThread, Rav1dContextTaskType, Rav1dFrameContext, Rav1dState, Rav1dTaskContext,
@@ -125,7 +117,6 @@ use rav1d_shared::iter::wrapping_iter;
 use crate::log::{Rav1dLog as _, Rav1dLogger};
 use crate::obu::rav1d_parse_obus;
 use crate::picture::{rav1d_picture_alloc_copy, PictureFlags};
-use rav1d_shared::send_sync_non_null::SendSyncNonNull;
 use crate::thread_task::{
     rav1d_helper_task, rav1d_task_delayed_fg, rav1d_worker_task, FRAME_ERROR,
 };
@@ -135,19 +126,9 @@ fn init_internal() {
     rav1d_init_cpu();
 }
 
-const DAV1D_VERSION: &CStr = c"966d63c1";
-const RAV1D_VERSION: &str = match DAV1D_VERSION.to_str() {
-    Ok(version) => version,
-    Err(_) => unreachable!(),
-};
-
 pub const fn rav1d_version() -> &'static str {
-    RAV1D_VERSION
+    "966d63c1"
 }
-
-pub const DAV1D_API_VERSION_MAJOR: u8 = 7;
-pub const DAV1D_API_VERSION_MINOR: u8 = 0;
-pub const DAV1D_API_VERSION_PATCH: u8 = 0;
 
 impl Default for Rav1dSettings {
     fn default() -> Self {
@@ -158,7 +139,7 @@ impl Default for Rav1dSettings {
             operating_point: InRange::new(0).unwrap(),
             all_layers: true,
             frame_size_limit: 0,
-            allocator: Default::default(),
+            allocator: None,
             logger: Some(Rav1dLogger::default()),
             strict_std_compliance: false,
             output_invisible_frames: false,
@@ -234,11 +215,6 @@ pub(crate) fn rav1d_open(
 ) -> Rav1dResult<Arc<Rav1dContext>> {
     static INITTED: Once = Once::new();
     INITTED.call_once(|| init_internal());
-
-    validate_input!((
-        !s.allocator.is_default() || s.allocator.cookie.is_none(),
-        Rav1dError::InvalidArgument
-    ))?;
 
     // On 32-bit systems, extremely large frame sizes can cause overflows in
     // `rav1d_decode_frame` alloc size calculations. Prevent that from occuring
@@ -350,7 +326,7 @@ pub(crate) fn rav1d_open(
     };
 
     let c = Rav1dContext {
-        allocator: s.allocator.clone(),
+        allocator: s.allocator.clone().unwrap_or_default(),
         logger: s.logger.clone(),
         apply_grain: s.apply_grain,
         operating_point: s.operating_point.get(), // TODO propagate `InRange`
@@ -368,16 +344,7 @@ pub(crate) fn rav1d_open(
     };
 
     // TODO fallible allocation
-    let mut c = Arc::new(c);
-
-    if c.allocator.is_default() {
-        let c = Arc::get_mut(&mut c).unwrap();
-        // SAFETY: When `allocator.is_default()`, `allocator.cookie` should be a `&c.picture_pool`.
-        // See `Rav1dPicAllocator::cookie` docs for more, including an analysis of the lifetime.
-        // Note also that we must do this after we created the `Arc` so that `c` has a stable address.
-        c.allocator.cookie = Some(SendSyncNonNull::from_ref(&c.picture_pool).cast::<c_void>());
-    }
-    let c = c;
+    let c = Arc::new(c);
 
     for tc in c.tc.iter() {
         if let Rav1dContextTaskType::Worker(handle) = &tc.task {

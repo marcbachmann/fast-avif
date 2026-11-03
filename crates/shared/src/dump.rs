@@ -4,8 +4,8 @@ use std::fmt::Display;
 use std::io;
 use std::io::stdout;
 
-use crate::include::common::bitdepth::BitDepth;
-use crate::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use crate::bitdepth::BitDepth;
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::strided::Strided as _;
 
 #[inline]

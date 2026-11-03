@@ -2,7 +2,7 @@
 //! implements the trials, the encoder takes them by reference.
 
 use crate::error::Rav1dResult;
-use crate::include::dav1d::headers::Rav1dFrameHeader;
+use crate::headers::Rav1dFrameHeader;
 
 /// What a filter trial measures of a plane: its index, its pixels, their stride, width and height.
 pub type Measure<'a> = dyn FnMut(usize, &[u8], usize, usize, usize) -> u64 + 'a;

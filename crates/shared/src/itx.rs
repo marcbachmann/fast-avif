@@ -5,11 +5,10 @@ use strum::EnumCount;
 
 use crate::cpu::CpuFlags;
 use crate::enum_map::DefaultValue;
-use crate::ffi_safe::FFISafe;
-use crate::include::common::bitdepth::{AsPrimitive, BitDepth, DynCoef, DynPixel};
-use crate::include::common::intops::iclip;
-use crate::include::dav1d::picture::{
-    FFISafeRav1dPictureDataComponentOffset, Rav1dPictureDataComponentOffset,
+use crate::bitdepth::{AsPrimitive, BitDepth, DynCoef};
+use crate::intops::iclip;
+use crate::picture::{
+    Rav1dPictureDataComponentOffset,
 };
 use crate::itx_1d::rav1d_inv_wht4_1d_c;
 use crate::itx_1d::{
@@ -230,25 +229,21 @@ fn inv_txfm_add_rust<const W: usize, const H: usize, const TYPE: TxfmType, BD: B
 ///
 /// Must be called by [`itxfm::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe extern "C" fn inv_txfm_add_c_erased<
+unsafe fn inv_txfm_add_c_erased<
     const W: usize,
     const H: usize,
     const TYPE: TxfmType,
     BD: BitDepth,
 >(
-    _dst_ptr: *mut DynPixel,
-    _stride: isize,
     coeff: *mut DynCoef,
     eob: i32,
     bitdepth_max: i32,
     coeff_len: u16,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `itxfm::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     // SAFETY: `fn itxfm::Fn::call` passes `coeff.len()` as `coeff_len`.
     let coeff = unsafe { slice::from_raw_parts_mut(coeff.cast(), coeff_len.into()) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     inv_txfm_add_rust::<W, H, TYPE, BD>(dst, coeff, eob, bd)
 }
 
@@ -257,7 +252,7 @@ unsafe extern "C" fn inv_txfm_add_c_erased<
 /// Must be called by [`itxfm::Fn::call`] at 8 or 10 bits, on x86 once the CPU flags hold SSE41.
 #[deny(unsafe_op_in_unsafe_fn)]
 #[allow(unused_unsafe)]
-unsafe extern "C" fn inv_txfm_add_simd_erased<
+unsafe fn inv_txfm_add_simd_erased<
     const W: usize,
     const H: usize,
     const TYPE: TxfmType,
@@ -265,16 +260,12 @@ unsafe extern "C" fn inv_txfm_add_simd_erased<
     const G: usize,
     const WIDE: bool,
 >(
-    _dst_ptr: *mut DynPixel,
-    _stride: isize,
     coeff: *mut DynCoef,
     eob: i32,
     _bitdepth_max: i32,
     coeff_len: u16,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `itxfm::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     // A debugging aid: `RAV1D_ITX_SIMD_SIZES` (a `TxfmSize` bit mask) leaves the other sizes scalar.
     #[cfg(rav1d_itx_bisect)]
     {
@@ -286,7 +277,7 @@ unsafe extern "C" fn inv_txfm_add_simd_erased<
                 .unwrap_or(u32::MAX)
         });
         if mask >> TxfmSize::from_wh(W, H) as u32 & 1 == 0 {
-            let bd = BD::from_c(_bitdepth_max);
+            let bd = BD::from_max(_bitdepth_max);
             // SAFETY: `fn itxfm::Fn::call` passes `coeff.len()` as `coeff_len`.
             let coeff = unsafe { slice::from_raw_parts_mut(coeff.cast(), coeff_len.into()) };
             return inv_txfm_add_rust::<W, H, TYPE, BD>(dst, coeff, eob, bd);
@@ -346,14 +337,12 @@ unsafe extern "C" fn inv_txfm_add_simd_erased<
     }
 }
 
-wrap_fn_ptr!(unsafe extern "C" fn itxfm(
-    dst_ptr: *mut DynPixel,
-    dst_stride: isize,
+wrap_fn_ptr!(unsafe fn itxfm(
     coeff: *mut DynCoef,
     eob: i32,
     bitdepth_max: i32,
-    _coeff_len: u16,
-    _dst: FFISafeRav1dPictureDataComponentOffset,
+    coeff_len: u16,
+    dst: Rav1dPictureDataComponentOffset,
 ) -> ());
 
 impl itxfm::Fn {
@@ -364,14 +353,11 @@ impl itxfm::Fn {
         eob: i32,
         bd: BD,
     ) {
-        let dst_ptr = dst.as_mut_ptr::<BD>().cast();
-        let dst_stride = dst.stride();
         let coeff_len = coeff.len() as u16;
         let coeff = coeff.as_mut_ptr().cast();
-        let bd = bd.into_c();
-        let dst = dst.into_ffi_safe();
-        // SAFETY: Fallback `fn inv_txfm_add_rust` is safe; asm is supposed to do the same.
-        unsafe { self.get()(dst_ptr, dst_stride, coeff, eob, bd, coeff_len, dst) }
+        let bd = bd.into_max();
+        // SAFETY: Fallback `fn inv_txfm_add_rust` is safe; the SIMD kernels read and write the same memory.
+        unsafe { self.get()(coeff, eob, bd, coeff_len, dst) }
     }
 }
 
@@ -724,8 +710,8 @@ mod tests {
     use super::*;
     use crate::align::AlignedVec64;
     use crate::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu};
-    use crate::include::common::bitdepth::{BitDepth16, BitDepth8};
-    use crate::include::dav1d::picture::Rav1dPictureDataComponent;
+    use crate::bitdepth::{BitDepth16, BitDepth8};
+    use crate::picture::Rav1dPictureDataComponent;
     use crate::with_offset::WithOffset;
 
     struct Rng(u64);
@@ -774,7 +760,7 @@ mod tests {
             },
             c.as_mut_slice(),
             eob,
-            BD::from_c(bitdepth_max),
+            BD::from_max(bitdepth_max),
         );
         drop(comp);
         (
@@ -1098,7 +1084,7 @@ mod tests {
                                 },
                                 black_box(&mut *c),
                                 eob,
-                                BD::from_c(bitdepth_max),
+                                BD::from_max(bitdepth_max),
                             );
                         }
                         best = best.min(start.elapsed().as_nanos() as f64 / n as f64);

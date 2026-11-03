@@ -1,6 +1,5 @@
-//! The scenarios of `decode_rows.rs` through the Rust API alone, and the parts of it that replace
-//! the C API's: data read in place, picture allocators, workers on the caller's threads and
-//! sequence headers parsed alone.
+//! Rows through the Rust API: data read in place, picture allocators, workers on the caller's
+//! threads and sequence headers parsed alone.
 
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -722,6 +721,63 @@ fn fails_a_frame_its_allocator_breaks() {
     }
     let decoded = decode_data(&data, &Open { allocator: Some(Arc::new(Panicking)), ..Open::new(true, false) }, false);
     assert!(decoded.out.first().is_some_and(|o| o.is_err()), "{:?}", decoded.out);
+}
+
+fn send_all(decoder: &mut Decoder, frames: &[&[u8]], decoded: &mut Decoded) {
+    for frame in frames {
+        let mut sent = decoder.send_data((*frame).into(), None, None, None);
+        for _ in 0..1000 {
+            drain(decoder, false, decoded);
+            match sent {
+                Ok(()) => break,
+                Err(Rav1dError::TryAgain) => sent = decoder.send_pending_data(),
+                Err(e) => {
+                    decoded.out.push(Err(e));
+                    break;
+                }
+            }
+        }
+    }
+    drain(decoder, false, decoded);
+}
+
+/// A decoder flushed part way through a stream, with pictures left in it, and sent the stream again
+/// from a later sequence header decodes what a new decoder does from there.
+#[test]
+fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
+    let filter = filter();
+    let (mut seeks, mut pictures, mut differ) = (0, 0, Vec::new());
+    for file in streams().iter().filter(|f| f.to_string_lossy().contains(&filter)) {
+        let data = std::fs::read(file).unwrap();
+        let frames = ivf_frames(&data);
+        let starts: Vec<usize> = (1..frames.len()).filter(|&i| parse_sequence_header(frames[i]).is_ok()).collect();
+        let Some(&at) = starts.get(starts.len() / 2) else { continue };
+        for threads in [1, 4] {
+            let open = Open { threads, ..Open::new(true, false) };
+            let mut new = Decoded::default();
+            send_all(&mut open.decoder(), &frames[at..], &mut new);
+            let mut flushed = open.decoder();
+            // Only what blocks the data is taken out, so the flush has pictures to throw away.
+            for frame in &frames[..at] {
+                let mut sent = flushed.send_data((*frame).into(), None, None, None);
+                while sent == Err(Rav1dError::TryAgain) {
+                    let _ = flushed.get_picture();
+                    sent = flushed.send_pending_data();
+                }
+            }
+            flushed.flush();
+            let mut resumed = Decoded::default();
+            send_all(&mut flushed, &frames[at..], &mut resumed);
+            seeks += 1;
+            pictures += new.out.iter().filter(|o| o.is_ok()).count();
+            if new.out != resumed.out {
+                differ.push(format!("{} from frame {at} on {threads} threads", file.display()));
+            }
+        }
+    }
+    eprintln!("{seeks} seeks, {pictures} pictures, {} differ: {differ:#?}", differ.len());
+    assert!(differ.is_empty());
+    assert!(filter != "" || (seeks > 0 && pictures > 0), "no stream had a later sequence header");
 }
 
 /// The sequence header parsed alone is the one the decoder decodes the first frame under.

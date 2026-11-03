@@ -22,7 +22,7 @@ pub fn debug_abort() {
 macro_rules! func_name {
     () => {{
         fn f() {}
-        $crate::include::common::validate::parent_type_name_of(&f)
+        $crate::validate::parent_type_name_of(&f)
     }};
 }
 
@@ -58,7 +58,7 @@ impl ValidatedIntoResult<(), ()> for bool {
 #[macro_export]
 macro_rules! validate_input {
     ($condition:expr, $block:block) => {{
-        use $crate::include::common::validate::{debug_abort, func_name, ValidatedIntoResult};
+        use $crate::validate::{debug_abort, func_name, ValidatedIntoResult};
 
         // Needs to be outside of the closure.
         let func_name = func_name!();

@@ -7,8 +7,8 @@
 
 use zerocopy::{AsBytes, FromBytes};
 
-use crate::include::common::bitdepth::BitDepth;
-use crate::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use crate::bitdepth::BitDepth;
+use crate::picture::Rav1dPictureDataComponentOffset;
 use crate::levels::{
     TxfmType, ADST_ADST, ADST_DCT, ADST_FLIPADST, DCT_ADST, DCT_DCT, DCT_FLIPADST, FLIPADST_ADST,
     FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST, H_DCT, H_FLIPADST, IDTX, V_ADST, V_DCT, V_FLIPADST,

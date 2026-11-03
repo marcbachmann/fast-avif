@@ -221,7 +221,6 @@ dependencies = [
  "av-data",
  "bitflags",
  "cfg-if",
- "libc",
  "parking_lot",
  "paste",
  "rav1d-shared",
@@ -248,12 +247,9 @@ dependencies = [
  "atomig",
  "av-data",
  "bitflags",
- "libc",
  "parking_lot",
  "raw-cpuid",
- "static_assertions",
  "strum",
- "to_method",
  "zerocopy",
 ]
 

@@ -1749,8 +1749,8 @@ pub(super) mod tests {
     use super::*;
     use rav1d_shared::align::Align64;
     use rav1d_shared::cpu::CpuFlags;
-    use rav1d_shared::include::common::bitdepth::{BitDepth, BitDepth8};
-    use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponent;
+    use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
+    use rav1d_shared::picture::Rav1dPictureDataComponent;
     use rav1d_shared::itx::Rav1dInvTxfmDSPContext;
 
     pub(crate) struct Rng(pub u64);

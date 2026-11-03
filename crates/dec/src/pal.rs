@@ -1,18 +1,16 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-
-use std::ffi::c_int;
 use std::slice;
 
 use rav1d_shared::cpu::CpuFlags;
 use rav1d_shared::wrap_fn_ptr::wrap_fn_ptr;
 
-wrap_fn_ptr!(pub unsafe extern "C" fn pal_idx_finish(
+wrap_fn_ptr!(pub unsafe fn pal_idx_finish(
     dst: *mut u8,
     src: *const u8,
-    bw: c_int,
-    bh: c_int,
-    w: c_int,
-    h: c_int,
+    bw: i32,
+    bh: i32,
+    w: i32,
+    h: i32,
 ) -> ());
 
 impl pal_idx_finish::Fn {
@@ -36,8 +34,8 @@ impl pal_idx_finish::Fn {
         // before creating `&mut`s from them.
         let dst = dst.unwrap_or(tmp).as_mut_ptr();
         let src = tmp.as_ptr();
-        let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as c_int);
-        // SAFETY: Fallback `fn pal_idx_finish_rust` is safe; asm is supposed to do the same.
+        let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as i32);
+        // SAFETY: Fallback `fn pal_idx_finish_rust` is safe; the SIMD kernels read and write the same memory.
         unsafe { self.get()(dst, src, bw, bh, w, h) }
     }
 }
@@ -55,13 +53,13 @@ enum PalIdx<'a> {
 ///
 /// Must be called by [`pal_idx_finish::Fn::call`].
 #[deny(unsafe_op_in_unsafe_fn)]
-unsafe extern "C" fn pal_idx_finish_c(
+unsafe fn pal_idx_finish_c(
     dst: *mut u8,
     src: *const u8,
-    bw: c_int,
-    bh: c_int,
-    w: c_int,
-    h: c_int,
+    bw: i32,
+    bh: i32,
+    w: i32,
+    h: i32,
 ) {
     let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as usize);
 
@@ -189,13 +187,13 @@ mod rust_simd {
     ///
     /// Must be called by [`pal_idx_finish::Fn::call`], on x86 once the CPU flags hold SSE4.1.
     #[allow(unused_unsafe)] // A safe call on aarch64.
-    pub unsafe extern "C" fn pal_idx_finish_simd(
+    pub unsafe fn pal_idx_finish_simd(
         dst: *mut u8,
         src: *const u8,
-        bw: c_int,
-        bh: c_int,
-        w: c_int,
-        h: c_int,
+        bw: i32,
+        bh: i32,
+        w: i32,
+        h: i32,
     ) {
         let [bw, bh, w, h] = [bw, bh, w, h].map(|it| it as usize);
         assert!(bw >= 4 && bw <= 64 && bw.is_power_of_two());

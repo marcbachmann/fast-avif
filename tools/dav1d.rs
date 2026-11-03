@@ -7,7 +7,7 @@
 use std::io::Write;
 use std::process::ExitCode;
 
-use rav1d::cpu::{rav1d_set_cpu_flags_mask, CpuFlags};
+use rav1d::cpu::rav1d_set_cpu_flags_mask;
 use rav1d::{DecodeFrameType, Decoder, PixelLayout, PlanarImageComponent, Rav1dError, Settings};
 
 struct Args {
@@ -63,6 +63,10 @@ fn args() -> Result<Args, String> {
             "--cpumask" => a.cpu_mask = Some(value()?),
             "--limit" => a.limit = value()?.parse().map_err(|e| format!("--limit: {e}"))?,
             "-q" | "--quiet" => a.quiet = true,
+            "-v" | "--version" => {
+                println!("{}", rav1d::rav1d_version());
+                std::process::exit(0);
+            }
             "--framedelay" => a.frame_delay = value()?.parse().map_err(|e| format!("--framedelay: {e}"))?,
             "--oppoint" => a.operating_point = value()?.parse().map_err(|e| format!("--oppoint: {e}"))?,
             "--alllayers" => a.all_layers = value()? != "0",
@@ -89,19 +93,28 @@ fn args() -> Result<Args, String> {
     Ok(a)
 }
 
+/// A level name, or a number as `strtoul` reads it, so `-1` is every flag. x86's levels hold the
+/// flags below them, as its kernels are chosen level by level.
 fn cpu_mask(s: &str) -> Result<u32, String> {
-    if s == "none" || s == "0" {
+    let named: &[(&str, u32)] = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+        &[("sse2", 1), ("ssse3", 3), ("sse41", 7), ("avx2", 15), ("avx512icl", 31)]
+    } else if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+        &[("neon", 1), ("dotprod", 2), ("i8mm", 4), ("sve", 8), ("sve2", 16)]
+    } else if cfg!(any(target_arch = "riscv32", target_arch = "riscv64")) {
+        &[("rvv", 1)]
+    } else {
+        &[]
+    };
+    if s == "none" {
         return Ok(0);
     }
+    if let Some(&(_, mask)) = named.iter().find(|(name, _)| *name == s) {
+        return Ok(mask);
+    }
     if let Some(hex) = s.strip_prefix("0x") {
-        return u32::from_str_radix(hex, 16).map_err(|e| e.to_string());
+        return u32::from_str_radix(hex, 16).map_err(|e| format!("--cpumask: {e}"));
     }
-    let mut mask = CpuFlags::empty();
-    for name in s.split(',') {
-        let upper = name.to_ascii_uppercase();
-        mask |= CpuFlags::from_name(&upper).ok_or_else(|| format!("unknown cpu flag {name}"))?;
-    }
-    Ok(mask.bits())
+    s.parse::<i64>().map(|n| n as u32).map_err(|e| format!("--cpumask {s}: {e}"))
 }
 
 /// Reads the leb128 at `at`, giving the value and the bytes it took.
@@ -280,6 +293,12 @@ fn hash_plane(md5: &mut Md5, p: &rav1d::Picture, c: PlanarImageComponent, bytes:
 }
 
 fn run(a: &Args) -> Result<ExitCode, String> {
+    if let Some(m) = a.muxer.as_deref().filter(|m| !matches!(*m, "md5" | "null")) {
+        return Err(format!("--muxer {m}: this runner writes md5 or null"));
+    }
+    if let Some(o) = a.output.as_deref().filter(|o| a.muxer.is_none() && !(matches!(*o, "-" | "/dev/null") || o.ends_with(".md5"))) {
+        return Err(format!("-o {o}: this runner writes an md5, name a .md5 file or -"));
+    }
     if let Some(mask) = &a.cpu_mask {
         rav1d_set_cpu_flags_mask(cpu_mask(mask)?);
     }

@@ -1,4 +1,3 @@
-use std::ffi::c_uint;
 use std::num::NonZero;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::available_parallelism;
@@ -17,13 +16,13 @@ use crate::const_fn::const_for;
 )))]
 bitflags! {
     #[derive(Clone, Copy)]
-    pub struct CpuFlags: c_uint {}
+    pub struct CpuFlags: u32 {}
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 bitflags! {
     #[derive(Clone, Copy)]
-    pub struct CpuFlags: c_uint {
+    pub struct CpuFlags: u32 {
         const SSE2 = 1 << 0;
         const SSSE3 = 1 << 1;
         const SSE41 = 1 << 2;
@@ -42,7 +41,7 @@ bitflags! {
 #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
 bitflags! {
     #[derive(Clone, Copy)]
-    pub struct CpuFlags: c_uint {
+    pub struct CpuFlags: u32 {
         const NEON = 1 << 0;
         const DOTPROD = 1 << 1;
         const I8MM = 1 << 2;
@@ -54,7 +53,7 @@ bitflags! {
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 bitflags! {
     #[derive(Clone, Copy)]
-    pub struct CpuFlags: c_uint {
+    pub struct CpuFlags: u32 {
         const V = 1 << 0;
     }
 }
@@ -242,7 +241,7 @@ pub fn rav1d_init_cpu() {
 }
 
 #[cold]
-pub fn rav1d_set_cpu_flags_mask(mask: c_uint) {
+pub fn rav1d_set_cpu_flags_mask(mask: u32) {
     RAV1D_CPU_FLAGS_MASK.store(mask, Ordering::SeqCst);
 }
 

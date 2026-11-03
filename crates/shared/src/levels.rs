@@ -11,7 +11,7 @@ use zerocopy::{AsBytes, FromBytes, FromZeroes};
 use crate::align::ArrayDefault;
 use crate::enum_map::{DefaultValue, EnumKey};
 use crate::in_range::InRange;
-use crate::include::dav1d::headers::Rav1dFilterMode;
+use crate::headers::Rav1dFilterMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
 pub enum ObuMetaType {
@@ -453,6 +453,7 @@ pub struct Av1BlockIntra {
 pub struct MaskedInterIntraPredMode(u8);
 
 impl MaskedInterIntraPredMode {
+    #[inline]
     pub const fn get(self) -> InterIntraPredMode {
         // Should just be an `& 3`.
         match InterIntraPredMode::from_repr(self.0 as usize % InterIntraPredMode::COUNT) {
@@ -473,12 +474,14 @@ impl Default for MaskedInterIntraPredMode {
 }
 
 impl From<InterIntraPredMode> for MaskedInterIntraPredMode {
+    #[inline]
     fn from(value: InterIntraPredMode) -> Self {
         MaskedInterIntraPredMode::new(value)
     }
 }
 
 impl From<MaskedInterIntraPredMode> for InterIntraPredMode {
+    #[inline]
     fn from(value: MaskedInterIntraPredMode) -> Self {
         value.get()
     }
@@ -527,6 +530,7 @@ pub struct Av1BlockInterNd {
 }
 
 impl Av1BlockInterNd {
+    #[inline]
     pub fn two_d(&self) -> &Av1BlockInter2d {
         // These asserts ensure this is a no-op.
         const _: () =
@@ -538,12 +542,14 @@ impl Av1BlockInterNd {
 }
 
 impl From<Av1BlockInter1d> for Av1BlockInterNd {
+    #[inline]
     fn from(one_d: Av1BlockInter1d) -> Self {
         Self { one_d }
     }
 }
 
 impl From<Av1BlockInter2d> for Av1BlockInterNd {
+    #[inline]
     fn from(two_d: Av1BlockInter2d) -> Self {
         let one_d = <Av1BlockInter1d as FromBytes>::ref_from(AsBytes::as_bytes(&two_d))
             .unwrap()
@@ -600,12 +606,14 @@ pub struct SegmentId {
 impl SegmentId {
     pub const COUNT: usize = 8;
 
+    #[inline]
     pub fn new(id: u8) -> Option<Self> {
         Some(Self {
             id: InRange::new(id)?,
         })
     }
 
+    #[inline]
     pub fn get(&self) -> usize {
         self.id.get() as usize
     }

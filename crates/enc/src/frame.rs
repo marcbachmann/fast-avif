@@ -28,9 +28,9 @@ use crate::header::{obu, BitWriter, Frame, Sequence, OBU_FRAME, OBU_SEQUENCE_HEA
 use crate::rd::{lambda, CoefCosts, Counter, Sink};
 use rav1d_shared::enum_map::DefaultValue;
 use rav1d_shared::env::{gather_left_partition_prob, gather_top_partition_prob, get_dc_sign_ctx, get_skip_ctx};
-use rav1d_shared::include::common::bitdepth::{BitDepth, BitDepth8};
-use rav1d_shared::include::dav1d::headers::{Rav1dPixelLayout, Rav1dPixelLayoutSubSampled};
-use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponent;
+use rav1d_shared::bitdepth::{BitDepth, BitDepth8};
+use rav1d_shared::headers::{Rav1dPixelLayout, Rav1dPixelLayoutSubSampled};
+use rav1d_shared::picture::Rav1dPictureDataComponent;
 use rav1d_shared::intra_edge::{EdgeFlags, EdgeIndex, IntraEdges};
 use rav1d_shared::ipred::{Rav1dIntraPredDSPContext, SCRATCH_AC_TXTP_LEN};
 use rav1d_shared::ipred_prepare::rav1d_prepare_intra_edges;

@@ -1,13 +1,12 @@
-use std::ffi::{c_int, c_uint};
 use std::ops::Index;
 
-use rav1d_shared::include::common::intops::{inv_recenter, ulog2};
+use rav1d_shared::intops::{inv_recenter, ulog2};
 
 #[repr(C)]
 pub struct GetBits<'a> {
     state: u64,
-    bits_left: c_int,
-    error: c_int,
+    bits_left: i32,
+    error: i32,
     index: usize,
     data: &'a [u8],
 }
@@ -24,7 +23,7 @@ impl<'a> GetBits<'a> {
         }
     }
 
-    pub const fn has_error(&self) -> c_int {
+    pub const fn has_error(&self) -> i32 {
         self.error
     }
 
@@ -47,7 +46,7 @@ impl<'a> GetBits<'a> {
     }
 
     #[inline]
-    fn refill(&mut self, n: c_int) {
+    fn refill(&mut self, n: i32) {
         assert!(self.bits_left >= 0 && self.bits_left < 32);
         let mut state = 0;
         loop {
@@ -58,7 +57,7 @@ impl<'a> GetBits<'a> {
                 }
                 return;
             } else {
-                state = (state << 8) | self.data[self.index] as c_uint;
+                state = (state << 8) | self.data[self.index] as u32;
                 self.index += 1;
                 self.bits_left += 8;
                 if !(n > self.bits_left) {
@@ -69,37 +68,37 @@ impl<'a> GetBits<'a> {
         self.state |= (state as u64) << 64 - self.bits_left;
     }
 
-    pub fn get_bits(&mut self, n: c_int) -> c_uint {
+    pub fn get_bits(&mut self, n: i32) -> u32 {
         assert!(n > 0 && n <= 32);
         // Unsigned cast avoids refill after eob.
-        if n as c_uint > self.bits_left as c_uint {
+        if n as u32 > self.bits_left as u32 {
             self.refill(n);
         }
         let state = self.state;
         self.bits_left -= n;
         self.state = state << n;
-        (state as u64 >> 64 - n) as c_uint
+        (state as u64 >> 64 - n) as u32
     }
 
-    pub fn get_sbits(&mut self, n: c_int) -> c_int {
+    pub fn get_sbits(&mut self, n: i32) -> i32 {
         assert!(n > 0 && n <= 32);
         // Unsigned cast avoids refill after eob.
-        if n as c_uint > self.bits_left as c_uint {
+        if n as u32 > self.bits_left as u32 {
             self.refill(n);
         }
         let state = self.state;
         self.bits_left -= n;
         self.state = state << n;
-        (state as i64 >> 64 - n) as c_int
+        (state as i64 >> 64 - n) as i32
     }
 
-    pub fn get_uleb128(&mut self) -> c_uint {
+    pub fn get_uleb128(&mut self) -> u32 {
         let mut val = 0;
-        let mut i = 0 as c_uint;
+        let mut i = 0 as u32;
         let mut more;
         loop {
-            let v = self.get_bits(8) as c_int;
-            more = (v & 0x80) as c_uint;
+            let v = self.get_bits(8) as i32;
+            more = (v & 0x80) as u32;
             val |= ((v & 0x7f) as u64) << i;
             i += 7;
             if !(more != 0 && i < 56) {
@@ -110,10 +109,10 @@ impl<'a> GetBits<'a> {
             self.error = 1;
             return 0;
         }
-        val as c_uint
+        val as u32
     }
 
-    pub fn get_uniform(&mut self, max: c_uint) -> c_uint {
+    pub fn get_uniform(&mut self, max: u32) -> u32 {
         assert!(max > 1);
         let l = ulog2(max) + 1;
         assert!(l > 1);
@@ -122,11 +121,11 @@ impl<'a> GetBits<'a> {
         if v < m {
             v
         } else {
-            (v << 1) - m + self.get_bit() as c_uint
+            (v << 1) - m + self.get_bit() as u32
         }
     }
 
-    pub fn get_vlc(&mut self) -> c_uint {
+    pub fn get_vlc(&mut self) -> u32 {
         if self.get_bit() {
             return 0;
         }
@@ -143,8 +142,8 @@ impl<'a> GetBits<'a> {
         (1 << n_bits) - 1 + self.get_bits(n_bits)
     }
 
-    fn get_bits_subexp_u(&mut self, r#ref: c_uint, n: c_uint) -> c_uint {
-        let mut v = 0 as c_uint;
+    fn get_bits_subexp_u(&mut self, r#ref: u32, n: u32) -> u32 {
+        let mut v = 0 as u32;
         let mut i = 0;
         loop {
             let b = if i != 0 { 3 + i - 1 } else { 3 };
@@ -166,8 +165,8 @@ impl<'a> GetBits<'a> {
         }
     }
 
-    pub fn get_bits_subexp(&mut self, r#ref: c_int, n: c_uint) -> c_int {
-        self.get_bits_subexp_u((r#ref + (1 << n)) as c_uint, 2 << n) as c_int - (1 << n)
+    pub fn get_bits_subexp(&mut self, r#ref: i32, n: u32) -> i32 {
+        self.get_bits_subexp_u((r#ref + (1 << n)) as u32, 2 << n) as i32 - (1 << n)
     }
 
     // Discard bits from the buffer until we're next byte-aligned.

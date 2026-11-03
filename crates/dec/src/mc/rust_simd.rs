@@ -9,7 +9,7 @@ use std::mem::size_of;
 use std::slice;
 
 use super::*;
-use rav1d_shared::include::dav1d::picture::PicRows;
+use rav1d_shared::picture::PicRows;
 
 /// The lane operations the kernels take; one implementation per tier.
 pub trait Vx: Copy {
@@ -3275,24 +3275,16 @@ fn prep_8tap<BD: BitDepth, const FILTER: usize, const WIDE: bool>(
 /// Must be called by [`mc::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn put_erased<BD: BitDepth, const FILTER: usize, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
-    _src_ptr: *const DynPixel,
-    _src_stride: isize,
+pub unsafe fn put_erased<BD: BitDepth, const FILTER: usize, const WIDE: bool>(
     w: i32,
     h: i32,
     mx: i32,
     my: i32,
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
-    src: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
+    src: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `mc::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `mc::Fn::call`.
-    let src = unsafe { FFISafe::from_with_offset(src) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     let (w, h, mx, my) = (w as usize, h as usize, mx as usize, my as usize);
     put_8tap::<BD, FILTER, WIDE>(dst, src, w, h, mx, my, bd)
 }
@@ -3302,23 +3294,17 @@ pub unsafe extern "C" fn put_erased<BD: BitDepth, const FILTER: usize, const WID
 /// Must be called by [`mct::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn prep_erased<BD: BitDepth, const FILTER: usize, const WIDE: bool>(
-    tmp: *mut i16,
-    _src_ptr: *const DynPixel,
-    _src_stride: isize,
+pub unsafe fn prep_erased<BD: BitDepth, const FILTER: usize, const WIDE: bool>(
+    tmp: &mut [i16],
     w: i32,
     h: i32,
     mx: i32,
     my: i32,
     bitdepth_max: i32,
-    src: FFISafeRav1dPictureDataComponentOffset,
+    src: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `mct::Fn::call`.
-    let src = unsafe { FFISafe::from_with_offset(src) };
     let (w, h, mx, my) = (w as usize, h as usize, mx as usize, my as usize);
-    // SAFETY: Length sliced in `mct::Fn::call`.
-    let tmp = unsafe { slice::from_raw_parts_mut(tmp, w * h) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     prep_8tap::<BD, FILTER, WIDE>(tmp, src, w, h, mx, my, bd)
 }
 
@@ -3340,20 +3326,16 @@ fn comp_any<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`avg::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn avg_erased<BD: BitDepth, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
+pub unsafe fn avg_erased<BD: BitDepth, const WIDE: bool>(
     tmp1: &[i16; COMPINTER_LEN],
     tmp2: &[i16; COMPINTER_LEN],
     w: i32,
     h: i32,
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `avg::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     let (w, h) = (w as usize, h as usize);
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     comp_any::<BD, WIDE>(dst, tmp1, tmp2, w, h, Comp::Avg, bd)
 }
 
@@ -3362,21 +3344,17 @@ pub unsafe extern "C" fn avg_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`w_avg::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn w_avg_erased<BD: BitDepth, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
+pub unsafe fn w_avg_erased<BD: BitDepth, const WIDE: bool>(
     tmp1: &[i16; COMPINTER_LEN],
     tmp2: &[i16; COMPINTER_LEN],
     w: i32,
     h: i32,
     weight: i32,
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `w_avg::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     let (w, h) = (w as usize, h as usize);
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     comp_any::<BD, WIDE>(dst, tmp1, tmp2, w, h, Comp::WAvg(weight as i16), bd)
 }
 
@@ -3385,23 +3363,17 @@ pub unsafe extern "C" fn w_avg_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`mask::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn mask_erased<BD: BitDepth, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
+pub unsafe fn mask_erased<BD: BitDepth, const WIDE: bool>(
     tmp1: &[i16; COMPINTER_LEN],
     tmp2: &[i16; COMPINTER_LEN],
     w: i32,
     h: i32,
-    mask: *const u8,
+    mask: &[u8],
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `mask::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     let (w, h) = (w as usize, h as usize);
-    // SAFETY: Length sliced in `mask::Fn::call`.
-    let mask = unsafe { slice::from_raw_parts(mask, w * h) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     comp_any::<BD, WIDE>(dst, tmp1, tmp2, w, h, Comp::Mask(mask), bd)
 }
 
@@ -3410,23 +3382,15 @@ pub unsafe extern "C" fn mask_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`warp8x8::Fn::call`], on x86 once the CPU flags hold SSE41, and with
 /// `WIDE` once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn warp8x8_erased<BD: BitDepth, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
-    _src_ptr: *const DynPixel,
-    _src_stride: isize,
+pub unsafe fn warp8x8_erased<BD: BitDepth, const WIDE: bool>(
     abcd: &[i16; 4],
     mx: i32,
     my: i32,
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
-    src: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
+    src: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `warp_8x8::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `warp_8x8::Fn::call`.
-    let src = unsafe { FFISafe::from_with_offset(src) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     // SAFETY: The CPU flags are checked before this `fn` is chosen; warp writes 8 rows of 8
     // pixels.
     unsafe {
@@ -3447,23 +3411,16 @@ pub unsafe extern "C" fn warp8x8_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`warp8x8t::Fn::call`], on x86 once the CPU flags hold SSE41, and with
 /// `WIDE` once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn warp8x8t_erased<BD: BitDepth, const WIDE: bool>(
-    tmp: *mut i16,
+pub unsafe fn warp8x8t_erased<BD: BitDepth, const WIDE: bool>(
+    tmp: &mut [i16],
     tmp_stride: usize,
-    _src_ptr: *const DynPixel,
-    _src_stride: isize,
     abcd: &[i16; 4],
     mx: i32,
     my: i32,
     bitdepth_max: i32,
-    tmp_len: usize,
-    src: FFISafeRav1dPictureDataComponentOffset,
+    src: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: `warp8x8t::Fn::call` passed `tmp.len()` as `tmp_len`.
-    let tmp = unsafe { slice::from_raw_parts_mut(tmp, tmp_len) };
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `warp8x8t::Fn::call`.
-    let src = unsafe { FFISafe::from_with_offset(src) };
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     // SAFETY: The CPU flags are checked before this `fn` is chosen.
     unsafe { warp_any::<BD, WIDE>(Out::Prep(tmp), tmp_stride, src, abcd, mx, my, bd) }
 }
@@ -3473,14 +3430,12 @@ pub unsafe extern "C" fn warp8x8t_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`w_mask::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn w_mask_erased<
+pub unsafe fn w_mask_erased<
     BD: BitDepth,
     const SS_HOR: bool,
     const SS_VER: bool,
     const WIDE: bool,
 >(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
     tmp1: &[i16; COMPINTER_LEN],
     tmp2: &[i16; COMPINTER_LEN],
     w: i32,
@@ -3488,12 +3443,10 @@ pub unsafe extern "C" fn w_mask_erased<
     mask: &mut [u8; SEG_MASK_LEN],
     sign: i32,
     bitdepth_max: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `w_mask::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     let (w, h) = (w as usize, h as usize);
-    let bd = BD::from_c(bitdepth_max);
+    let bd = BD::from_max(bitdepth_max);
     let ss = (SS_HOR, SS_VER);
     call_tier!(
         wm,
@@ -3508,22 +3461,16 @@ pub unsafe extern "C" fn w_mask_erased<
 /// Must be called by [`blend::Fn::call`], on x86 once the CPU flags hold SSE41, and with `WIDE`
 /// once they hold AVX2.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn blend_erased<BD: BitDepth, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
+pub unsafe fn blend_erased<BD: BitDepth, const WIDE: bool>(
     tmp: *const [DynPixel; SCRATCH_INTER_INTRA_BUF_LEN],
     w: i32,
     h: i32,
-    mask: *const u8,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    mask: &[u8],
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `blend::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     // SAFETY: Reverse of cast in `blend::Fn::call`.
     let tmp: &[BD::Pixel; SCRATCH_INTER_INTRA_BUF_LEN] = unsafe { &*tmp.cast() };
     let (w, h) = (w as usize, h as usize);
-    // SAFETY: Length sliced in `blend::Fn::call`.
-    let mask = unsafe { slice::from_raw_parts(mask, w * h) };
     call_tier!(bln, WIDE, w, (dst, tmp, w, h, Blend::Mask(mask)))
 }
 
@@ -3532,16 +3479,12 @@ pub unsafe extern "C" fn blend_erased<BD: BitDepth, const WIDE: bool>(
 /// Must be called by [`blend_dir::Fn::call`], on x86 once the CPU flags hold SSE41, and with
 /// `WIDE` once they hold AVX2. `V` picks `blend_v` over `blend_h`.
 #[deny(unsafe_op_in_unsafe_fn)]
-pub unsafe extern "C" fn blend_dir_erased<BD: BitDepth, const V: bool, const WIDE: bool>(
-    _dst_ptr: *mut DynPixel,
-    _dst_stride: isize,
+pub unsafe fn blend_dir_erased<BD: BitDepth, const V: bool, const WIDE: bool>(
     tmp: *const [DynPixel; SCRATCH_LAP_LEN],
     w: i32,
     h: i32,
-    dst: FFISafeRav1dPictureDataComponentOffset,
+    dst: Rav1dPictureDataComponentOffset,
 ) {
-    // SAFETY: Was passed as `WithOffset::into_ffi_safe(_)` in `blend_dir::Fn::call`.
-    let dst = unsafe { FFISafe::from_with_offset(dst) };
     // SAFETY: Reverse of cast in `blend_dir::Fn::call`.
     let tmp: &[BD::Pixel; SCRATCH_LAP_LEN] = unsafe { &*tmp.cast() };
     let (w, h) = (w as usize, h as usize);
@@ -3554,7 +3497,7 @@ mod tests {
     use super::*;
     use rav1d_shared::align::Align64;
     use rav1d_shared::cpu::{rav1d_get_cpu_flags, rav1d_init_cpu, CpuFlags};
-    use rav1d_shared::include::common::bitdepth::{BitDepth16, BitDepth8};
+    use rav1d_shared::bitdepth::{BitDepth16, BitDepth8};
     /// Picture buffers are multiples of 64 bytes.
     const RAV1D_PICTURE_GUARANTEED_MULTIPLE: usize = 64;
 
@@ -3651,7 +3594,7 @@ mod tests {
 
     fn mc_bd<BD: BitDepth>(max: i32) {
         let (scalar, tiers) = dsps::<BD>();
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ max as u64);
         for &w in &DIMS {
             for &h in &DIMS {
@@ -3745,7 +3688,7 @@ mod tests {
 
     fn comp_bd<BD: BitDepth>(max: i32) {
         let (scalar, tiers) = dsps::<BD>();
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ max as u64);
         let (t1, t2) = (tmp(&mut rng, max), tmp(&mut rng, max));
         for &w in &DIMS {
@@ -3853,7 +3796,7 @@ mod tests {
 
         let (_, tiers) = dsps::<BD>();
         let dsps = vec![("rust", &tiers.last().unwrap().1)];
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(77);
         let mut sbuf = aligned(&pixels::<BD>(&mut rng, S * 160, max));
         let sp = Rav1dPictureDataComponent::wrap_buf::<BD>(sbuf.as_mut_slice(), S);
@@ -3950,7 +3893,7 @@ mod tests {
 
     fn warp_bd<BD: BitDepth>(max: i32) {
         let (scalar, tiers) = dsps::<BD>();
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(0x1234_5678_9abc_def1 ^ max as u64);
         for _ in 0..2000 {
             let (sbuf, off) = src_plane::<BD>(&mut rng, 8, 8, max);
@@ -4051,7 +3994,7 @@ mod tests {
     /// 32802 (10 bpc) and 32827 (12 bpc) before `PREP_BIAS` is taken off.
     fn warp_extreme_bd<BD: BitDepth>(max: i32) {
         let (scalar, tiers) = dsps::<BD>();
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(0x0ddb_1a5e_5eed_d123 ^ max as u64);
         let wf = |m: i32| &DAV1D_MC_WARP_FILTER[(64 + (m + 512 >> 10)) as usize];
         let pos = |f: &[i8; 8]| f.iter().map(|&t| t.max(0) as i32).sum::<i32>();
@@ -4121,7 +4064,7 @@ mod tests {
     /// sums reach 36956 (10 bpc) and 36983 (12 bpc) before `PREP_BIAS` is taken off.
     fn mc_extreme_bd<BD: BitDepth>(max: i32) {
         let (scalar, tiers) = dsps::<BD>();
-        let bd = BD::from_c(max);
+        let bd = BD::from_max(max);
         let mut rng = Rng(0x05ee_d8a9_e7e3_e11e ^ max as u64);
         let id = [0, 0, 0, 1, 0, 0, 0, 0];
         for (w, h) in [(2, 8), (4, 4), (8, 8), (16, 8), (32, 16)] {

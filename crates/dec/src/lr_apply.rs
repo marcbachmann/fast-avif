@@ -1,16 +1,14 @@
 #![deny(unsafe_code)]
 
 use std::cmp;
-use std::ffi::c_int;
 
 use assert_matches::assert_matches;
 use bitflags::bitflags;
-use rav1d_shared::c_types::ptrdiff_t;
 
 use rav1d_shared::align::Align16;
-use rav1d_shared::include::common::bitdepth::BitDepth;
-use rav1d_shared::include::dav1d::headers::{Rav1dPixelLayout, Rav1dRestorationType};
-use rav1d_shared::include::dav1d::picture::Rav1dPictureDataComponentOffset;
+use rav1d_shared::bitdepth::BitDepth;
+use rav1d_shared::headers::{Rav1dPixelLayout, Rav1dRestorationType};
+use rav1d_shared::picture::Rav1dPictureDataComponentOffset;
 use crate::internal::{Rav1dContext, Rav1dFrameData};
 use crate::lf_mask::Av1RestorationUnit;
 use crate::looprestoration::{LooprestorationParams, LooprestorationParamsSgr, LrEdgeFlags};
@@ -33,27 +31,27 @@ fn lr_stripe<BD: BitDepth>(
     f: &Rav1dFrameData,
     mut p: Rav1dPictureDataComponentOffset,
     left: &[[BD::Pixel; 4]; 128 + 8],
-    x: c_int,
-    mut y: c_int,
-    plane: c_int,
-    unit_w: c_int,
-    row_h: c_int,
+    x: i32,
+    mut y: i32,
+    plane: i32,
+    unit_w: i32,
+    row_h: i32,
     lr: Av1RestorationUnit,
     mut edges: LrEdgeFlags,
 ) {
-    let bd = BD::from_c(f.bitdepth_max);
+    let bd = BD::from_max(f.bitdepth_max);
 
-    let seq_hdr = &***f.seq_hdr.as_ref().unwrap();
-    let chroma = (plane != 0) as c_int;
-    let ss_ver = chroma & (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as c_int;
-    let stride: ptrdiff_t = f.sr_cur.p.stride[chroma as usize];
-    let sby = y + (if y != 0 { 8 << ss_ver } else { 0 }) >> 6 - ss_ver + seq_hdr.sb128 as c_int;
-    let have_tt = (c.tc.len() > 1) as c_int;
+    let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
+    let chroma = (plane != 0) as i32;
+    let ss_ver = chroma & (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
+    let stride: isize = f.sr_cur.p.stride[chroma as usize];
+    let sby = y + (if y != 0 { 8 << ss_ver } else { 0 }) >> 6 - ss_ver + seq_hdr.sb128 as i32;
+    let have_tt = (c.tc.len() > 1) as i32;
     let lpf_stride = BD::pxstride(stride);
     let mut lpf_offset = f.lf.lr_lpf_line[plane as usize] as isize;
     lpf_offset += (have_tt * (sby * (4 << seq_hdr.sb128) - 4)) as isize * lpf_stride + x as isize;
     // The first stripe of the frame is shorter by 8 luma pixel rows.
-    let mut stripe_h = cmp::min(64 - 8 * (y == 0) as c_int >> ss_ver, row_h - y);
+    let mut stripe_h = cmp::min(64 - 8 * (y == 0) as i32 >> ss_ver, row_h - y);
 
     let mut params = LooprestorationParams::default();
     let lr_fn;
@@ -126,7 +124,7 @@ fn lr_stripe<BD: BitDepth>(
 fn backup_4xu<BD: BitDepth>(
     dst: &mut [[BD::Pixel; 4]; 128 + 8],
     src: Rav1dPictureDataComponentOffset,
-    u: c_int,
+    u: i32,
 ) {
     let u = u as usize;
     let dst = &mut dst[..u];
@@ -143,23 +141,23 @@ fn lr_sbrow<BD: BitDepth>(
     c: &Rav1dContext,
     f: &Rav1dFrameData,
     mut p: Rav1dPictureDataComponentOffset,
-    y: c_int,
-    w: c_int,
-    h: c_int,
-    row_h: c_int,
-    plane: c_int,
+    y: i32,
+    w: i32,
+    h: i32,
+    row_h: i32,
+    plane: i32,
 ) {
-    let chroma = (plane != 0) as c_int;
-    let ss_ver = chroma & (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as c_int;
-    let ss_hor = chroma & (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as c_int;
-    let frame_hdr = &***f.frame_hdr.as_ref().unwrap();
+    let chroma = (plane != 0) as i32;
+    let ss_ver = chroma & (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
+    let ss_hor = chroma & (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as i32;
+    let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
     let unit_size_log2 = frame_hdr.restoration.unit_size[(plane != 0) as usize];
-    let unit_size = (1 as c_int) << unit_size_log2;
+    let unit_size = (1 as i32) << unit_size_log2;
     let half_unit_size = unit_size >> 1;
     let max_unit_size = unit_size + half_unit_size;
 
     // Y coordinate of the sbrow (y is 8 luma pixel rows above row_y)
-    let row_y = y + (8 >> ss_ver) * (y != 0) as c_int;
+    let row_y = y + (8 >> ss_ver) * (y != 0) as i32;
 
     // FIXME This is an ugly hack to lookup the proper AV1Filter unit for
     // chroma planes. Question: For Multithreaded decoding, is it better
@@ -247,12 +245,12 @@ pub(crate) fn rav1d_lr_sbrow<BD: BitDepth>(
     c: &Rav1dContext,
     f: &Rav1dFrameData,
     dst: [Rav1dPictureDataComponentOffset; 3],
-    sby: c_int,
+    sby: i32,
 ) {
-    let offset_y = 8 * (sby != 0) as c_int;
+    let offset_y = 8 * (sby != 0) as i32;
     let restore_planes = f.lf.restore_planes;
-    let not_last = ((sby + 1) < f.sbh) as c_int;
-    let seq_hdr = &***f.seq_hdr.as_ref().unwrap();
+    let not_last = ((sby + 1) < f.sbh) as i32;
+    let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
     if restore_planes.contains(LrRestorePlanes::Y) {
         let h = f.sr_cur.p.p.h;
         let w = f.sr_cur.p.p.w;
@@ -271,14 +269,14 @@ pub(crate) fn rav1d_lr_sbrow<BD: BitDepth>(
         );
     }
     if restore_planes.intersects(LrRestorePlanes::UV) {
-        let ss_ver = (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as c_int;
-        let ss_hor = (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as c_int;
+        let ss_ver = (f.sr_cur.p.p.layout == Rav1dPixelLayout::I420) as i32;
+        let ss_hor = (f.sr_cur.p.p.layout != Rav1dPixelLayout::I444) as i32;
         let h = f.sr_cur.p.p.h + ss_ver >> ss_ver;
         let w = f.sr_cur.p.p.w + ss_hor >> ss_hor;
-        let next_row_y = (sby + 1) << 6 - ss_ver + seq_hdr.sb128 as c_int;
+        let next_row_y = (sby + 1) << 6 - ss_ver + seq_hdr.sb128 as i32;
         let row_h = cmp::min(next_row_y - (8 >> ss_ver) * not_last, h);
         let offset_uv = offset_y >> ss_ver;
-        let y_stripe = (sby << 6 - ss_ver + seq_hdr.sb128 as c_int) - offset_uv;
+        let y_stripe = (sby << 6 - ss_ver + seq_hdr.sb128 as i32) - offset_uv;
         if restore_planes.contains(LrRestorePlanes::U) {
             lr_sbrow::<BD>(
                 c,

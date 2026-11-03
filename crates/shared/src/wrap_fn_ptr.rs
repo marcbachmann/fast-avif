@@ -29,19 +29,19 @@
 /// This ensures that the `fn` signature is consistent between all of these
 /// and reduces the need to repeat the `fn` signature many times.
 ///
-/// [`BitDepth`]: crate::include::common::bitdepth::BitDepth
+/// [`BitDepth`]: crate::bitdepth::BitDepth
 /// [`DefaultValue`]: crate::enum_map::DefaultValue
 /// [`enum_map!`]: crate::enum_map::enum_map
 #[macro_export]
 macro_rules! wrap_fn_ptr {
-    ($vis:vis unsafe extern "C" fn $name:ident(
+    ($vis:vis unsafe fn $name:ident(
             $($arg_name:ident: $arg_ty:ty),*$(,)?
     ) -> $return_ty:ty) => {
         $vis mod $name {
             use $crate::enum_map::DefaultValue;
             use super::*;
 
-            pub type FnPtr = unsafe extern "C" fn($($arg_name: $arg_ty),*) -> $return_ty;
+            pub type FnPtr = unsafe fn($($arg_name: $arg_ty),*) -> $return_ty;
 
             /// A newtype wrapped [`FnPtr`].
             ///
@@ -64,7 +64,7 @@ macro_rules! wrap_fn_ptr {
 
             impl DefaultValue for Fn {
                 const DEFAULT: Self = {
-                    extern "C" fn default_unimplemented(
+                    fn default_unimplemented(
                         $($arg_name: $arg_ty,)*
                     ) -> $return_ty {
                         $(let _ = $arg_name;)*
