@@ -104,8 +104,8 @@ fn plane(p: &Picture, i: usize) -> Option<(usize, usize, usize, *const u8)> {
     let data = p.plane_ptr(COMPONENTS[i]);
     assert!(!data.is_null());
     Some((
-        (w + ss_hor >> ss_hor) * sample,
-        h + ss_ver >> ss_ver,
+        ((w + ss_hor) >> ss_hor) * sample,
+        (h + ss_ver) >> ss_ver,
         p.stride(COMPONENTS[i]) as usize,
         data,
     ))
@@ -124,9 +124,9 @@ fn digest(p: &Picture) -> u64 {
     let mut h = DefaultHasher::new();
     h.write_i32(p.width() as i32);
     h.write_i32(p.height() as i32);
-    for i in 0..3 {
+    for (i, &component) in COMPONENTS.iter().enumerate() {
         if let Some((bytes, rows, stride, data)) = plane(p, i) {
-            let whole = p.plane(COMPONENTS[i]);
+            let whole = p.plane(component);
             assert_eq!(whole.as_ptr(), data);
             for y in 0..rows {
                 h.write(&whole[y * stride..][..bytes]);
@@ -638,7 +638,7 @@ fn decodes_tile_columns_on_spawned_threads_as_whole() {
     );
     assert!(differ.is_empty(), "{differ:#?}");
     assert!(
-        filter.len() > 0 || damaged_errors > 0,
+        !filter.is_empty() || damaged_errors > 0,
         "no damaged stream failed"
     );
     assert!(taken > 0 && asked > taken, "{asked} offered, {taken} taken");
@@ -823,7 +823,8 @@ fn decodes_into_pictures_of_its_allocator() {
 #[test]
 fn fails_a_frame_its_allocator_breaks() {
     let data = std::fs::read(intra()).unwrap();
-    let breaks: [(&str, fn(&PictureParameters, &mut PlaneLayout)); 6] = [
+    type Break = fn(&PictureParameters, &mut PlaneLayout);
+    let breaks: [(&str, Break); 6] = [
         ("misaligned", |_, l| l.offsets[0] += 1),
         ("narrow", |p, l| {
             l.strides[0] = p.min_stride(0) - PICTURE_ALIGNMENT
@@ -951,7 +952,7 @@ fn flushed_decoder_resumes_at_a_sequence_header_as_a_new_one() {
     );
     assert!(differ.is_empty());
     assert!(
-        filter != "" || (seeks > 0 && pictures > 0),
+        !filter.is_empty() || (seeks > 0 && pictures > 0),
         "no stream had a later sequence header"
     );
 }

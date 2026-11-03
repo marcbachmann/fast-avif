@@ -210,18 +210,18 @@ impl CpuFlags {
 /// instead of a `static mut`, since the latter is `unsafe` to access.
 ///
 /// It seems to only be used in init functions,
-/// should it shouldn't be performance sensitive.
+/// so it shouldn't be performance sensitive.
 ///
-/// It is written once by [`dav1d_init_cpu`] in initialization code,
-/// and then subsequently read in [`dav1d_get_cpu_flags`] by other initialization code.
+/// It is written once by [`rav1d_init_cpu`] in initialization code,
+/// and then subsequently read in [`rav1d_get_cpu_flags`] by other initialization code.
 static RAV1D_CPU_FLAGS: AtomicU32 = AtomicU32::new(0);
 
 /// This is atomic, which has interior mutability,
 /// instead of a `static mut`, since the latter is `unsafe` to access.
 ///
-/// It is modifiable through the publicly exported [`dav1d_set_cpu_flags_mask`],
+/// It is modifiable through the publicly exported [`rav1d_set_cpu_flags_mask`],
 /// so strict safety guarantees about how it's used can't be made.
-/// Other than that, it is also only used in init functions (that call [`dav1d_get_cpu_flags`]),
+/// Other than that, it is also only used in init functions (that call [`rav1d_get_cpu_flags`]),
 /// so it shouldn't be performance sensitive.
 static RAV1D_CPU_FLAGS_MASK: AtomicU32 = AtomicU32::new(!0);
 

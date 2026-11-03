@@ -67,7 +67,7 @@ impl I16x8 {
 }
 
 /// The lane operations the transforms take, for [`I16x8`] on every target and, on x86_64 with
-/// AVX2, [`I16x16`]: one kernel source for both widths.
+/// AVX2, `I16x16`: one kernel source for both widths.
 pub trait Lanes: Copy {
     fn splat(v: i16) -> Self;
     fn add_sat(self, o: Self) -> Self;
@@ -206,7 +206,7 @@ forward_lanes!(I16x8);
 forward_lanes!(I16x16);
 
 /// The byte-lane operations of the 8 bpc loop filter, for [`U8x16`] on every target and, on
-/// x86_64 with AVX2, [`U8x32`]: one kernel source for both widths. The `_i` ones read the lanes as
+/// x86_64 with AVX2, `U8x32`: one kernel source for both widths. The `_i` ones read the lanes as
 /// `i8`; the interleaves stay within each 128-bit half.
 pub trait Bytes: Copy {
     /// Lanes per vector.
@@ -408,7 +408,7 @@ forward_bytes!(U8x16, 16, I16x8);
 forward_bytes!(U8x32, 32, I16x16);
 
 /// `v[i]` lane `j` becomes `v[j]` lane `i` within each 128-bit half: three rounds of interleaves,
-/// 24 shuffles; [`I16x16`] turns two 8x8 blocks at once.
+/// 24 shuffles; `I16x16` turns two 8x8 blocks at once.
 #[inline(always)]
 pub fn transpose8x8<V: Lanes>(v: &mut [V; 8]) {
     let a = [

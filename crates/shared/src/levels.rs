@@ -402,15 +402,14 @@ impl PartialEq for Mv {
 
 /// A motion vector without alignment requirements.
 ///
-/// In [`RefMvsTemporalBlock`], we have an [`UnalignedMv`] in a `packed` `struct`.
+/// In `RefMvsTemporalBlock`, we have an [`UnalignedMv`] in a `packed` `struct`.
 /// We cannot use a regular [`Mv`] `struct` there because Rust
 /// does not permit an aligned `struct` to be inside a packed `struct`.
-/// Instead, [`RefMvsTemporalBlock`] uses [`UnalignedMv`], and we provide conversion methods.
+/// Instead, `RefMvsTemporalBlock` uses [`UnalignedMv`], and we provide conversion methods.
 ///
 /// This must be [`Copy`] because it will be in a `packed` `struct`,
 /// where we cannot take a reference.
 ///
-/// [`RefMvsTemporalBlock`]: crate::refmvs::RefMvsTemporalBlock
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct UnalignedMv {

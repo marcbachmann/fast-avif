@@ -64,7 +64,7 @@ pub struct CdfCoefContext {
     pub dc_sign: Align4<[[[u16; 2]; 3]; 2]>,
 }
 
-/// Buffers padded to [4]/[8]/[16] for SIMD where needed.
+/// Buffers padded to 4, 8 or 16 entries for SIMD where needed.
 #[derive(Clone, Default)]
 #[repr(C)]
 pub struct CdfModeContext {
@@ -98,7 +98,7 @@ pub struct CdfModeContext {
     pub intrabc: Align4<[u16; 2]>,
 }
 
-/// Buffers padded to [4]/[8]/[16] for SIMD where needed.
+/// Buffers padded to 4, 8 or 16 entries for SIMD where needed.
 #[derive(Clone, Default)]
 #[repr(C)]
 pub struct CdfModeInterContext {

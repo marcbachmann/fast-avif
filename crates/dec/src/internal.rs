@@ -257,7 +257,7 @@ pub(crate) struct TaskThreadData {
     /// This is used for delayed reset of the task cur pointer when
     /// such operation is needed but the thread doesn't enter a critical
     /// section (typically when executing the next sbrow task locklessly).
-    /// See [`crate::thread_task::reset_task_cur`].
+    /// See `thread_task::reset_task_cur`.
     pub reset_task_cur: AtomicU32,
     pub cond_signaled: AtomicI32,
     pub delayed_fg_exec: RelaxedAtomic<i32>,
@@ -338,7 +338,7 @@ impl Rav1dContextTaskThread {
 /// It is not accessed by other threads
 /// (not in the call tree of [`rav1d_worker_task`]).
 ///
-/// [`rav1d_flush`]: crate::lib::rav1d_flush
+/// [`rav1d_flush`]: crate::rav1d_flush
 /// [`rav1d_worker_task`]: crate::thread_task::rav1d_worker_task
 #[derive(Default)]
 pub struct Rav1dState {
@@ -351,9 +351,8 @@ pub struct Rav1dState {
     pub(crate) content_light: Option<Arc<Rav1dContentLightLevel>>,
     pub(crate) mastering_display: Option<Arc<Rav1dMasteringDisplay>>,
 
-    /// This is ref-counted in C, but since we first accumulate the `Vec<Rav1dITUTT35>`
-    /// during [`parse_obus`] and then convert to an [`Arc`] in [`Rav1dITUTT35::to_immut`],
-    /// we don't need an [`Arc`] here.
+    /// Accumulated while the OBUs of a frame are parsed, then shared as an [`Arc`] by
+    /// [`Rav1dITUTT35::to_immut`].
     pub(crate) itut_t35: Vec<Rav1dITUTT35>,
 
     // decoded output picture queue
@@ -375,12 +374,12 @@ pub struct Rav1dState {
     pub(crate) cached_error: Option<Rav1dError>,
 
     /// Whether a frame decoded on the calling thread alone is decoded by rows, see
-    /// [`dav1d_decode_rows`](crate::dav1d_decode_rows).
+    /// [`Decoder::decode_rows`](crate::Decoder::decode_rows).
     pub(crate) by_rows: bool,
     /// The frame being decoded by rows.
     pub(crate) rows: Option<FrameRows>,
     /// Runs the tile columns of a superblock row decoded by rows beside the calling thread, see
-    /// [`dav1d_set_rows_spawner`](crate::dav1d_set_rows_spawner).
+    /// [`Decoder::set_rows_spawner`](crate::Decoder::set_rows_spawner).
     pub(crate) rows_spawner: Option<crate::Spawner>,
     /// Task contexts for the tile columns the spawner's threads decode.
     pub(crate) rows_contexts: Arc<Mutex<Vec<Box<Rav1dTaskContext>>>>,
@@ -631,7 +630,7 @@ pub struct Rav1dFrameContextFrameThread {
     /// Iterated over inside tile state.
     pub pal_idx: DisjointMut<AlignedVec64<u8>>,
 
-    /// [`AlignedVec64`]`<`[`DynCoef`]`>`
+    /// [`AlignedVec64`]`<`[`DynCoef`](rav1d_shared::bitdepth::DynCoef)`>`
     pub cf: DisjointMut<AlignedVec64<u8>>,
 
     /// Start offsets per tile
@@ -645,13 +644,6 @@ pub(crate) struct TxLpfRightEdge {
 }
 
 impl TxLpfRightEdge {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
-            inner: DisjointMut::default(),
-        }
-    }
-
     pub fn resize(&mut self, right_edge_size: usize, value: u8) {
         self.inner.resize(right_edge_size * 32 * 2, value)
     }
@@ -960,11 +952,6 @@ pub const CF_LEN: usize = 32 * 32;
 pub struct Cf([i32; CF_LEN]);
 
 impl Cf {
-    #[allow(unused)]
-    pub fn select<BD: BitDepth>(&self) -> &[BD::Coef; CF_LEN] {
-        FromBytes::ref_from_prefix(AsBytes::as_bytes(&self.0)).unwrap()
-    }
-
     pub fn select_mut<BD: BitDepth>(&mut self) -> &mut [BD::Coef; CF_LEN] {
         FromBytes::mut_from_prefix(AsBytes::as_bytes_mut(&mut self.0)).unwrap()
     }

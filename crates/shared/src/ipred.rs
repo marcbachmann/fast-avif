@@ -378,7 +378,7 @@ unsafe fn ipred_cfl_128_c_erased<BD: BitDepth>(
 }
 
 /// The intra predictions with the block width in the type, on `u8` or `u16` pixels, over
-/// [`I16x8`]. DC sums its edges into lanes and stores its rows from a constant array.
+/// `I16x8`. DC sums its edges into lanes and stores its rows from a constant array.
 mod rust_simd {
     use std::mem::size_of;
 

@@ -489,7 +489,7 @@ pub(crate) fn rav1d_task_delayed_fg(c: &Rav1dContext, out: &mut Rav1dPicture, in
         delayed_fg.out = out.clone();
         delayed_fg.type_0 = TaskType::FgPrep;
 
-        // This initialization is done once per call to [`dav1d_apply_grain`].
+        // This initialization is done once per call to [`rav1d_apply_grain`](crate::rav1d_apply_grain).
         // Nevertheless, it is a 48 KB zero initialization that C avoids,
         // so we avoid reinitializing here if it already has the correct variant.
         //
@@ -917,7 +917,7 @@ fn work(c: &Rav1dContext, tc: &mut Rav1dTaskContext, until: Option<&Rav1dFrameCo
                     }
                     if t.type_0 == TaskType::InitCdf {
                         // XXX This can be a simple else, if adding tasks of both
-                        // passes at once (in dav1d_task_create_tile_sbrow).
+                        // passes at once (in rav1d_task_create_tile_sbrow).
                         // Adding the tasks to the pending Q can result in a
                         // thread merging them before setting init_done.
                         // We will need to set init_done before adding to the

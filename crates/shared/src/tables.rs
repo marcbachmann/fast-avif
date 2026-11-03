@@ -473,7 +473,7 @@ const fn extend_array<T: DefaultValue + Copy, const M: usize, const N: usize>(a:
 pub type LoCtxOffset = InRange<u8, 0, 21>;
 
 /// The core of each of these 3 tables is a 5x5 table of offsets.
-/// However, to use that 5x5 table in [`get_lo_ctx`],
+/// However, to use that 5x5 table in the decoder's `get_lo_ctx`,
 /// we first have to clamp the `x` and `y` values from `[0, 32)` to `[0, 5)`.
 /// That involves two `min`s, which LLVM makes into conditional moves that have to
 /// happen in series before we can actually load the element we want.  These add latency.

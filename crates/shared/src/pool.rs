@@ -11,21 +11,8 @@ impl<T> MemPool<T> {
         }
     }
 
-    pub fn _pop(&self, size: usize) -> Vec<T> {
-        if let Some(mut buf) = self.bufs.lock().pop() {
-            if size > buf.capacity() {
-                // TODO fallible allocation
-                buf.reserve(size - buf.len());
-            }
-            return buf;
-        }
-        // TODO fallible allocation
-        Vec::with_capacity(size)
-    }
-
-    /// A version of [`Self::pop`] that initializes the [`Vec`].
-    /// This allows it to use [`vec!`], which, if used with `0`,
-    /// calls [`alloc_zeroed`], and thus can leave zero initialization to the OS.
+    /// A buffer of at least `size` from the pool, or a new one from [`vec!`], which, if used with
+    /// `0`, calls [`alloc_zeroed`], and thus can leave zero initialization to the OS.
     ///
     /// [`alloc_zeroed`]: std::alloc::alloc_zeroed
     pub fn pop_init(&self, size: usize, init_value: T) -> Vec<T>

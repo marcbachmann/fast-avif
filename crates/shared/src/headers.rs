@@ -502,20 +502,6 @@ pub struct Rav1dMasteringDisplay {
     pub min_luminance: u32,
 }
 
-/// An immutable ptr to [`Rav1dITUTT35::payload`].
-///
-/// [`Rav1dITUTT35::payload`] is a [`Box`], so it doesn't move,
-/// and [`Self::payload`]'s lifetime is that of the [`Rav1dITUTT35`],
-/// which is itself stored in a [`Box`] as returned from [`Rav1dITUTT35::to_immut`].
-#[repr(transparent)]
-pub struct ITUTT35PayloadPtr(*const u8);
-
-/// SAFETY: The raw ptr is immutable and essentially a `&[u8]`, which is [`Send`].
-unsafe impl Send for ITUTT35PayloadPtr {}
-
-/// SAFETY: The raw ptr is immutable and essentially a `&[u8]`, which is [`Sync`].
-unsafe impl Sync for ITUTT35PayloadPtr {}
-
 #[repr(C)]
 pub struct Rav1dITUTT35 {
     pub country_code: u8,

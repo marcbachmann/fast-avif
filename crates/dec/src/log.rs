@@ -1,10 +1,8 @@
 use std::fmt;
-use std::io::{stderr, stdout, Write as _};
+use std::io::{stderr, Write as _};
 
 #[derive(Clone, Default)]
 pub(crate) enum Rav1dLogger {
-    #[allow(dead_code)]
-    Stdout,
     #[default]
     Stderr,
 }
@@ -33,7 +31,6 @@ impl Rav1dLog for Rav1dLogger {
     #[inline(never)]
     fn write_fmt(&self, args: fmt::Arguments) {
         match self {
-            Self::Stdout => stdout().write_fmt(args).unwrap(),
             Self::Stderr => stderr().write_fmt(args).unwrap(),
         }
     }

@@ -750,10 +750,10 @@ fn add_single_extended_candidate(
 /// wide) of 4x4-resolution refmvs_block entries for spatial MV referencing.
 /// mvrefs_tile[] keeps a list of 35 (32 + 3 above) pointers into this memory,
 /// and each sbrow, the bottom entries (y=27/29/31) are exchanged with the top
-/// (-5/-3/-1) pointers by calling dav1d_refmvs_tile_sbrow_init() at the start
+/// (-5/-3/-1) pointers by calling rav1d_refmvs_tile_sbrow_init() at the start
 /// of each tile/sbrow.
 ///
-/// For temporal MV referencing, we call dav1d_refmvs_save_tmvs() at the end of
+/// For temporal MV referencing, we call save_tmvs() at the end of
 /// each tile/sbrow (when tile column threading is enabled), or at the start of
 /// each interleaved sbrow (i.e. once for all tile columns together, when tile
 /// column threading is disabled). This will copy the 4x4-resolution spatial MVs

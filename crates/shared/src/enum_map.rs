@@ -56,21 +56,6 @@ where
     }
 }
 
-impl<K, V, const N: usize> EnumMap<K, V, N>
-where
-    K: EnumKey<N>,
-    V: DefaultValue,
-{
-    /// Create an [`EnumMap`] with default values when `V: ` [`DefaultValue`].
-    #[allow(dead_code)] // TODO(kkysen) remove when used
-    const fn default() -> Self {
-        Self {
-            array: [V::DEFAULT; N],
-            _phantom: PhantomData,
-        }
-    }
-}
-
 impl<K, V, const N: usize> Index<K> for EnumMap<K, V, N>
 where
     K: EnumKey<N>,

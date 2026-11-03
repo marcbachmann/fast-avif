@@ -46,11 +46,11 @@ const _: () = assert!(mem::align_of::<AlignedPixelChunk>() == RAV1D_PICTURE_ALIG
 const _: () = assert!(mem::size_of::<AlignedPixelChunk>() == RAV1D_PICTURE_ALIGNMENT);
 
 /// The guaranteed length multiple of [`Rav1dPictureDataComponentInner`]s.
-/// This is checked and [`assume`]d.
+/// This is checked and assumed.
 const RAV1D_PICTURE_GUARANTEED_MULTIPLE: usize = 64;
 
 /// Actual [`Rav1dPictureData`]'s components should be multiples of this,
-/// as this is guaranteed by [`Rav1dPicAllocator::alloc_picture_callback`],
+/// as [`place`] checks an allocator's layout for,
 /// though wrapped buffers may only be [`RAV1D_PICTURE_GUARANTEED_MULTIPLE`].
 const RAV1D_PICTURE_MULTIPLE: usize = 64 * 64;
 
@@ -99,7 +99,7 @@ impl Rav1dPictureDataComponentInner {
 
     /// # Safety
     ///
-    /// As opposed to [`Self::new`], this is safe because `buf` is a `&mut` and thus unique,
+    /// As opposed to `Self::new`, this is safe because `buf` is a `&mut` and thus unique,
     /// so it is sound to further subdivide it into disjoint `&mut`s.
     pub fn wrap_buf<BD: BitDepth>(buf: &mut [BD::Pixel], stride: usize) -> Self {
         let buf = AsBytes::as_bytes_mut(buf);

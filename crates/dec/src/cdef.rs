@@ -477,7 +477,7 @@ mod rust_simd {
 
     use super::*;
 
-    /// The `i16` lanes [`filter`] runs on: [`I16x8`], and [`I16x16`] in the AVX2 kernels, each
+    /// The `i16` lanes [`filter`] runs on: `I16x8`, and `I16x16` in the AVX2 kernels, each
     /// holding `N / W` rows of a `W`-wide block.
     trait Lanes: Copy {
         const N: usize;

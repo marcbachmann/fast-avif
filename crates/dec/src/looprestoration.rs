@@ -872,7 +872,7 @@ fn sgr_mix_rust<BD: BitDepth>(
     }
 }
 
-/// The 8 bpc filters on [`I16x8`].
+/// The 8 bpc filters on `I16x8`.
 mod rust_simd {
     #[cfg(target_arch = "x86_64")]
     use rav1d_shared::simd128::I16x16;
@@ -894,7 +894,7 @@ mod rust_simd {
         }
     }
 
-    /// The `i16` lanes Wiener runs on: [`I16x8`], and [`I16x16`] in the AVX2 kernels.
+    /// The `i16` lanes Wiener runs on: `I16x8`, and `I16x16` in the AVX2 kernels.
     trait Lanes: Copy {
         const N: usize;
         fn splat(v: i16) -> Self;

@@ -48,8 +48,8 @@ fn hash_picture(h: &mut u64, p: &Picture) {
             _ => (0, 0),
         };
         let (bytes, rows, stride, data) = (
-            (w + sx >> sx) * sample,
-            ht + sy >> sy,
+            ((w + sx) >> sx) * sample,
+            (ht + sy) >> sy,
             p.stride(c) as usize,
             p.plane_ptr(c),
         );
