@@ -1,30 +1,24 @@
-# The rav1d project would like to thank
+# Thanks
 
-## Prossimo
-The Internet Security Research Group (ISRG) and its donors for funding this Rust port.
+fast-avif is built on the work of these projects.
 
-## Contributors
+## rav1d
+
+The Rust port of dav1d that the decoder, the tables and the DSP come from. The Internet
+Security Research Group (ISRG) and its donors funded it through Prossimo.
 
 The rav1d Rust port authors:
 
 Khyber Sen, Nicole L, Per Larsen, Stephen Crane, Frank Bossen, Folkert de Vries
 
+## dav1d
 
-# The dav1d project and VideoLAN association would like to thank
+The AV1 decoder that rav1d ports, by VideoLAN and the dav1d authors, with funding from the
+Alliance for Open Media (AOM). The dav1d project and the VideoLAN association thank:
 
-## AOM
-The Alliance for Open Media (AOM) for funding this project.
-
-## Companies
-* Two Orioles LLC, for important coding effort
-* VideoLabs SAS
-
-## Projects
-* VideoLAN
-* FFmpeg
-* libplacebo
-
-## Individual
+- Two Orioles LLC, for important coding effort
+- VideoLabs SAS
+- the VideoLAN, FFmpeg and libplacebo projects
 
 And all the dav1d Authors (git shortlog -sn), including:
 
@@ -43,3 +37,24 @@ Mark Shuttleworth, Matthieu Bouron, Mehdi Sabwat, Nicolas Frattaroli,
 Pablo Stebler, Rostislav Pehlivanov, Shiz, Steinar Midtskogen, Sylvain BERTRAND,
 Sylvestre Ledru, Timo Gurr, Tristan Matthews, Vibhoothi, Xavier Claessens,
 Xu Guangxin, kossh1 and skal
+
+## libaom
+
+The AOM reference encoder, v3.15.1, by the Alliance for Open Media and the libaom authors. The
+encoder ports several of its parts:
+- the range encoder;
+- the forward transforms;
+- the intra CNN partition prune and its model;
+- λ and tune IQ's settings.
+
+The ported files keep its notice.
+
+## rav1e
+
+The rav1e contributors' forward transforms, taken through rusty-av1-toolkit, are the encoder's
+`fdct_fast` kernels. The ported files keep their headers.
+
+## dav1d-rs
+
+The Rust bindings to dav1d that the decoder's Rust API started from, under the MIT licence; the
+notice is in `crates/dec/src/rust_api.rs`.

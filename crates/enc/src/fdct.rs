@@ -1929,7 +1929,7 @@ pub(super) mod tests {
 
     /// FNV-1a over the coefficients of 10 blocks per size and type, from
     /// libaom v3.15.1's C functions (`av1_fwd_txfm2d_*_c`, `av1_fwht4x4_c`) on
-    /// the same inputs; the harness is in `doc/encoder-fdct-handoff.md`.
+    /// the same inputs; the harness is in `doc/encoder.md`.
     const LIBAOM_DIGESTS: &[(usize, TxfmType, u64)] = &[
         (0, 0, 0x7edc02226aad7110),
         (0, 1, 0xce71e0626e514cc0),

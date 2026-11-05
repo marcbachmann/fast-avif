@@ -223,7 +223,7 @@ pub struct Options {
 
 impl Options {
     /// The search for an effort of 0 (fastest) to 9, as libaom's `cpu-used` of 9 − effort.
-    /// Measured on 256 px crops at qidx 120 against the full search (`doc/encoder-progress.md`);
+    /// Measured on 256 px crops at qidx 120 against the full search;
     /// from effort 4 qindexes to 64 and pictures to 512×512 keep 4 luma modes ranked by
     /// `luma_estimate`, every chroma mode, and search transform types at every depth. To effort 5
     /// one transform depth is tried, as libaom at cpu-used 5 (`intra_tx_size_search_init_depth`).

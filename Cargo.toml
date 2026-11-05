@@ -11,9 +11,12 @@ authors = ["Rav1d Developers", "Prossimo"]
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "AV1 still-image encoder and decoder in Rust, from rav1d, the Rust port of dav1d"
+description = "AV1 still-image encoder and decoder for AVIF, in Rust only"
 license = "BSD-2-Clause"
-repository = "https://github.com/memorysafety/rav1d"
+repository = "https://github.com/marcbachmann/fast-avif"
+readme = "README.md"
+keywords = ["avif", "av1", "image", "encoder", "decoder"]
+categories = ["multimedia::images", "multimedia::encoding"]
 exclude = ["*.c", "*.h", "*.in", "meson*", "tests/", "doc/"]
 
 [dependencies]

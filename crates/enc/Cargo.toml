@@ -3,7 +3,8 @@ name = "fast-avif-enc"
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "An AV1 still-image encoder on the fast-avif tables and DSP"
+description = "The AV1 still-image encoder of fast-avif"
+repository = "https://github.com/marcbachmann/fast-avif"
 license = "BSD-2-Clause"
 publish = false
 

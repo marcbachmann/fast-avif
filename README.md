@@ -1,156 +1,108 @@
 # fast-avif
 
-**fast-avif** is an AV1 still-image encoder and decoder in Rust, built for AVIF. Its decoder
-and the tables and DSP both share come from [rav1d](https://github.com/memorysafety/rav1d), the
-Rust port of [dav1d](https://code.videolan.org/videolan/dav1d).
+An AV1 still-image encoder and decoder for AVIF, in Rust only: no C and no assembly.
 
-# Building
+- **Encoder:** codes 8-bit 4:4:4 colour and 8-bit monochrome alpha as one key frame. It has
+  every intra prediction mode, palettes, an RD search, libaom's tune IQ, and deblocking and CDEF
+  strengths searched on the decoded picture. Efforts run from 0 to 9, and tile columns can be
+  coded on the caller's threads with the bytes of one thread.
+- **Decoder:** rav1d's complete AV1 decoder, without its C API and assembly. It can decode by
+  superblock rows, on the caller's threads and into the caller's memory.
 
-fast-avif is written in Rust and uses the standard Rust toolchain to build. The Rust
-toolchain can be installed by going to https://rustup.rs. The library
-builds on stable Rust for `x86`, `x86_64`, and `aarch64`, but currently
-requires a nightly compiler for `arm` and `riscv64`. The project is configured
-to use a nightly compiler by default via `rust-toolchain.toml`, but a stable
-library build can be made with the `+stable` cargo flag.
+fast-avif writes and reads the AV1 payload of an AVIF file. The container (`ftyp`, `meta` and
+their boxes) is the caller's.
 
-A release build can then be made using cargo:
+## Use
+
+```toml
+[dependencies]
+fast-avif = { git = "https://github.com/marcbachmann/fast-avif", features = ["encoder"] }
+```
+
+```rust
+use fast_avif::enc::{still, Options};
+use fast_avif::{Decoder, PlanarImageComponent, Rav1dError};
+
+let (width, height) = (64, 48);
+let y = vec![128u8; width * height];
+let (u, v) = (y.clone(), y.clone());
+
+// qindex 0-255 (0 is lossless), effort 0-9, screen content, pixel count
+let options = Options::effort(120, 4, false, (width * height) as u64).tune_iq();
+let coded = still(width as u32, height as u32, &[&y, &u, &v], &options);
+// coded.data: the sequence header and frame OBUs; coded.config: the `av1C` payload
+
+let mut decoder = Decoder::new()?;
+decoder.send_data(coded.data.into_boxed_slice(), None, None, None)?;
+let picture = match decoder.get_picture() {
+    // with frame threads the first call returns before the picture is done; the second waits
+    Err(Rav1dError::TryAgain) => decoder.get_picture()?,
+    result => result?,
+};
+let y = picture.plane(PlanarImageComponent::Y);
+```
+
+The planes are packed rows of `width` bytes. One plane is monochrome; three are 4:4:4 YCbCr,
+BT.601, full range, sRGB.
+
+- [`doc/encoder.md`](doc/encoder.md) covers the encoder: how it codes a picture, its search
+  and efforts, and its tests.
+- [`doc/decoder.md`](doc/decoder.md) covers the decoder: its API (rows, threads, picture
+  memory), its SIMD and its conformance tests.
+
+| Feature | Default | |
+|---|---|---|
+| `bitdepth_8` | yes | 8-bit decoding |
+| `bitdepth_16` | yes | 10- and 12-bit decoding |
+| `encoder` | no | the encoder, `fast_avif::enc` |
+
+The decoder writes why a header or a picture failed to stderr only when `DEBUG` names
+`fast-avif`, as Node's `debug` reads it: `DEBUG=fast-avif` or `DEBUG=*`.
+
+## Crates
+
+| Crate | Path | |
+|---|---|---|
+| `fast-avif` | `.` | the one to depend on |
+| `fast-avif-enc` | `crates/enc` | the encoder |
+| `fast-avif-dec` | `crates/dec` | the decoder |
+| `fast-avif-shared` | `crates/shared` | tables, DSP, picture buffers and CPU detection both use |
+| `fast-avif-cli` | `tools` | `dav1d`, the conformance runner |
+
+## Platforms
+
+SIMD is chosen at run time from the CPU's features:
+- SSE4.1 and AVX2 on x86 and x86_64;
+- NEON on aarch64;
+- `simd128` on wasm32 when the build enables it;
+- scalar code elsewhere.
+
+Everything builds on stable Rust 1.82 or newer, except 32-bit `arm`, which needs nightly.
+`rust-toolchain.toml` pins a nightly for development, so use `cargo +stable` for a stable build.
+
+CI builds and tests:
+- Linux on x86_64, i686 and aarch64;
+- macOS on x86_64 and aarch64;
+- Windows on x86_64;
+- Android on aarch64;
+- wasm32 in wasmtime.
+
+## Build and test
 
 ```sh
 cargo build --release
+cargo test --release --workspace --lib --features encoder
+cargo test --release --tests
+.github/workflows/test.sh -r target/release/dav1d    # conformance vectors, needs Meson
 ```
 
-For development purposes you may also want to use the `opt-dev` profile, which
-runs faster than a regular debug build but has all debug checks still enabled:
+`opt-dev` is a faster-to-build profile with debug assertions. `checked-release` is a release
+build with every check on. See [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
 
-```sh
-cargo build --profile opt-dev
-```
+## License
 
-To build just the library using a stable compiler:
-
-```sh
-cargo +stable build --lib --release
-```
-
-## Feature Flags
-
-The following feature flags are supported:
-
-* `bitdepth_8` - Enables support for 8 bitdepth decoding.
-* `bitdepth_16` - Enables support for 10 and 12 bitdepth decoding.
-* `encoder` - The AV1 still-image encoder, the crate `crates/enc` (off by default).
-
-`bitdepth_8` and `bitdepth_16` are enabled by default. To build a version of the library with
-only one of them, use the `--no-default-features` flag in combination with the
-`--features` flag:
-
-```sh
-cargo build --no-default-features --features="bitdepth_8"
-```
-
-The SIMD kernels are written in Rust and selected at run time from the CPU's
-features; there is no assembly and no C to build.
-
-## Logging
-
-The decoder is silent unless `DEBUG` names `fast-avif`, as Node's `debug` reads it
-(`DEBUG=fast-avif`, `DEBUG=*`); it then writes why a header or a picture failed to stderr.
-
-## Cross-Compiling
-
-fast-avif can be cross-compiled for a target other than the host platform using the
-`cargo` `--target` flag. This will require passing additional arguments to
-`rustc` to tell it what linker to use. This can be done by setting the
-`RUSTFLAGS` enviroment variable and specifying the `linker` compiler flag. For
-example, compiling for `aarch64-unknown-linux-gnu` from an Ubuntu Linux machine
-would be done as follows:
-
-```sh
-RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --target aarch64-unknown-linux-gnu
-```
-
-If you're cross-compiling in order to run tests under QEMU (`qemu-*-static`)
-you'll also need to specify the `+crt-static` target feature.
-
-```sh
-RUSTFLAGS="-C target-feature=+crt-static -C linker=aarch64-linux-gnu-gcc" cargo build --target aarch64-unknown-linux-gnu
-```
-
-This will require installing the `rustup` component for the target platform and
-the appropriate cross-platform compiler/linker toolchain for your target
-platform. Examples of how we cross-compile fast-avif in CI can be found in
-[`.github/workflows/build-and-test-qemu.yml`](.github/workflows/build-and-test-qemu.yml).
-
-The following targets are currently supported:
-
-* `x86_64-unknown-linux-gnu`
-* `i686-unknown-linux-gnu`
-* `armv7-unknown-linux-gnueabihf`
-* `aarch64-unknown-linux-gnu`
-* `riscv64gc-unknown-linux-gnu`
-
-## Running Tests
-
-The conformance vectors in `tests/dav1d-test-data` come with
-[Meson](https://mesonbuild.com/) test definitions, and the top-level
-`meson.build` runs them against the `dav1d` binary built by cargo; it compiles
-nothing itself. This means you'll need to [have Meson
-installed](https://mesonbuild.com/Getting-meson.html) to run them. The unit
-tests run with `cargo test`.
-
-To setup and run the tests, do the following:
-
-First, build `fast-avif` using `cargo`. You'll need to do this step manually before
-running any tests because it is not built automatically when tests are run. It's
-recommended to run tests with either the `release` or `opt-dev` profile as the
-debug build runs slowly and often causes tests to timeout. The `opt-dev` profile
-is generally ideal for development purposes as it enables some optimizations
-while leaving debug checks enabled.
-
-```sh
-cargo build --release
-```
-
-Or:
-
-```sh
-cargo build --profile opt-dev
-```
-
-Then you can run the tests with the [`test.sh`](.github/workflows/test.sh)
-helper script:
-
-```sh
-.github/workflows/test.sh -r target/release/dav1d
-```
-
-Or:
-
-```sh
-.github/workflows/test.sh -r target/opt-dev/dav1d
-```
-
-The test script accepts additional arguments to configure how tests are run:
-
-* `-t MULTIPLIER` - Specify a multiplier for the test timeout. Allows for tests
-  to take longer to run, e.g. if running tests with a debug build.
-* `-f DELAY` - Specify a frame delay for the tests. If specified the tests will
-  also be run with multiple threads.
-* `-w WRAPPER` - Specify a wrapper binary to use to run the tests. This is
-  necessary for testing under QEMU for platforms other than the host platform.
-
-You can learn more about how to build and test by referencing the CI scripts in
-the [`.github/workflows`](.github/workflows) folder.
-
-# Using fast-avif
-
-The library's API is the safe Rust one in [`crates/dec/src/rust_api.rs`](crates/dec/src/rust_api.rs), re-exported by the `fast-avif` crate:
-`Settings`, `Decoder` and `Picture`, with decoding by superblock rows
-(`Decoder::set_decode_by_rows`, `decode_rows`, `rows_picture`), workers on the
-caller's threads (`Decoder::with_spawner`), data read in place
-(`Decoder::send_data_owned`), pictures in the caller's memory
-(`Settings::set_allocator`) and `parse_sequence_header`. See
-[`tests/rust_api_rows.rs`](tests/rust_api_rows.rs) for its use.
-
-There is no C API. The `dav1d` CLI in [`tools/`](tools/) is the conformance runner on the
-Rust API: IVF, Section 5 and Annex B streams in, the md5 of the decoded planes out or verified.
+BSD 2-Clause, see [COPYING](COPYING). The decoder comes from
+[rav1d](https://github.com/memorysafety/rav1d), the Rust port of
+[dav1d](https://code.videolan.org/videolan/dav1d). The encoder ports parts of libaom and rav1e.
+[THANKS.md](THANKS.md) credits them, and [doc/PATENTS](doc/PATENTS) holds the AV1 patent
+license.

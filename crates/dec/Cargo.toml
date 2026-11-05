@@ -3,7 +3,8 @@ name = "fast-avif-dec"
 version = "1.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "The fast-avif AV1 decoder"
+description = "The AV1 decoder of fast-avif, from rav1d, the Rust port of dav1d"
+repository = "https://github.com/marcbachmann/fast-avif"
 license = "BSD-2-Clause"
 publish = false
 

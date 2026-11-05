@@ -1,32 +1,46 @@
-# rav1d contribution guide
+# Contributing
 
-## CoC
+## Before sending a change
 
-While the rav1d Rust port is not a VideoLAN project, the [VideoLAN Code of Conduct](https://wiki.videolan.org/CoC) applies to contributions to this project.
+CI runs these, and a change has to pass all of them:
 
-## Authorship
+```sh
+cargo +stable fmt --check
+cargo +stable clippy --workspace --all-targets --features encoder -- -D warnings
+cargo +stable test --release --workspace --lib --features encoder
+cargo +stable test --release --tests
+cargo build --release && .github/workflows/test.sh -r target/release/dav1d
+```
 
-Please provide a correct authorship for your commit logs, with a name and a valid email.
+Clippy also has to be clean on the nightly that `rust-toolchain.toml` pins. A newer stable
+clippy flags more than that nightly does, so run both.
 
-We will reject anonymous contributions for now. As an exception, known pseudonyms from the multimedia community are accepted.
+## What a change keeps
 
-This project is respecting **Copyright** and **Droit d'auteur**. There is no copyright attribution or CLA.
+- **The decoder's pictures.** The conformance md5s fix every decoded pixel. A change that moves
+  one is a bug, whatever it speeds up.
+- **The encoder's invariant.** Every stream it writes decodes to exactly the reconstruction it
+  made. The tests check this on random decisions, tiles, threads and every effort.
+- **A measurement with every search change.** A change that alters the encoder's output gives
+  its quality at equal bytes and its time, on photos and on graphics. Its `Options` field's doc
+  comment records the result. A change meant to be exact shows the same bytes.
+- **Benchmarks that can be compared.** Run them pinned, with an A/A of the base next to the A/B,
+  and use the release profile that ships.
+- **Scalar twins for SIMD.** Each vector kernel has a scalar version and a test that the two give
+  the same output. Keep `unsafe` on the lowest call, the intrinsic, and not on the kernel.
+- **Few comments.** Comment only what the code and its names cannot say. Tests live in the file
+  they test, and their names say what they check.
 
-## Commit logs
+## Commits
 
-Please read [How to Write a Git Commit Message](https://chris.beams.io/posts/git-commit/).
+- Make one change per commit. The message says what changed and why.
+- Keep history linear: rebase onto the target branch and merge fast-forward only.
 
-## Submit requests (WIP)
+## Licence
 
-- Code,
-- [Compile](https://xkcd.com/303/),
-- Check your [code style](https://code.videolan.org/videolan/dav1d/wikis/Coding-style),
-- Test,
-- Try,
-- Submit patches through merge requests,
-- Check that this passes the CI.
+Contributions are under the BSD 2-Clause licence in [COPYING](COPYING). Code ported from
+another project keeps that project's notice in the ported file. Its licence must allow that, as
+BSD-2 and MIT do. Code under the AGPL, or under no stated licence, is not read and not copied.
 
-## Patent license
-
-You need to read, understand, and agree to the [AV1 patents license](doc/PATENTS), before committing.
-
+AV1 is covered by the [Alliance for Open Media Patent License 1.0](doc/PATENTS). Read it before
+contributing.

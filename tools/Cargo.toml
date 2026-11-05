@@ -3,7 +3,8 @@ name = "fast-avif-cli"
 version = "1.1.0"
 edition = "2021"
 default-run = "dav1d"
-description = "The conformance runner: IVF, Section 5 and Annex B streams decoded to an md5"
+description = "The fast-avif conformance runner: IVF, Section 5 and Annex B streams decoded to an md5"
+repository = "https://github.com/marcbachmann/fast-avif"
 license = "BSD-2-Clause"
 publish = false
 

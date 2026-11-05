@@ -5246,8 +5246,8 @@ pub(crate) mod tests {
         (w, h, data[at + 1..][..w * h * 3].to_vec())
     }
 
-    /// `ENC_CORPUS=<dir of P6 PPMs> [ENC_QIDX=..] [ENC_KEEP=..] [ENC_CROP=<side>] cargo test --release --features
-    /// encoder --lib enc::frame::tests::corpus -- --ignored --nocapture`: time, bytes and PSNR
+    /// `ENC_CORPUS=<dir of P6 PPMs> [ENC_QIDX=..] [ENC_KEEP=..] [ENC_CROP=<side>] cargo test -p fast-avif-enc
+    /// --release --lib frame::tests::corpus -- --ignored --nocapture`: time, bytes and PSNR
     /// after the in-loop filters, per picture and in total.
     #[test]
     #[ignore]
