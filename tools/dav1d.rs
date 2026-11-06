@@ -381,6 +381,7 @@ fn run(a: &Args) -> Result<ExitCode, String> {
     let hashing = a.verify.is_some()
         || !null && (a.muxer.as_deref() == Some("md5") || a.muxer.is_none() && a.output.is_some());
     let mut settings = Settings::new();
+    settings.set_logging(fast_avif::logging_from_env());
     settings.set_n_threads(a.threads);
     settings.set_max_frame_delay(a.frame_delay);
     settings.set_strict_std_compliance(a.strict);

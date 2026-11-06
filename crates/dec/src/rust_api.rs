@@ -48,6 +48,7 @@ use fast_avif_shared::shared_bytes::SharedBytes;
 
 use crate::decode::rav1d_decode_rows;
 use crate::internal::Rav1dContext;
+use crate::log::Rav1dLogger;
 use crate::obu::rav1d_parse_sequence_header;
 pub use crate::settings::{
     Rav1dDecodeFrameType as DecodeFrameType, Rav1dInloopFilterType as InloopFilterType,
@@ -156,6 +157,24 @@ impl Settings {
     pub fn set_allocator(&mut self, allocator: Arc<dyn PictureAllocator>) {
         self.inner.allocator = Some(Rav1dPicAllocator(allocator));
     }
+
+    /// Writes why a header or a picture failed to stderr. Off by default; see
+    /// [`logging_from_env`].
+    pub fn set_logging(&mut self, on: bool) {
+        self.inner.logger = on.then_some(Rav1dLogger::Stderr);
+    }
+
+    pub fn get_logging(&self) -> bool {
+        self.inner.logger.is_some()
+    }
+}
+
+/// Whether `DEBUG` names `fast-avif`, as Node's `debug` reads it (`DEBUG=fast-avif`, `DEBUG=*`).
+/// Call it once on the thread that starts the application and keep the answer for
+/// [`Settings::set_logging`]: a decoder never reads the environment itself, since a `getenv`
+/// is not safe against a `setenv` on another thread.
+pub fn logging_from_env() -> bool {
+    crate::log::logging_from_env()
 }
 
 /// A `rav1d` decoder instance.

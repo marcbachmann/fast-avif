@@ -94,7 +94,8 @@ its own buffers. A `Picture` is `Send` and `Sync`.
 
 `parse_sequence_header` reads the first sequence header OBU of some data without a decoder.
 Errors are `Rav1dError`, with dav1d's errno values. The decoder writes why a header or a picture
-failed to stderr only when `DEBUG` names `fast-avif`.
+failed to stderr only with `Settings::set_logging(true)`; `logging_from_env()` reads `DEBUG` once
+for the application, as the decoder's threads never read the environment.
 
 ## SIMD
 

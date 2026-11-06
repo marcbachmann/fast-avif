@@ -76,7 +76,7 @@ use crate::internal::{
     Rav1dContextTaskThread, Rav1dContextTaskType, Rav1dFrameContext, Rav1dState, Rav1dTaskContext,
     Rav1dTaskContextTaskThread, TaskThreadData,
 };
-use crate::log::{Rav1dLog as _, Rav1dLogger};
+use crate::log::Rav1dLog as _;
 use crate::obu::rav1d_parse_obus;
 use crate::picture::{rav1d_picture_alloc_copy, PictureFlags};
 use crate::settings::{
@@ -105,7 +105,7 @@ impl Default for Rav1dSettings {
             all_layers: true,
             frame_size_limit: 0,
             allocator: None,
-            logger: Rav1dLogger::from_env(),
+            logger: None,
             strict_std_compliance: false,
             output_invisible_frames: false,
             inloop_filters: Rav1dInloopFilterType::all(),

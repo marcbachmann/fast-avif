@@ -56,8 +56,10 @@ BT.601, full range, sRGB.
 | `bitdepth_16` | yes | 10- and 12-bit decoding |
 | `encoder` | no | the encoder, `fast_avif::enc` |
 
-The decoder writes why a header or a picture failed to stderr only when `DEBUG` names
-`fast-avif`, as Node's `debug` reads it: `DEBUG=fast-avif` or `DEBUG=*`.
+The decoder writes why a header or a picture failed to stderr only with
+`Settings::set_logging(true)`. `logging_from_env()` answers whether `DEBUG` names `fast-avif`,
+as Node's `debug` reads it (`DEBUG=fast-avif` or `DEBUG=*`); an application calls it once as it
+starts, since a decoder never reads the environment on its own threads.
 
 ## Crates
 

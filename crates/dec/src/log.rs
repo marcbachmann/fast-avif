@@ -6,13 +6,11 @@ pub(crate) enum Rav1dLogger {
     Stderr,
 }
 
-impl Rav1dLogger {
-    /// Stderr when `DEBUG` names `fast-avif`, read as Node's `debug` reads it.
-    pub(crate) fn from_env() -> Option<Self> {
-        std::env::var("DEBUG")
-            .is_ok_and(|debug| enabled(&debug, "fast-avif"))
-            .then_some(Self::Stderr)
-    }
+/// Whether `DEBUG` names `fast-avif`, read as Node's `debug` reads it. The environment is read
+/// here only: a `getenv` is not safe against a `setenv` on another thread, so an application
+/// reads it once on the thread that starts it and passes the answer to every decoder's settings.
+pub(crate) fn logging_from_env() -> bool {
+    std::env::var("DEBUG").is_ok_and(|debug| enabled(&debug, "fast-avif"))
 }
 
 /// Whether the comma or space separated `debug` names `name`, where `*` matches any run of
