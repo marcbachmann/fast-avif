@@ -5302,9 +5302,11 @@ pub(crate) mod tests {
             let (w0, h0, rgb) = ppm(path);
             let crop: usize = std::env::var("ENC_CROP").map_or(usize::MAX, |v| v.parse().unwrap());
             let (w, h) = (w0.min(crop), h0.min(crop));
-            let rgb: Vec<u8> = (0..h)
-                .flat_map(|y| rgb[y * w0 * 3..][..w * 3].to_vec())
-                .collect();
+            let mut cropped = Vec::with_capacity(w * h * 3);
+            for y in 0..h {
+                cropped.extend_from_slice(&rgb[y * w0 * 3..][..w * 3]);
+            }
+            let rgb = cropped;
             let mut planes = vec![vec![0u8; w * h]; 3];
             for (i, px) in rgb.chunks_exact(3).enumerate() {
                 let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
