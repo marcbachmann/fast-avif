@@ -484,6 +484,15 @@ pub struct Encoder<D: Decide> {
     chosen: Vec<Vec<TxDone>>,
     /// Emptied level and transform block lists for the next trials.
     spare: (Vec<Vec<i32>>, Vec<Vec<TxDone>>),
+    /// Pixel buffers of dropped snaps and palette maps, and the mode lists of the last block
+    /// searched, kept for the next: two tile columns coded at once otherwise wait on each other
+    /// in the allocator.
+    snaps: Vec<Vec<u8>>,
+    lists: (
+        Vec<(f64, Intra)>,
+        Vec<(f64, Intra)>,
+        Vec<(Intra, f64, Vec<TxDone>, bool)>,
+    ),
     /// The bits of the levels `rd_residual` chose.
     residual_bits: Option<u32>,
     /// The chroma modes tried last and so still in the reconstruction.
@@ -697,6 +706,8 @@ impl<D: Decide> Encoder<D> {
             replay: None,
             chosen: Vec::new(),
             spare: (Vec::new(), Vec::new()),
+            snaps: Vec::new(),
+            lists: Default::default(),
             residual_bits: None,
             last_chroma: None,
             searched: None,
@@ -1515,9 +1526,12 @@ impl<D: Decide> Encoder<D> {
         } else {
             map.resize(bw * bh, 0);
             self.palette_map(chroma, x0, wy, w, h, bw, bh, n, intra, &mut map);
+            let mut copy = self.snaps.pop().unwrap_or_default();
+            copy.clear();
+            copy.extend_from_slice(&map);
             self.pal_kept.push(PalKept {
                 key,
-                map: map.clone(),
+                map: copy,
                 bits: None,
             });
         }
@@ -2486,8 +2500,9 @@ impl<D: Decide> Encoder<D> {
         )
     }
 
-    fn snap(&self, x: i32, y: i32, w4: usize, h4: usize) -> Snap {
-        let mut pixels = Vec::new();
+    fn snap(&mut self, x: i32, y: i32, w4: usize, h4: usize) -> Snap {
+        let mut pixels = self.snaps.pop().unwrap_or_default();
+        pixels.clear();
         let wy = (y as usize * 4) % SB;
         for p in &self.rec {
             p.read(x as usize * 4, wy, w4 * 4, h4 * 4, &mut pixels);
@@ -2495,6 +2510,12 @@ impl<D: Decide> Encoder<D> {
         Snap {
             pixels,
             ..self.snap_contexts(x, y, w4, h4)
+        }
+    }
+
+    fn unsnap(&mut self, s: Snap) {
+        if s.pixels.capacity() > 0 && self.snaps.len() < 64 {
+            self.snaps.push(s.pixels);
         }
     }
 
@@ -2831,7 +2852,9 @@ impl<D: Decide> Encoder<D> {
         }
         if let Some(snap) = snap {
             self.restore(&snap);
+            self.unsnap(snap);
         }
+        self.unsnap(start);
         self.counter.bits = base + bits;
         self.plan.truncate(plan_len);
         self.plan.extend(nodes);
@@ -2857,7 +2880,11 @@ impl<D: Decide> Encoder<D> {
         y: i32,
         edge_flags: EdgeFlags,
     ) {
-        self.pal_kept.clear();
+        while let Some(k) = self.pal_kept.pop() {
+            if self.snaps.len() < 64 {
+                self.snaps.push(k.map);
+            }
+        }
         let b_dim = bs.dimensions();
         let (w4, h4) = (b_dim[0] as usize, b_dim[1] as usize);
         self.block_lambda(x, y, w4, h4);
@@ -2961,29 +2988,36 @@ impl<D: Decide> Encoder<D> {
         self.dct_only = true;
         let prune_intra = self.prune_intra;
         let cuts = self.cuts;
-        let mut scored: Vec<(f64, Intra)> = (0..N_INTRA_PRED_MODES as u8)
-            .filter(|&m| !(prune_intra && matches!(m, SMOOTH_V_PRED | SMOOTH_H_PRED)))
-            .filter(|&m| {
-                !cuts.few_modes
-                    || matches!(m, DC_PRED | VERT_PRED | HOR_PRED | SMOOTH_PRED | PAETH_PRED)
-            })
-            .map(|m| {
-                let c = Intra {
-                    y_mode: m,
-                    ..Default::default()
-                };
-                (score(self, &c, rank_rd && pre == 0), c)
-            })
-            .collect();
+        let mut scored = std::mem::take(&mut self.lists.0);
+        scored.clear();
+        scored.extend(
+            (0..N_INTRA_PRED_MODES as u8)
+                .filter(|&m| !(prune_intra && matches!(m, SMOOTH_V_PRED | SMOOTH_H_PRED)))
+                .filter(|&m| {
+                    !cuts.few_modes
+                        || matches!(m, DC_PRED | VERT_PRED | HOR_PRED | SMOOTH_PRED | PAETH_PRED)
+                })
+                .map(|m| {
+                    let c = Intra {
+                        y_mode: m,
+                        ..Default::default()
+                    };
+                    (score(self, &c, rank_rd && pre == 0), c)
+                }),
+        );
         scored.sort_by(|a, b| a.0.total_cmp(&b.0));
         if limits.angles && !cuts.no_y_angles {
-            let dirs: Vec<Intra> = scored
+            let mut dirs = [Intra::default(); 2];
+            let mut n = 0;
+            for s in scored
                 .iter()
                 .filter(|s| (VERT_PRED..=VERT_LEFT_PRED).contains(&s.1.y_mode))
                 .take(2)
-                .map(|s| s.1)
-                .collect();
-            for d in dirs {
+            {
+                dirs[n] = s.1;
+                n += 1;
+            }
+            for &d in &dirs[..n] {
                 for a in [-3, -2, -1, 1, 2, 3] {
                     let c = Intra { y_angle: a, ..d };
                     scored.push((score(self, &c, rank_rd && pre == 0), c));
@@ -3025,7 +3059,8 @@ impl<D: Decide> Encoder<D> {
         }
         self.lap(&mut clock, 0);
         // The kept modes' depth-0 codes are the depth search's where that too is DCT-only.
-        let mut coded: Vec<(Intra, f64, Vec<TxDone>, bool)> = Vec::new();
+        let mut coded = std::mem::take(&mut self.lists.2);
+        coded.clear();
         let one_pass = cuts.one_pass
             && cuts.one_luma
             && keep == 1
@@ -3082,9 +3117,10 @@ impl<D: Decide> Encoder<D> {
                 }
             }
         }
-        for (_, _, txs, _) in coded {
+        for (_, _, txs, _) in coded.drain(..) {
             self.recycle(txs);
         }
+        self.lists.2 = coded;
         self.dct_only = cuts.dct;
         let (_, mut intra, depth) = best_luma;
         let mut chroma_txs = Vec::new();
@@ -3102,6 +3138,7 @@ impl<D: Decide> Encoder<D> {
                 self.recycle(r);
             }
         }
+        self.lists.0 = scored;
         self.lap(&mut clock, 1);
 
         if limits.chroma {
@@ -3138,18 +3175,18 @@ impl<D: Decide> Encoder<D> {
                 (e.rd_cost(dist, bits), txs)
             };
             let mut best = (f64::MAX, intra);
-            let mut modes: Vec<(f64, Intra)> = (0..N_UV_INTRA_PRED_MODES as u8 - 1)
-                .map(|m| {
-                    let mut c = Intra {
-                        uv_mode: m,
-                        uv_angle: 0,
-                        cfl: [0; 2],
-                        ..intra
-                    };
-                    c.pal_sz[1] = 0;
-                    (0.0, c)
-                })
-                .collect();
+            let mut modes = std::mem::take(&mut self.lists.1);
+            modes.clear();
+            modes.extend((0..N_UV_INTRA_PRED_MODES as u8 - 1).map(|m| {
+                let mut c = Intra {
+                    uv_mode: m,
+                    uv_angle: 0,
+                    cfl: [0; 2],
+                    ..intra
+                };
+                c.pal_sz[1] = 0;
+                (0.0, c)
+            }));
             let keep_chroma = self.keep_chroma;
             let fit =
                 (limits.cfl && !cuts.no_cfl && cuts.cfl_fit).then(|| self.cfl_fit(x, y, bs, depth));
@@ -3270,6 +3307,8 @@ impl<D: Decide> Encoder<D> {
                 }
             }
             intra = best.1;
+            self.lists.1 = modes;
+            self.unsnap(luma_done);
         }
 
         self.lap(&mut clock, 2);
@@ -3299,6 +3338,7 @@ impl<D: Decide> Encoder<D> {
             luma_txs.reverse();
             self.replay = Some(luma_txs);
         }
+        self.unsnap(start);
         let txs = self.code_b(ti, bs, x, y, edge_flags);
         self.lap(&mut clock, 4);
         self.stage = 5;

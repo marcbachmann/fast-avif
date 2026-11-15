@@ -56,12 +56,13 @@ pub fn write_colors<S: Sink>(s: &mut S, pal: &[u8], cache: &[u8], pl: bool) {
             used += 1;
         }
     }
-    let new: Vec<u32> = pal
-        .iter()
-        .zip(reused)
-        .filter(|(_, r)| !r)
-        .map(|(&c, _)| c as u32)
-        .collect();
+    let mut new = [0u32; 8];
+    let mut n = 0;
+    for (&c, _) in pal.iter().zip(reused).filter(|(_, r)| !r) {
+        new[n] = c as u32;
+        n += 1;
+    }
+    let new = &new[..n];
     let Some(&first) = new.first() else { return };
     s.bools(first, 8);
     if new.len() == 1 {
@@ -85,19 +86,18 @@ pub fn write_colors<S: Sink>(s: &mut S, pal: &[u8], cache: &[u8], pl: bool) {
 /// The V colours of a chroma palette, in the order of the U colours: raw, or as signed deltas
 /// when that is shorter.
 pub fn write_v<S: Sink>(s: &mut S, v: &[u8]) {
-    let deltas: Vec<i32> = v
-        .windows(2)
-        .map(|w| {
-            let d = w[1] as i32 - w[0] as i32;
-            if d > 128 {
-                d - 256
-            } else if d < -128 {
-                d + 256
-            } else {
-                d
-            }
-        })
-        .collect();
+    let mut deltas = [0i32; 7];
+    let deltas = &mut deltas[..v.len().saturating_sub(1)];
+    for (d, w) in deltas.iter_mut().zip(v.windows(2)) {
+        let e = w[1] as i32 - w[0] as i32;
+        *d = if e > 128 {
+            e - 256
+        } else if e < -128 {
+            e + 256
+        } else {
+            e
+        };
+    }
     let min_bits = 8 - 4;
     let bits = cmp::max(
         bits_for(deltas.iter().map(|d| d.unsigned_abs()).max().unwrap_or(0)),
@@ -113,7 +113,7 @@ pub fn write_v<S: Sink>(s: &mut S, v: &[u8]) {
         s.bool_equi(true);
         s.bools((bits - min_bits) as u32, 2);
         s.bools(v[0] as u32, 8);
-        for &d in &deltas {
+        for &d in deltas.iter() {
             s.bools(d.unsigned_abs(), bits);
             if d != 0 {
                 s.bool_equi(d < 0);
@@ -207,10 +207,16 @@ pub fn candidates_y(px: &[u8]) -> Vec<Vec<u8>> {
     for &p in px {
         hist[p as usize] += 1;
     }
-    let colors: Vec<u8> = (0..=255u8).filter(|&c| hist[c as usize] > 0).collect();
+    let mut all = [0u8; 256];
+    let mut n = 0;
+    for c in (0..=255u8).filter(|&c| hist[c as usize] > 0) {
+        all[n] = c;
+        n += 1;
+    }
+    let colors = &all[..n];
     match colors.len() {
         0 | 1 => vec![],
-        2..=8 => vec![colors],
+        2..=8 => vec![colors.to_vec()],
         9..=64 => [8, 4].iter().map(|&k| kmeans1(&hist, &colors, k)).collect(),
         _ => vec![],
     }
@@ -228,9 +234,15 @@ fn nearest_of(d: impl Iterator<Item = f64>) -> usize {
 }
 
 fn kmeans1(hist: &[u32; 256], colors: &[u8], k: usize) -> Vec<u8> {
-    let mut by_count = colors.to_vec();
+    let mut by_count = [0u8; 64];
+    let by_count = &mut by_count[..colors.len()];
+    by_count.copy_from_slice(colors);
     by_count.sort_by_key(|&c| cmp::Reverse(hist[c as usize]));
-    let mut centres: Vec<f64> = by_count[..k].iter().map(|&c| c as f64).collect();
+    let mut centres = [0f64; 8];
+    let centres = &mut centres[..k];
+    for (m, &c) in centres.iter_mut().zip(&by_count[..k]) {
+        *m = c as f64;
+    }
     for _ in 0..8 {
         let mut sum = [(0f64, 0f64); 8];
         for &c in colors {
@@ -292,12 +304,15 @@ pub fn candidates_uv(u: &[u8], v: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
-    let mut by_count = counts.to_vec();
+    let mut by_count = [((0u8, 0u8), 0u32); 64];
+    let by_count = &mut by_count[..counts.len()];
+    by_count.copy_from_slice(counts);
     by_count.sort_by_key(|c| cmp::Reverse(c.1));
-    let mut centres: Vec<(f64, f64)> = by_count[..k]
-        .iter()
-        .map(|c| (c.0 .0 as f64, c.0 .1 as f64))
-        .collect();
+    let mut centres = [(0f64, 0f64); 8];
+    let centres = &mut centres[..k];
+    for (m, c) in centres.iter_mut().zip(&by_count[..k]) {
+        *m = (c.0 .0 as f64, c.0 .1 as f64);
+    }
     let dist = |a: (f64, f64), b: (u8, u8)| (a.0 - b.0 as f64).powi(2) + (a.1 - b.1 as f64).powi(2);
     for _ in 0..8 {
         let mut sum = [(0f64, 0f64, 0f64); 8];
