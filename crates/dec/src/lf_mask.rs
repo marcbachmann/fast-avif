@@ -62,6 +62,24 @@ pub struct Av1Filter {
     pub noskip_mask: [[RelaxedAtomic<u16>; 2]; 16],
 }
 
+impl Av1Filter {
+    /// [`Default::default`] through a shared reference.
+    pub fn clear(&self) {
+        let rows = self.filter_y.as_flattened().as_flattened().as_flattened();
+        let rows_uv = self.filter_uv.as_flattened().as_flattened().as_flattened();
+        for mask in rows
+            .iter()
+            .chain(rows_uv)
+            .chain(self.noskip_mask.as_flattened())
+        {
+            mask.set(0);
+        }
+        for idx in &self.cdef_idx {
+            idx.set(0);
+        }
+    }
+}
+
 /// each struct describes one 128x128 area (1 or 4 SBs), post-superres-scaling
 #[derive(Default)]
 #[repr(C)]

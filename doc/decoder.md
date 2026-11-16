@@ -74,7 +74,12 @@ decoder returns once every worker has returned.
 This mode only applies to frames decoded on the calling thread alone. A frame with film grain,
 one that copies blocks from rows above (intra block copy) or one that is not output is decoded
 whole. `set_rows_spawner` decodes the tile columns of each row on threads from a `Spawner` as
-well as on the calling thread.
+well as on the calling thread, and hands each row's post-filters (deblocking, CDEF, restoration)
+to one of them while the calling thread decodes the next row. A thread that filtered a row goes
+on with that row's columns. A row filtered on a spawned thread is final a call later, and so is
+an error in the row below it, so that a frame stops at the same row with or without a spawner.
+The loop filter keeps three superblock rows of levels and masks, not the frame's, and CDEF and
+restoration one row of lines: no whole-frame buffers.
 
 ### Picture memory
 

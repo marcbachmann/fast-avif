@@ -385,11 +385,17 @@ pub struct Rav1dState {
     pub(crate) rows_contexts: Arc<Mutex<Vec<Box<Rav1dTaskContext>>>>,
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct FrameRows {
     /// The next superblock row.
     pub sby: i32,
     pub refresh_frame_flags: u32,
+    /// The post-filters of the row above it, on a thread of the rows spawner.
+    pub filtering: Option<Arc<crate::decode::Row>>,
+    /// Which of CDEF's line buffers the next row's post-filters back up into, whichever thread
+    /// runs them.
+    pub cdef_toggle: i32,
+    /// The next row's error, returned once the rows above it are final.
+    pub failed: Option<Rav1dError>,
 }
 
 #[derive(Default)]
@@ -702,10 +708,13 @@ pub struct Rav1dFrameContextLf {
     // in-loop filter per-frame state keeping
     pub start_of_tile_row: Vec<u8>,
     pub restore_planes: LrRestorePlanes,
-    /// `level` and `mask` hold the superblock rows one thread decodes and filters in turn: `level`
-    /// one row and the row above it, `mask` two rows of 128 pixels.
+    /// `level` and `mask` hold the superblock rows decoded by rows, [`LF_RING`] of them: one
+    /// filtered while the next is decoded, and the one above it.
     pub ring: bool,
 }
+
+/// Superblock rows `lf.level` and `lf.mask` hold of a frame decoded by rows.
+pub(crate) const LF_RING: i32 = 3;
 
 #[derive(Default)]
 #[repr(C)]
@@ -841,10 +850,20 @@ impl Rav1dFrameData {
         self.seq_hdr.as_ref().unwrap()
     }
 
-    /// The row of `lf.level` holding 4-pixel row `y4` of a plane.
+    /// The row of `lf.level` holding the luma levels of 4-pixel row `y4`.
     pub fn lf_level_row(&self, y4: i32) -> usize {
         (if self.lf.ring {
-            1 + y4.rem_euclid(self.sb_step)
+            1 + y4.rem_euclid(LF_RING * self.sb_step)
+        } else {
+            y4
+        }) as usize
+    }
+
+    /// The row of `lf.level` holding the chroma levels of 4-pixel chroma row `y4`: in a ring, apart
+    /// from the luma rows, which the rows of other superblock rows would share otherwise.
+    pub fn lf_level_row_uv(&self, y4: i32) -> usize {
+        (if self.lf.ring {
+            2 + LF_RING * self.sb_step + y4.rem_euclid(LF_RING * self.sb_step)
         } else {
             y4
         }) as usize
@@ -853,7 +872,7 @@ impl Rav1dFrameData {
     /// Where the 128-pixel row `sb128y` starts in `lf.mask`.
     pub fn lf_mask_row(&self, sb128y: i32) -> usize {
         (if self.lf.ring {
-            sb128y.rem_euclid(2)
+            sb128y.rem_euclid(LF_RING)
         } else {
             sb128y
         } * self.sb128w) as usize

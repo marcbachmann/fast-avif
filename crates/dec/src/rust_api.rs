@@ -334,16 +334,20 @@ impl Decoder {
     }
 
     /// Decodes the tile columns of each superblock row decoded by rows on the threads `spawner`
-    /// hands out as well as on the calling thread, which [`Decoder::decode_rows`] returns once all
-    /// are decoded; `None` decodes them on the calling thread alone.
+    /// hands out as well as on the calling thread, and filters each row on one of them while the
+    /// calling thread goes on with the next; `None` does both on the calling thread alone. The
+    /// pixels are the same either way.
     pub fn set_rows_spawner(&mut self, spawner: Option<Spawner>) {
         self.ctx.state.try_lock().unwrap().rows_spawner = spawner;
     }
 
     /// Decodes the next superblock row of the frame set up to be decoded by rows: how many rows
     /// from the top of its picture no later row changes or reads, its height once the frame is
-    /// done. [`Rav1dError::TryAgain`] where no frame is being decoded by rows; on an error the frame
-    /// is gone, as where [`Decoder::send_data`] fails to decode it.
+    /// done. With a rows spawner that took a row's filters, its rows are final a call later, and
+    /// an error in the row below them comes a call later too, so that as many rows are final
+    /// before it as without one. [`Rav1dError::TryAgain`] where no frame is being decoded by rows;
+    /// on an error the frame is gone, as where [`Decoder::send_data`] fails to decode it. Dropping
+    /// or flushing the decoder midway waits for a row a spawned thread still filters.
     pub fn decode_rows(&mut self) -> Result<u32, Rav1dError> {
         let state = &mut *self.ctx.state.try_lock().unwrap();
         rav1d_decode_rows(&self.ctx, state).map(|rows| rows as u32)

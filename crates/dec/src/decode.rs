@@ -65,7 +65,7 @@ use crate::internal::{
     Bxy, FrameRows, Rav1dBitDepthDSPContext, Rav1dContext, Rav1dContextTaskType, Rav1dFrameContext,
     Rav1dFrameContextFrameThread, Rav1dFrameContextLf, Rav1dFrameData, Rav1dState,
     Rav1dTaskContext, Rav1dTileState, Rav1dTileStateContext, ScalableMotionParams, ScratchPal,
-    TileStateRef,
+    TileStateRef, LF_RING,
 };
 use crate::lf_mask::{
     rav1d_calc_eih, rav1d_calc_lf_values, rav1d_create_lf_mask_inter, rav1d_create_lf_mask_intra,
@@ -1848,7 +1848,7 @@ fn decode_b(
                 TileStateRef::Local => &*ts.lflvlmem.try_read().unwrap(),
             };
             let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as i32;
-            let level_rows = [f.lf_level_row(t.b.y), f.lf_level_row(t.b.y >> ss_ver)];
+            let level_rows = [f.lf_level_row(t.b.y), f.lf_level_row_uv(t.b.y >> ss_ver)];
             let mut a_uv_guard;
             let mut l_uv_guard;
             rav1d_create_lf_mask_intra(
@@ -2993,7 +2993,7 @@ fn decode_b(
                 TileStateRef::Local => &*ts.lflvlmem.try_read().unwrap(),
             };
             let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as i32;
-            let level_rows = [f.lf_level_row(t.b.y), f.lf_level_row(t.b.y >> ss_ver)];
+            let level_rows = [f.lf_level_row(t.b.y), f.lf_level_row_uv(t.b.y >> ss_ver)];
             let mut a_uv_guard;
             let mut l_uv_guard;
             rav1d_create_lf_mask_inter(
@@ -4452,7 +4452,7 @@ pub(crate) fn rav1d_decode_frame_init(c: &Rav1dContext, fc: &Rav1dFrameContext) 
 
     f.lf.ring = c.tc.len() == 1 && !c.keep_filter_data.load(Ordering::Relaxed);
     let (mask_rows, level_rows) = if f.lf.ring {
-        (2, 1 + f.sb_step)
+        (LF_RING, 2 * (1 + LF_RING * f.sb_step))
     } else {
         (f.sb128h, f.sb128h * 32)
     };
@@ -4726,10 +4726,26 @@ fn sbrow_tile_row(f: &Rav1dFrameData, sby: i32) -> Option<usize> {
 fn decode_sbrow(
     c: &Rav1dContext,
     t: &mut Rav1dTaskContext,
-    f: &mut Rav1dFrameData,
+    f: &Rav1dFrameData,
     tile_row: usize,
     sby: i32,
     columns: Option<Columns>,
+) -> Rav1dResult {
+    decode_sbrow_tiles(c, t, f, tile_row, sby, columns, None)?;
+    (f.bd_fn().filter_sbrow)(c, f, t, sby);
+    Ok(())
+}
+
+/// Decodes superblock row `sby` of every tile column, where `filtering` filters the row above it
+/// meanwhile: a thread that took that row decodes columns once it is done.
+fn decode_sbrow_tiles(
+    c: &Rav1dContext,
+    t: &mut Rav1dTaskContext,
+    f: &Rav1dFrameData,
+    tile_row: usize,
+    sby: i32,
+    columns: Option<Columns>,
+    filtering: Option<&Arc<Row>>,
 ) -> Rav1dResult {
     let seq_hdr = &**f.seq_hdr.as_ref().unwrap();
     let frame_hdr = &**f.frame_hdr.as_ref().unwrap();
@@ -4752,7 +4768,7 @@ fn decode_sbrow(
     }
     match columns.filter(|_| cols > 1) {
         Some(columns) => {
-            decode_columns(c, t, f, tile_row * cols, cols, columns)?;
+            decode_columns(c, t, f, tile_row * cols, cols, columns, filtering)?;
             // The calling thread may have decoded none of the row's columns.
             if f.frame_hdr().frame_type.is_inter_or_switch() {
                 let ts = &f.ts[tile_row * cols];
@@ -4781,49 +4797,113 @@ fn decode_sbrow(
             .save_tmvs
             .call(&t.rt, &f.rf, &f.mvs, 0, f.bw >> 1, t.b.y >> 1, by_end);
     }
-
-    (f.bd_fn().filter_sbrow)(c, f, t, sby);
     Ok(())
 }
 
 /// The spawner of a context decoding by rows and the task contexts its threads decode with.
 type Columns<'a> = (&'a Spawner, &'a Arc<Mutex<Vec<Box<Rav1dTaskContext>>>>);
 
-/// One superblock row's tile columns, which the calling thread and those it spawns take in turn.
-struct Row {
-    c: *const Rav1dContext,
-    f: *const Rav1dFrameData,
-    y: i32,
-    first: usize,
-    cols: usize,
-    next: AtomicUsize,
-    /// Columns decoded, and whether one failed.
-    done: Mutex<(usize, bool)>,
-    finished: Condvar,
+enum Units {
+    /// One superblock row's tile columns, from tile `first`.
+    Columns {
+        f: *const Rav1dFrameData,
+        y: i32,
+        first: usize,
+    },
+    /// The post-filters of superblock row `sby`, under a lock of the frame of their own: the
+    /// calling thread holds none between rows. CDEF's line buffer toggle goes in and out with them.
+    Filter { sby: i32, toggle: AtomicI32 },
 }
 
-// SAFETY: `c` and `f` are only read through while a column is left, and the thread that made the row
-// waits for every column before it lets go of either.
+/// Work of a frame decoded by rows, which the calling thread and those it spawns take in turn.
+pub(crate) struct Row {
+    c: *const Rav1dContext,
+    units: Units,
+    len: usize,
+    next: AtomicUsize,
+    /// Units done, and whether one failed.
+    done: Mutex<(usize, bool)>,
+    finished: Condvar,
+    /// Columns a thread that took a filter goes on with.
+    then: Mutex<Option<Arc<Row>>>,
+}
+
+// SAFETY: `c` and `f` are only read through while a unit is left, and the thread that made the row
+// waits for every unit before it lets go of either.
 unsafe impl Send for Row {}
 unsafe impl Sync for Row {}
 
 impl Row {
+    fn new(c: &Rav1dContext, units: Units, len: usize) -> Arc<Self> {
+        Arc::new(Row {
+            c,
+            units,
+            len,
+            next: AtomicUsize::new(0),
+            done: Mutex::new((0, false)),
+            finished: Condvar::new(),
+            then: Mutex::new(None),
+        })
+    }
+
     fn work(&self, t: &mut Rav1dTaskContext) {
         loop {
-            let col = self.next.fetch_add(1, Ordering::AcqRel);
-            if col >= self.cols {
+            let unit = self.next.fetch_add(1, Ordering::AcqRel);
+            if unit >= self.len {
                 return;
             }
             let mut decoded = Decoded(self, false);
-            t.b.y = self.y;
-            t.ts = self.first + col;
             // SAFETY: as the type's.
-            decoded.1 = unsafe { rav1d_decode_tile_sbrow(&*self.c, t, &*self.f) }.is_ok();
+            let c = unsafe { &*self.c };
+            decoded.1 = match self.units {
+                Units::Columns { f, y, first } => {
+                    t.b.y = y;
+                    t.ts = first + unit;
+                    // SAFETY: as the type's.
+                    unsafe { rav1d_decode_tile_sbrow(c, t, &*f) }.is_ok()
+                }
+                Units::Filter { sby, ref toggle } => {
+                    let f = c.fc[0].data.try_read().unwrap();
+                    t.top_pre_cdef_toggle = toggle.load(Ordering::Relaxed);
+                    (f.bd_fn().filter_sbrow)(c, &f, t, sby);
+                    toggle.store(t.top_pre_cdef_toggle, Ordering::Relaxed);
+                    true
+                }
+            };
         }
+    }
+
+    /// Offers the row's units to up to `threads` threads of the spawner: whether one took any.
+    fn offer(self: &Arc<Self>, (spawner, contexts): Columns, threads: usize) -> bool {
+        let mut taken = false;
+        for _ in 0..threads {
+            let (theirs, contexts) = (Arc::clone(self), Arc::clone(contexts));
+            // SAFETY: as the type's.
+            let thread_data = Arc::clone(&unsafe { &*self.c }.tc[0].thread_data);
+            if !spawner(Box::new(move || {
+                if theirs.next.load(Ordering::Acquire) >= theirs.len {
+                    return;
+                }
+                let mut t = contexts
+                    .lock()
+                    .pop()
+                    .unwrap_or_else(|| Box::new(Rav1dTaskContext::new(thread_data)));
+                theirs.work(&mut t);
+                let then = theirs.then.lock().clone();
+                if let Some(then) = then {
+                    then.work(&mut t);
+                }
+                contexts.lock().push(t);
+            })) {
+                break;
+            }
+            taken = true;
+        }
+        taken
     }
 }
 
-/// Counts a column as decoded, as failed where it unwinds.
+/// Counts a unit as done, as failed where it unwinds.
 struct Decoded<'a>(&'a Row, bool);
 
 impl Drop for Decoded<'_> {
@@ -4831,51 +4911,30 @@ impl Drop for Decoded<'_> {
         let mut done = self.0.done.lock();
         done.0 += 1;
         done.1 |= !self.1;
-        if done.0 == self.0.cols {
+        if done.0 == self.0.len {
             self.0.finished.notify_all();
         }
     }
 }
 
 /// Decodes `cols` tile columns from tile `first` of one superblock row on the calling thread and
-/// on the threads the spawner takes.
+/// on the threads the spawner takes, and on the thread of `filtering` once it is done.
 fn decode_columns(
     c: &Rav1dContext,
     t: &mut Rav1dTaskContext,
     f: &Rav1dFrameData,
     first: usize,
     cols: usize,
-    (spawner, contexts): Columns,
+    columns: Columns,
+    filtering: Option<&Arc<Row>>,
 ) -> Rav1dResult {
-    let row = Arc::new(Row {
-        c,
-        f,
-        y: t.b.y,
-        first,
-        cols,
-        next: AtomicUsize::new(0),
-        done: Mutex::new((0, false)),
-        finished: Condvar::new(),
-    });
+    let row = Row::new(c, Units::Columns { f, y: t.b.y, first }, cols);
     // Before the first column is handed out: a spawner that unwinds after taking one waits for it.
     let waiting = Waiting(&row);
-    for _ in 1..cols {
-        let (theirs, contexts) = (Arc::clone(&row), Arc::clone(contexts));
-        let thread_data = Arc::clone(&c.tc[0].thread_data);
-        if !spawner(Box::new(move || {
-            if theirs.next.load(Ordering::Acquire) >= theirs.cols {
-                return;
-            }
-            let mut t = contexts
-                .lock()
-                .pop()
-                .unwrap_or_else(|| Box::new(Rav1dTaskContext::new(thread_data)));
-            theirs.work(&mut t);
-            contexts.lock().push(t);
-        })) {
-            break;
-        }
+    if let Some(filtering) = filtering {
+        *filtering.then.lock() = Some(Arc::clone(&row));
     }
+    row.offer(columns, cols - 1);
     row.work(t);
     drop(waiting);
     let failed = row.done.lock().1;
@@ -4885,37 +4944,47 @@ fn decode_columns(
     }
 }
 
-/// Waits for every column of the row, also as the calling thread unwinds, before the frame can go.
+/// Waits for every unit of the row, also as the calling thread unwinds, before the frame can go.
 struct Waiting<'a>(&'a Row);
 
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         let row = self.0;
-        // Columns nobody took yet are taken here, so that none is left waited for.
+        // Units nobody took yet are taken here, so that none is left waited for.
         let left = row
-            .cols
-            .saturating_sub(row.next.swap(row.cols, Ordering::AcqRel));
+            .len
+            .saturating_sub(row.next.swap(row.len, Ordering::AcqRel));
         let mut done = row.done.lock();
         done.0 += left;
-        while done.0 < row.cols {
+        while done.0 < row.len {
             row.finished.wait(&mut done);
         }
     }
 }
 
-/// Readies the loop filter's rings for superblock row `sby`: the level row above it moves to the
-/// ring's first row, and a new row of 128 pixels starts with empty masks.
-fn reuse_lf_rows(f: &mut Rav1dFrameData, sby: i32) {
+/// Readies the loop filter's rings for superblock row `sby`, while the row above it may still be
+/// filtered: where its levels wrap, the level row above them moves to the ring's first row, and a
+/// new row of 128 pixels starts with empty masks.
+fn reuse_lf_rows(f: &Rav1dFrameData, sby: i32) {
     let row = 4 * f.b4_stride as usize;
-    let last = f.sb_step as usize * row;
-    f.lf.level
-        .index_mut(..last + row)
-        .copy_within(last..last + row, 0);
+    let ring = LF_RING * f.sb_step;
+    let ss_ver = (f.cur.p.layout == Rav1dPixelLayout::I420) as i32;
+    let y4 = sby * f.sb_step;
+    for (y4, first) in [(y4, 0), (y4 >> ss_ver, f.lf_level_row_uv(0) - 1)] {
+        if y4 % ring == 0 {
+            let last = (first + ring as usize) * row;
+            let above = f.lf.level.index(last..last + row);
+            f.lf.level
+                .index_mut(first * row..(first + 1) * row)
+                .copy_from_slice(&above);
+        }
+    }
     let sb128 = f.seq_hdr().sb128;
     if sby & (sb128 == 0) as i32 == 0 {
         let at = f.lf_mask_row(sby >> (sb128 == 0) as i32);
-        let sb128w = f.sb128w as usize;
-        f.lf.mask[at..at + sb128w].fill_with(Default::default);
+        for mask in &f.lf.mask[at..at + f.sb128w as usize] {
+            mask.clear();
+        }
     }
 }
 
@@ -4926,7 +4995,7 @@ fn final_rows(f: &Rav1dFrameData, sby: i32) -> i32 {
     if sby + 1 >= f.sbh {
         return h;
     }
-    cmp::min(h, (sby + 1) * f.sb_step * 4 - 8)
+    cmp::max(0, cmp::min(h, (sby + 1) * f.sb_step * 4 - 8))
 }
 
 /// Sets up a frame to be decoded a superblock row at a time by [`rav1d_decode_frame_rows`],
@@ -4947,23 +5016,77 @@ pub(crate) fn rav1d_decode_frame_begin(c: &Rav1dContext, fc: &Rav1dFrameContext)
     Ok(())
 }
 
-/// Decodes superblock row `sby` of the frame [`rav1d_decode_frame_begin`] set up, and after its last
-/// one finishes the frame. Returns how many rows from the top are final, and whether it finished.
+/// Decodes the next superblock row of the frame [`rav1d_decode_frame_begin`] set up, and after its
+/// last one finishes the frame. Returns how many rows from the top are final, and whether it
+/// finished. With a spawner, the row's post-filters run on a thread it takes while the calling
+/// thread goes on, and the row's are final after the next call; an error in the next row then
+/// comes a call later, once the rows above it are final.
 pub(crate) fn rav1d_decode_frame_rows(
     c: &Rav1dContext,
     fc: &Rav1dFrameContext,
-    sby: i32,
+    rows: &mut FrameRows,
     columns: Option<Columns>,
 ) -> Result<(i32, bool), Rav1dError> {
     let Rav1dContextTaskType::Single(t) = &c.tc[0].task else {
         panic!("Expected a single-threaded context");
     };
+    let sby = rows.sby;
+    rows.sby += 1;
     let res = {
-        let mut f = fc.data.try_write().unwrap();
+        let f = fc.data.try_read().unwrap();
         let mut t = t.lock();
         match sbrow_tile_row(&f, sby) {
-            Some(tile_row) => decode_sbrow(c, &mut t, &mut f, tile_row, sby, columns)
-                .map(|()| (final_rows(&f, sby), sbrow_tile_row(&f, sby + 1).is_none())),
+            Some(tile_row) => {
+                let decoded = decode_sbrow_tiles(
+                    c,
+                    &mut t,
+                    &f,
+                    tile_row,
+                    sby,
+                    columns,
+                    rows.filtering.as_ref(),
+                );
+                let filtered = rows.filtering.take().map(|filtering| {
+                    let waiting = Waiting(&filtering);
+                    filtering.work(&mut t);
+                    drop(waiting);
+                    if let Units::Filter { ref toggle, .. } = filtering.units {
+                        rows.cdef_toggle = toggle.load(Ordering::Relaxed);
+                    }
+                    final_rows(&f, sby - 1)
+                });
+                match (decoded, filtered) {
+                    (Err(e), Some(rows_above)) => {
+                        rows.failed = Some(e);
+                        Ok((rows_above, false))
+                    }
+                    (Err(e), None) => Err(e),
+                    (Ok(()), _) => {
+                        let last = sbrow_tile_row(&f, sby + 1).is_none();
+                        let filtering = columns.filter(|_| !last).and_then(|columns| {
+                            let toggle = AtomicI32::new(rows.cdef_toggle);
+                            let row = Row::new(c, Units::Filter { sby, toggle }, 1);
+                            // A spawner that unwinds after it took the row waits for it.
+                            let waiting = Waiting(&row);
+                            let taken = row.offer(columns, 1);
+                            mem::forget(waiting);
+                            taken.then_some(row)
+                        });
+                        match filtering {
+                            Some(filtering) => {
+                                rows.filtering = Some(filtering);
+                                Ok((final_rows(&f, sby - 1), false))
+                            }
+                            None => {
+                                t.top_pre_cdef_toggle = rows.cdef_toggle;
+                                (f.bd_fn().filter_sbrow)(c, &f, &mut t, sby);
+                                rows.cdef_toggle = t.top_pre_cdef_toggle;
+                                Ok((final_rows(&f, sby), last))
+                            }
+                        }
+                    }
+                }
+            }
             None => Ok((f.sr_cur.p.p.h, true)),
         }
     };
@@ -4971,6 +5094,14 @@ pub(crate) fn rav1d_decode_frame_rows(
         Ok((rows, false)) => Ok((rows, false)),
         Ok((rows, true)) => finish_frame_rows(c, fc).map(|()| (rows, true)),
         Err(e) => rav1d_decode_frame_exit(c, fc, Err(e)).map(|()| (0, true)),
+    }
+}
+
+/// Waits for the post-filters of a row a thread of the spawner took, without running them where
+/// none did.
+fn settle_rows(rows: &mut FrameRows) {
+    if let Some(filtering) = rows.filtering.take() {
+        drop(Waiting(&filtering));
     }
 }
 
@@ -5007,15 +5138,16 @@ pub(crate) fn rav1d_filter_trials(
     measure: &mut Measure,
     search: &mut dyn FnMut(&mut Trial),
 ) -> Rav1dResult {
-    let Some(rows) = state.rows.take() else {
+    let Some(mut rows) = state.rows.take() else {
         return Err(Rav1dError::TryAgain);
     };
+    settle_rows(&mut rows);
     let fc = &c.fc[0];
     let Rav1dContextTaskType::Single(t) = &c.tc[0].task else {
         panic!("Expected a single-threaded context");
     };
     let decoded = {
-        let mut f = fc.data.try_write().unwrap();
+        let f = fc.data.try_write().unwrap();
         let mut t = t.lock();
         let usable = !f.lf.ring
             && f.bitdepth_max == 0xff
@@ -5036,7 +5168,7 @@ pub(crate) fn rav1d_filter_trials(
             let Some(tile_row) = sbrow_tile_row(&f, sby) else {
                 break;
             };
-            res = decode_sbrow(c, &mut t, &mut f, tile_row, sby, None);
+            res = decode_sbrow(c, &mut t, &f, tile_row, sby, None);
             sby += 1;
         }
         res
@@ -5294,17 +5426,19 @@ pub(crate) fn rav1d_decode_rows(
     let Some(rows) = state.rows.as_mut() else {
         return Err(Rav1dError::TryAgain);
     };
-    let FrameRows {
-        sby,
-        refresh_frame_flags,
-    } = *rows;
-    rows.sby += 1;
+    let refresh_frame_flags = rows.refresh_frame_flags;
     let fc = &c.fc[0];
-    let columns = state
-        .rows_spawner
-        .as_ref()
-        .map(|s| (s, &state.rows_contexts));
-    match rav1d_decode_frame_rows(c, fc, sby, columns) {
+    let res = match rows.failed.take() {
+        Some(e) => rav1d_decode_frame_exit(c, fc, Err(e)).map(|()| (0, true)),
+        None => {
+            let columns = state
+                .rows_spawner
+                .as_ref()
+                .map(|s| (s, &state.rows_contexts));
+            rav1d_decode_frame_rows(c, fc, rows, columns)
+        }
+    };
+    match res {
         Ok((n, done)) => {
             if done {
                 state.rows = None;
@@ -5322,7 +5456,8 @@ pub(crate) fn rav1d_decode_rows(
 
 /// Lets go of a frame left part decoded by rows.
 pub(crate) fn rav1d_abandon_rows(c: &Rav1dContext, state: &mut Rav1dState) {
-    if let Some(rows) = state.rows.take() {
+    if let Some(mut rows) = state.rows.take() {
+        settle_rows(&mut rows);
         let fc = &c.fc[0];
         let _ = rav1d_decode_frame_exit(c, fc, Err(Rav1dError::Other));
         drop_failed_frame(state, fc, rows.refresh_frame_flags);
@@ -5712,6 +5847,9 @@ pub fn rav1d_submit_frame(c: &Rav1dContext, state: &mut Rav1dState) -> Rav1dResu
             state.rows = Some(FrameRows {
                 sby: 0,
                 refresh_frame_flags,
+                filtering: None,
+                cdef_toggle: 0,
+                failed: None,
             });
         }
     } else {
