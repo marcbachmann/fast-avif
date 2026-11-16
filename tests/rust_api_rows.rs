@@ -5,6 +5,8 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use fast_avif::{
     parse_sequence_header, Decoder, Picture, PictureAllocator, PictureBuffer, PictureParameters,
@@ -681,6 +683,19 @@ fn decodes_with_workers_on_spawned_threads_as_on_its_own() {
 /// No later row of a frame reads a row once it is final: overwritten then, the picture is the same.
 #[test]
 fn reads_no_row_once_final() {
+    reads_no_row_once_final_with(Open::new(false, true));
+}
+
+/// Nor while threads of the rows spawner filter the rows below it.
+#[test]
+fn reads_no_row_once_final_while_spawned_threads_filter() {
+    reads_no_row_once_final_with(Open {
+        rows_spawner: Some(threads(None)),
+        ..Open::new(false, true)
+    });
+}
+
+fn reads_no_row_once_final_with(rows: Open) {
     let filter = filter();
     let (mut firsts, mut by_rows, mut differ) = (0, 0, Vec::new());
     for file in streams()
@@ -688,7 +703,7 @@ fn reads_no_row_once_final() {
         .filter(|f| f.to_string_lossy().contains(&filter))
     {
         let whole = decode(file, &Open::new(false, false), false);
-        let poisoned = decode(file, &Open::new(false, true), true);
+        let poisoned = decode(file, &rows, true);
         let Some(first) = whole.out.first() else {
             continue;
         };
@@ -707,6 +722,155 @@ fn reads_no_row_once_final() {
     );
     assert!(differ.is_empty(), "{differ:#?}");
     assert!(by_rows * 10 > firsts * 8, "{by_rows} of {firsts} by rows");
+}
+
+type Joined = Arc<std::sync::Mutex<Vec<JoinHandle<()>>>>;
+
+/// A spawner that runs all it is offered, each on a thread of its own, `delay` later; the threads
+/// are kept in `joined` where given.
+fn threads(joined: Option<(Joined, Duration)>) -> Spawner {
+    Arc::new(move |work| {
+        let delay = joined.as_ref().map_or(Duration::ZERO, |j| j.1);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            work();
+        });
+        if let Some((threads, _)) = &joined {
+            threads.lock().unwrap().push(thread);
+        }
+        true
+    })
+}
+
+/// The first frame of `data` decoded by rows to its end or its error: how many rows were final, a
+/// digest of them, and the error.
+fn first_rows(data: &[u8], open: &Open) -> (usize, u64, Option<Rav1dError>) {
+    let Some(frame) = ivf_frames(data).first().copied() else {
+        return (0, 0, None);
+    };
+    let mut decoder = open.decoder();
+    match decoder.send_data(frame.into(), None, None, None) {
+        Ok(()) | Err(Rav1dError::TryAgain) => {}
+        Err(e) => return (0, 0, Some(e)),
+    }
+    let Ok(picture) = decoder.rows_picture() else {
+        return (0, 0, None);
+    };
+    let height = picture.height() as usize;
+    let mut rows = Rows {
+        picture,
+        copied: vec![Vec::new(); 3],
+        done: 0,
+    };
+    loop {
+        match decoder.decode_rows() {
+            Ok(n) => {
+                rows.copy_to(n as usize);
+                if n as usize == height {
+                    return (rows.done, rows.digest(), None);
+                }
+            }
+            Err(e) => return (rows.done, rows.digest(), Some(e)),
+        }
+    }
+}
+
+/// Damaged tiles stop a frame where it stops on the calling thread alone, with as many rows final
+/// above them, while threads of the rows spawner filter the rows below those.
+#[test]
+fn stops_above_damage_as_on_the_calling_thread_alone() {
+    let filter = filter();
+    let (mut failed, mut differ) = (0, Vec::new());
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
+        let data = damaged(&std::fs::read(file).unwrap());
+        let alone = first_rows(&data, &Open::new(false, true));
+        let spawned = Open {
+            rows_spawner: Some(threads(None)),
+            ..Open::new(false, true)
+        };
+        if first_rows(&data, &spawned) != alone {
+            differ.push(file.display().to_string());
+        }
+        failed += (alone.0 > 0 && alone.2.is_some()) as usize;
+    }
+    eprintln!(
+        "{failed} frames failed below final rows, {} differ",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "{differ:#?}");
+    assert!(
+        !filter.is_empty() || failed > 0,
+        "no frame failed below a final row"
+    );
+}
+
+/// Rows taken before a frame is done, while a thread of the rows spawner filters those below them,
+/// are the picture's decoded whole, and the decoder goes with a row still in that thread's hands.
+#[test]
+fn stops_after_the_rows_it_needs_while_a_spawned_thread_filters() {
+    let filter = filter();
+    let joined = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let spawner = threads(Some((Arc::clone(&joined), Duration::from_millis(5))));
+    let mut stopped = 0;
+    for file in streams()
+        .iter()
+        .filter(|f| f.to_string_lossy().contains(&filter))
+    {
+        let data = std::fs::read(file).unwrap();
+        let Some(frame) = ivf_frames(&data).first().copied() else {
+            continue;
+        };
+        let mut whole = Open::new(false, false).decoder();
+        let Ok(whole) = whole
+            .send_data(frame.into(), None, None, None)
+            .and_then(|()| whole.get_picture())
+        else {
+            continue;
+        };
+        let mut decoder = Open {
+            rows_spawner: Some(spawner.clone()),
+            ..Open::new(false, true)
+        }
+        .decoder();
+        if decoder.send_data(frame.into(), None, None, None).is_err() {
+            continue;
+        }
+        let Ok(picture) = decoder.rows_picture() else {
+            continue;
+        };
+        let mut n = 0;
+        while n == 0 {
+            match decoder.decode_rows() {
+                Ok(rows) => n = rows as usize,
+                Err(_) => break,
+            }
+        }
+        if n == 0 || n == picture.height() as usize {
+            continue;
+        }
+        for i in 0..3 {
+            if let (Some(rows), Some(all)) = (plane(&picture, i), plane(&whole, i)) {
+                let s = shift(&picture, i);
+                for y in 0..(n + s as usize) >> s {
+                    assert!(
+                        row(rows, y) == row(all, y),
+                        "{} plane {i} row {y} of {n}",
+                        file.display()
+                    );
+                }
+            }
+        }
+        drop(decoder);
+        for thread in joined.lock().unwrap().drain(..) {
+            assert!(thread.join().is_ok(), "{}", file.display());
+        }
+        stopped += 1;
+    }
+    eprintln!("{stopped} frames stopped");
+    assert!(stopped > 0, "no frame stopped before its end");
 }
 
 #[test]
