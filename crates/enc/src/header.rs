@@ -216,11 +216,12 @@ fn tile_log2(sz: u32, tgt: u32) -> u8 {
 impl Tiling {
     /// The fewest uniform tiles the level limits allow.
     pub fn new(width: u32, height: u32) -> Self {
-        Self::with_cols(width, height, 0)
+        Self::with_tiles(width, height, 0, 0)
     }
 
-    /// Uniform tiles with at least 2^`log2_cols` columns where the picture is that wide.
-    pub fn with_cols(width: u32, height: u32, log2_cols: u8) -> Self {
+    /// Uniform tiles with at least 2^`log2_cols` columns and 2^`log2_rows` rows where the
+    /// picture is that wide and tall.
+    pub fn with_tiles(width: u32, height: u32, log2_cols: u8, log2_rows: u8) -> Self {
         let sbw = width.div_ceil(64);
         let sbh = height.div_ceil(64);
         let min_log2_cols = tile_log2(64, sbw);
@@ -229,7 +230,7 @@ impl Tiling {
         let min_log2_tiles = tile_log2((4096 * 2304) >> 12, sbw * sbh).max(min_log2_cols);
         let log2_cols = log2_cols.clamp(min_log2_cols, max_log2_cols);
         let min_log2_rows = min_log2_tiles.saturating_sub(log2_cols);
-        let log2_rows = min_log2_rows;
+        let log2_rows = log2_rows.clamp(min_log2_rows, max_log2_rows.max(min_log2_rows));
         Self {
             log2_cols,
             log2_rows,

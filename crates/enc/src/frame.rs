@@ -421,6 +421,8 @@ pub struct Coded {
 }
 
 struct Tile {
+    /// In raster order over the frame's tiles.
+    index: usize,
     w: Writer,
     cdf: CdfContext,
     col_start: i32,
@@ -513,8 +515,9 @@ pub struct Encoder<D: Decide> {
     rows: usize,
     sby: usize,
     tiles: Vec<Tile>,
-    /// The tile columns this encoder codes, a bit each; the others' tiles stay empty for `merge`.
-    pub own: u64,
+    /// The one tile this encoder codes, by raster index, or every tile; the others stay empty for
+    /// `merge`.
+    pub own: Option<usize>,
     coded: Vec<Vec<u8>>,
     /// The superblock's qidx and its delta from the tile's last one, until coded.
     sb_qidx: u8,
@@ -674,7 +677,7 @@ pub fn ssim_reference(width: usize, height: usize, luma: &[u8]) -> f64 {
 impl<D: Decide> Encoder<D> {
     pub fn new(seq: Sequence, frame: Frame, decide: D) -> Self {
         let planes = if seq.mono { 1 } else { 3 };
-        let cols = frame.tiling.cols() as usize;
+        let tiles = (frame.tiling.cols() * frame.tiling.rows()) as usize;
         let bw = ((seq.width as i32 + 7) >> 3) << 1;
         let bh = ((seq.height as i32 + 7) >> 3) << 1;
         let stride = (bw as usize * 4).next_multiple_of(SB) + SB;
@@ -722,7 +725,7 @@ impl<D: Decide> Encoder<D> {
             rows: 0,
             sby: 0,
             tiles: Vec::new(),
-            own: u64::MAX,
+            own: None,
             coded: Vec::new(),
             sb_qidx: q.base,
             sb_delta: None,
@@ -759,8 +762,8 @@ impl<D: Decide> Encoder<D> {
             rect_ratio: 0.0,
             rect_adaptive: false,
             split8_adaptive: false,
-            split_seen: vec![[(0, 0, 0.0, 0.0, 0); 4]; cols],
-            rect_seen: vec![[[(0, 0, 0.0, 0.0, 0); 4]; 5]; cols],
+            split_seen: vec![[(0, 0, 0.0, 0.0, 0); 4]; tiles],
+            rect_seen: vec![[[(0, 0, 0.0, 0.0, 0); 4]; 5]; tiles],
             fast_cdef: false,
             graphic_guard: false,
             ssim: [1.0; 16],
@@ -979,6 +982,7 @@ impl<D: Decide> Encoder<D> {
                 let col_start = (col * t.tile_w * 16) as i32;
                 let col_end = cmp::min(((col + 1) * t.tile_w * 16) as i32, self.bw);
                 self.tiles.push(Tile {
+                    index: self.coded.len() + col as usize,
                     w: Writer::default(),
                     cdf: rav1d_cdf_thread_copy(&rav1d_cdf_thread_init_static(base)),
                     col_start,
@@ -992,7 +996,7 @@ impl<D: Decide> Encoder<D> {
         }
         let y = (sby * 16) as i32;
         for ti in 0..self.tiles.len() {
-            if self.own >> ti & 1 == 0 {
+            if !self.owns(self.tiles[ti].index) {
                 continue;
             }
             self.left.reset();
@@ -1060,8 +1064,8 @@ impl<D: Decide> Encoder<D> {
     }
 
     fn finish_tiles(&mut self) {
-        for (ti, tile) in self.tiles.drain(..).enumerate() {
-            self.coded.push(if self.own >> ti & 1 != 0 {
+        for tile in std::mem::take(&mut self.tiles) {
+            self.coded.push(if self.owns(tile.index) {
                 tile.w.finish()
             } else {
                 Vec::new()
@@ -1069,11 +1073,16 @@ impl<D: Decide> Encoder<D> {
         }
     }
 
-    /// Takes the tiles, estimates and reconstruction of the tile columns `other` coded.
+    fn owns(&self, tile: usize) -> bool {
+        self.own.is_none_or(|own| own == tile)
+    }
+
+    /// Takes the tiles, estimates and reconstruction of the tiles `other` coded.
     pub fn merge(&mut self, other: Encoder<D>) {
         let t = self.frame.tiling;
+        let owned: Vec<usize> = (0..other.coded.len()).filter(|&i| other.owns(i)).collect();
         for (i, data) in other.coded.into_iter().enumerate() {
-            if other.own >> (i as u32 % t.cols()) & 1 != 0 {
+            if owned.contains(&i) {
                 self.coded[i] = data;
             }
         }
@@ -1090,12 +1099,15 @@ impl<D: Decide> Encoder<D> {
             *a += b;
         }
         if let (Some(mine), Some(theirs)) = (&mut self.recon, other.recon) {
-            let w = self.seq.width as usize;
+            let (w, h) = (self.seq.width as usize, self.seq.height as usize);
             let px = |c: u32| cmp::min(w, (c * t.tile_w * 64) as usize);
-            for c in (0..t.cols()).filter(|c| other.own >> c & 1 != 0) {
+            let py = |r: u32| cmp::min(h, (r * t.tile_h * 64) as usize);
+            for &i in &owned {
+                let (r, c) = (i as u32 / t.cols(), i as u32 % t.cols());
                 for (a, b) in mine.iter_mut().zip(&theirs) {
-                    for (ra, rb) in a.chunks_exact_mut(w).zip(b.chunks_exact(w)) {
-                        ra[px(c)..px(c + 1)].copy_from_slice(&rb[px(c)..px(c + 1)]);
+                    for y in py(r)..py(r + 1) {
+                        a[y * w + px(c)..y * w + px(c + 1)]
+                            .copy_from_slice(&b[y * w + px(c)..y * w + px(c + 1)]);
                     }
                 }
             }
@@ -2683,7 +2695,7 @@ impl<D: Decide> Encoder<D> {
                 0
             };
         let prune8 = split8 && {
-            let seen = &mut self.split_seen[ti][bucket];
+            let seen = &mut self.split_seen[self.tiles[ti].index][bucket];
             seen.0 += 1;
             let (met, tried, gained, total, big) = *seen;
             tried >= 32 && gained <= total * 0.05 && big * 4 <= tried && met % 16 != 0
@@ -2742,7 +2754,7 @@ impl<D: Decide> Encoder<D> {
                     if !adaptive {
                         continue;
                     }
-                    let seen = &mut self.rect_seen[ti][level as usize][bucket];
+                    let seen = &mut self.rect_seen[self.tiles[ti].index][level as usize][bucket];
                     if !rect_under {
                         seen.0 += 1;
                     }
@@ -2825,7 +2837,7 @@ impl<D: Decide> Encoder<D> {
         }
         let (cost, bits, snap, nodes) = best.unwrap();
         if split8 && !prune8 && none_cost.is_finite() {
-            let seen = &mut self.split_seen[ti][bucket];
+            let seen = &mut self.split_seen[self.tiles[ti].index][bucket];
             seen.1 += 1;
             seen.3 += cost;
             if !matches!(nodes[0], Node::Part(None)) {
@@ -2840,7 +2852,7 @@ impl<D: Decide> Encoder<D> {
             }
         }
         if rect_under {
-            let seen = &mut self.rect_seen[ti][level as usize][bucket];
+            let seen = &mut self.rect_seen[self.tiles[ti].index][level as usize][bucket];
             seen.3 += cost;
             if matches!(nodes[0], Node::Part(H | V)) {
                 let gain = none_cost.min(split_cost) - cost;
@@ -4826,15 +4838,22 @@ pub(crate) mod tests {
     /// Two tile columns at effort 4 with tune IQ decode as the encoder reconstructed them.
     #[test]
     fn tiles_decode_as_reconstructed() {
-        for (w, h, screen) in [(320, 128, true), (320, 100, false), (500, 70, true)] {
+        for (w, h, screen) in [
+            (320, 128, true),
+            (320, 100, false),
+            (500, 70, true),
+            (320, 300, false),
+        ] {
             for img in [graphic(w, h), photo(w, h, 3, 3)] {
                 let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
                 let options = crate::Options {
                     tile_cols_log2: 1,
+                    tile_rows_log2: 1,
                     ..crate::Options::effort(100, 4, screen, (w * h) as u64).tune_iq()
                 };
                 let mut e = crate::encoder(w as u32, h as u32, &rows, &options, false);
                 assert!(e.frame.tiling.cols() == 2);
+                assert!(e.frame.tiling.rows() == if h >= 256 { 2 } else { 1 });
                 e.recon = Some(vec![Vec::new(); 3]);
                 for y in 0..h {
                     let r: Vec<&[u8]> = img.iter().map(|p| &p[y * w..][..w]).collect();
@@ -4964,6 +4983,151 @@ pub(crate) mod tests {
             &fast_avif_dec::DecoderTrials,
         );
         assert!(one.data != alone.data);
+    }
+
+    /// Two tile rows of two columns, over 512×512 so the learnt prunes count per tile: threads,
+    /// one helper, a spawner that refuses or runs its work late, and one thread code the same
+    /// bytes; each tile's counters are those of the tile coded alone; and tiles coded apart decode
+    /// as reconstructed.
+    #[test]
+    fn tile_rows_threads() {
+        let (w, h) = (1100, 600);
+        let img = photo(w, h, 3, 11);
+        let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
+        let options = crate::Options {
+            tile_cols_log2: 1,
+            tile_rows_log2: 1,
+            ..crate::Options::effort(120, 4, false, (w * h) as u64)
+                .tune_iq()
+                .fast()
+        };
+        let mut e = crate::still_rows(w as u32, h as u32, &rows, &options, false, None);
+        assert!((e.frame.tiling.cols(), e.frame.tiling.rows()) == (2, 2));
+        e.flush();
+        let alone = crate::still(
+            w as u32,
+            h as u32,
+            &rows,
+            &options,
+            &fast_avif_dec::DecoderTrials,
+        );
+        let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
+            std::thread::spawn(f);
+            true
+        });
+        let refusing: fast_avif_shared::Spawner = std::sync::Arc::new(|_| false);
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let one: fast_avif_shared::Spawner = std::sync::Arc::new(move |f| {
+            !once.swap(true, std::sync::atomic::Ordering::Relaxed) && {
+                std::thread::spawn(f);
+                true
+            }
+        });
+        let late = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let keeping: fast_avif_shared::Spawner = {
+            let late = late.clone();
+            std::sync::Arc::new(move |f| {
+                late.lock().unwrap().push(f);
+                true
+            })
+        };
+        let shared = std::sync::Arc::new(img.clone());
+        for (name, spawner) in [
+            ("threads", &threads),
+            ("refusing", &refusing),
+            ("one", &one),
+            ("keeping", &keeping),
+        ] {
+            let coded = crate::still_on(
+                w as u32,
+                h as u32,
+                shared.clone(),
+                &options,
+                Some(spawner),
+                &fast_avif_dec::DecoderTrials,
+            );
+            assert!(coded.data == alone.data, "{name}");
+        }
+        for f in late.lock().unwrap().drain(..) {
+            f();
+        }
+        let mut e = crate::encoder(w as u32, h as u32, &rows, &options, false);
+        e.recon = Some(vec![Vec::new(); 3]);
+        let mut parts = vec![];
+        for tile in 0..4 {
+            let mut t = crate::encoder(w as u32, h as u32, &rows, &options, false);
+            t.recon = Some(vec![Vec::new(); 3]);
+            t.own = Some(tile);
+            parts.push(t);
+        }
+        for t in parts.iter_mut().chain([&mut e]) {
+            for y in 0..h {
+                let r: Vec<&[u8]> = img.iter().map(|p| &p[y * w..][..w]).collect();
+                t.push(&r);
+            }
+            t.flush();
+        }
+        assert!(e.split_seen.iter().all(|t| t.iter().any(|s| s.0 > 0)));
+        for (tile, t) in parts.iter().enumerate() {
+            assert!(
+                e.split_seen[tile] == t.split_seen[tile],
+                "tile {tile}'s 8x8 counters"
+            );
+            assert!(
+                e.rect_seen[tile] == t.rect_seen[tile],
+                "tile {tile}'s rect counters"
+            );
+        }
+        e.own = Some(usize::MAX);
+        e.coded.iter_mut().for_each(Vec::clear);
+        for t in parts {
+            e.merge(t);
+        }
+        let c = e.finish();
+        let decoded = decode(c.data.clone(), w, h, 3);
+        let recon = c.recon.as_ref().unwrap();
+        for p in 0..3 {
+            if let Some(i) = (0..w * h).find(|&i| decoded[p][i] != recon[p][i]) {
+                panic!("plane {p}: first difference at ({}, {})", i % w, i / w);
+            }
+        }
+    }
+
+    /// More tiles than a 64-bit mask holds: threads and one thread code the same bytes.
+    #[test]
+    fn tiles_past_64_threads() {
+        let (w, h) = (512, 1024);
+        let img = photo(w, h, 3, 13);
+        let rows: Vec<&[u8]> = img.iter().map(|p| p.as_slice()).collect();
+        let options = crate::Options {
+            tile_cols_log2: 3,
+            tile_rows_log2: 4,
+            ..crate::Options::effort(160, 4, false, (w * h) as u64)
+                .tune_iq()
+                .fast()
+        };
+        let e = crate::encoder(w as u32, h as u32, &rows, &options, false);
+        assert!(e.frame.tiling.cols() * e.frame.tiling.rows() == 128);
+        let alone = crate::still(
+            w as u32,
+            h as u32,
+            &rows,
+            &options,
+            &fast_avif_dec::DecoderTrials,
+        );
+        let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
+            std::thread::spawn(f);
+            true
+        });
+        let on = crate::still_on(
+            w as u32,
+            h as u32,
+            std::sync::Arc::new(img.clone()),
+            &options,
+            Some(&threads),
+            &fast_avif_dec::DecoderTrials,
+        );
+        assert!(alone.data == on.data);
     }
 
     /// A graphic in two tile columns at effort 4 and up: threads and one thread code the same
@@ -5331,6 +5495,7 @@ pub(crate) mod tests {
             graphic_guard: false,
             fast_cdef: std::env::var("ENC_FAST_CDEF").is_ok_and(|v| v == "1"),
             tile_cols_log2: std::env::var("ENC_TILES").map_or(1, |v| v.parse().unwrap()),
+            tile_rows_log2: std::env::var("ENC_TILE_ROWS").map_or(0, |v| v.parse().unwrap()),
         };
         let mut files: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -5369,6 +5534,9 @@ pub(crate) mod tests {
                     }
                     if let Ok(t) = std::env::var("ENC_TILES") {
                         o.tile_cols_log2 = t.parse().unwrap();
+                    }
+                    if let Ok(t) = std::env::var("ENC_TILE_ROWS") {
+                        o.tile_rows_log2 = t.parse().unwrap();
                     }
                     let mut o = if std::env::var("ENC_FAST").is_ok_and(|v| v == "1") {
                         o.fast()
@@ -5416,13 +5584,25 @@ pub(crate) mod tests {
                 Err(_) => options.clone(),
             };
             let t = std::time::Instant::now();
-            let threads: fast_avif_shared::Spawner = std::sync::Arc::new(|f| {
-                std::thread::spawn(f);
+            // `ENC_HELPERS=n` refuses work while n helpers are busy, as an application's pool does.
+            let most: usize =
+                std::env::var("ENC_HELPERS").map_or(usize::MAX, |v| v.parse().unwrap());
+            let running = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let threads: fast_avif_shared::Spawner = std::sync::Arc::new(move |f| {
+                use std::sync::atomic::Ordering::AcqRel;
+                if running.fetch_add(1, AcqRel) >= most {
+                    running.fetch_sub(1, AcqRel);
+                    return false;
+                }
+                let running = running.clone();
+                std::thread::spawn(move || {
+                    f();
+                    running.fetch_sub(1, AcqRel);
+                });
                 true
             });
             let shared = std::sync::Arc::new(planes.clone());
-            let workers = std::env::var("ENC_THREADS")
-                .is_ok_and(|v| v == "1")
+            let workers = (std::env::var("ENC_THREADS").is_ok_and(|v| v == "1") && most > 0)
                 .then_some((&threads, &shared));
             let mut e = crate::still_rows(
                 w as u32,

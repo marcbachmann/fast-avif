@@ -32,6 +32,7 @@ pub mod quant;
 pub mod rd;
 
 use std::cmp;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use fast_avif_shared::dequant_tables::DAV1D_DQ_TBL;
@@ -219,6 +220,12 @@ pub struct Options {
     /// at 0.02-0.05 dB more; screen content and smaller pictures stay one tile, where a tile's
     /// own CDFs cost a fixed 100-300 B (graph paper 431 -> 704 B, a 300×200 ramp -1.5 dB).
     pub tile_cols_log2: u8,
+    /// At least 2^this many tile rows where the picture is 4 superblocks tall or more. Tiles are
+    /// coded by however many threads `still_on` gets, so the bytes do not depend on it. Two rows of
+    /// two columns against two columns cost photos 0.01-0.04 dB at equal bytes at 2048 px (0.07
+    /// at qindex 200), 0.01-0.07 dB at 1200 px; with three helpers a 2048 px photo takes 0.39-0.44
+    /// of one thread's time, against 0.59-0.70 for two columns and one helper.
+    pub tile_rows_log2: u8,
 }
 
 impl Options {
@@ -320,6 +327,7 @@ impl Options {
             fast_cdef: false,
             graphic_guard: false,
             tile_cols_log2: (!screen && pixels > 512 * 512) as u8,
+            tile_rows_log2: 0,
         }
     }
 }
@@ -492,13 +500,6 @@ pub fn still_timed(width: u32, height: u32, planes: &[&[u8]], options: &Options)
     still_rows(width, height, planes, options, true, None)
 }
 
-/// A tile column handed to a spawner: not started, coded by whoever started it, or done.
-enum Column {
-    Waiting,
-    Coding,
-    Done(std::thread::Result<Encoder<Rd>>),
-}
-
 pub(crate) fn still_rows(
     width: u32,
     height: u32,
@@ -508,7 +509,7 @@ pub(crate) fn still_rows(
     workers: Option<(&fast_avif_shared::Spawner, &Arc<Vec<Vec<u8>>>)>,
 ) -> Encoder<Rd> {
     let mut e = encoder(width, height, planes, options, timing);
-    let cols = e.frame.tiling.cols();
+    let tiles = e.frame.tiling.cols() * e.frame.tiling.rows();
     let push = move |mut e: Encoder<Rd>, planes: &[&[u8]]| {
         let w = width as usize;
         for y in 0..height as usize {
@@ -518,57 +519,58 @@ pub(crate) fn still_rows(
         e.flush();
         e
     };
-    let Some((spawner, shared)) = workers.filter(|_| cols > 1) else {
+    let Some((spawner, shared)) = workers.filter(|_| tiles > 1) else {
         return push(e, planes);
     };
-    let code = move |col: u32, planes: &[&[u8]], options: &Options| {
+    let code = move |tile: u32, planes: &[&[u8]], options: &Options| {
         let mut e = encoder(width, height, planes, options, timing);
-        e.own = 1 << col;
+        e.own = Some(tile as usize);
         push(e, planes)
     };
-    let slots: Vec<_> = (1..cols)
-        .map(|_| Arc::new((Mutex::new(Column::Waiting), Condvar::new())))
-        .collect();
-    for (col, slot) in (1..).zip(&slots) {
-        let (slot, shared, options) = (slot.clone(), shared.clone(), options.clone());
+    // Tile 0 is this thread's; the others go to whoever takes the next one, each tile coded alone.
+    let pool = Arc::new(Pool {
+        next: AtomicU32::new(1),
+        done: Mutex::new((1..tiles).map(|_| None).collect()),
+        ready: Condvar::new(),
+    });
+    let take = move |pool: &Pool, planes: &[&[u8]], options: &Options| loop {
+        let tile = pool.next.fetch_add(1, Ordering::Relaxed);
+        if tile >= tiles {
+            break;
+        }
+        let coded =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| code(tile, planes, options)));
+        pool.done.lock().unwrap()[tile as usize - 1] = Some(coded);
+        pool.ready.notify_all();
+    };
+    for _ in 1..tiles {
+        let (pool, shared, options) = (pool.clone(), shared.clone(), options.clone());
         let taken = spawner(Box::new(move || {
-            if !matches!(
-                std::mem::replace(&mut *slot.0.lock().unwrap(), Column::Coding),
-                Column::Waiting
-            ) {
-                return;
-            }
             let rows: Vec<&[u8]> = shared.iter().map(|p| p.as_slice()).collect();
-            let coded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                code(col, &rows, &options)
-            }));
-            *slot.0.lock().unwrap() = Column::Done(coded);
-            slot.1.notify_all();
+            take(&pool, &rows, &options);
         }));
         if !taken {
             break;
         }
     }
-    e.own = 1;
+    e.own = Some(0);
     let mut e = push(e, planes);
-    // Columns no worker has started are coded here; started ones are waited for.
-    for (col, slot) in (1..).zip(&slots) {
-        let mut state = slot.0.lock().unwrap();
-        let worker = loop {
-            match std::mem::replace(&mut *state, Column::Coding) {
-                Column::Waiting => {
-                    drop(state);
-                    break code(col, planes, options);
-                }
-                Column::Coding => state = slot.1.wait(state).unwrap(),
-                Column::Done(coded) => {
-                    break coded.unwrap_or_else(|p| std::panic::resume_unwind(p))
-                }
-            }
-        };
-        e.merge(worker);
+    take(&pool, planes, options);
+    let mut done = pool.done.lock().unwrap();
+    while done.iter().any(Option::is_none) {
+        done = pool.ready.wait(done).unwrap();
+    }
+    for coded in done.iter_mut().map(|t| t.take().unwrap()) {
+        e.merge(coded.unwrap_or_else(|p| std::panic::resume_unwind(p)));
     }
     e
+}
+
+/// The tiles after the first: the next one to take, and each one's encoder once coded.
+struct Pool {
+    next: AtomicU32,
+    done: Mutex<Vec<Option<std::thread::Result<Encoder<Rd>>>>>,
+    ready: Condvar,
 }
 
 pub(crate) fn encoder(
@@ -579,11 +581,16 @@ pub(crate) fn encoder(
     timing: bool,
 ) -> Encoder<Rd> {
     let (seq, mut frame) = headers(width, height, planes.len() == 1, options.qidx);
-    frame.tiling = Tiling::with_cols(
+    frame.tiling = Tiling::with_tiles(
         width,
         height,
         if width >= 4 * 64 {
             options.tile_cols_log2
+        } else {
+            0
+        },
+        if height >= 4 * 64 {
+            options.tile_rows_log2
         } else {
             0
         },
