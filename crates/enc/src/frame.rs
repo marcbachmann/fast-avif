@@ -486,6 +486,9 @@ pub struct Encoder<D: Decide> {
     chosen: Vec<Vec<TxDone>>,
     /// Emptied level and transform block lists for the next trials.
     spare: (Vec<Vec<i32>>, Vec<Vec<TxDone>>),
+    /// The node lists of partition candidates, kept for the next block.
+    spare_nodes: Vec<Vec<Node>>,
+    source_scratch: std::cell::Cell<Vec<u8>>,
     /// Pixel buffers of dropped snaps and palette maps, and the mode lists of the last block
     /// searched, kept for the next: two tile columns coded at once otherwise wait on each other
     /// in the allocator.
@@ -709,6 +712,8 @@ impl<D: Decide> Encoder<D> {
             replay: None,
             chosen: Vec::new(),
             spare: (Vec::new(), Vec::new()),
+            spare_nodes: Vec::new(),
+            source_scratch: Default::default(),
             snaps: Vec::new(),
             lists: Default::default(),
             residual_bits: None,
@@ -1440,11 +1445,11 @@ impl<D: Decide> Encoder<D> {
     /// Keeps the lists and level buffers of transform blocks no longer needed for later trials.
     fn recycle(&mut self, mut txs: Vec<TxDone>) {
         for t in txs.drain(..) {
-            if t.coefs.levels.capacity() > 0 && self.spare.0.len() < 128 {
+            if t.coefs.levels.capacity() > 0 && self.spare.0.len() < 512 {
                 self.spare.0.push(t.coefs.levels);
             }
         }
-        if self.spare.1.len() < 16 {
+        if txs.capacity() > 0 && self.spare.1.len() < 64 {
             self.spare.1.push(txs);
         }
     }
@@ -1473,6 +1478,19 @@ impl<D: Decide> Encoder<D> {
         let saved_l = self.left.save_coef(ly..ly + bh4 as usize);
         let edge_filter = (self.seq.edge_filter as i32) << 10;
         let mut txs = self.spare.1.pop().unwrap_or_default();
+        let count = |tx: TxfmSize| {
+            let d = &DAV1D_TXFM_DIMENSIONS[tx as usize];
+            (bw4 as usize).div_ceil(d.w as usize) * (bh4 as usize).div_ceil(d.h as usize)
+        };
+        txs.reserve(cmp::max(
+            16,
+            if planes.contains(&0) { count(tx) } else { 0 }
+                + if planes.contains(&1) {
+                    2 * count(uvtx)
+                } else {
+                    0
+                },
+        ));
         if planes.contains(&0) {
             let flags = self.sm_flag(ax, ly) | edge_filter;
             let pal = intra.pal_sz[0] > 0;
@@ -2077,19 +2095,20 @@ impl<D: Decide> Encoder<D> {
         if w == 0 || h == 0 {
             return out;
         }
-        let px = self.source(0, x, y, w, h);
-        for by in (0..h).step_by(4) {
-            for bx in (0..w).step_by(4) {
-                let (mut s, mut q) = (0i64, 0i64);
-                for row in px[by * w + bx..].chunks(w).take(4) {
-                    for &p in &row[..4] {
-                        s += p as i64;
-                        q += p as i64 * p as i64;
+        self.source(0..1, x, y, w, h, |px| {
+            for by in (0..h).step_by(4) {
+                for bx in (0..w).step_by(4) {
+                    let (mut s, mut q) = (0i64, 0i64);
+                    for row in px[by * w + bx..].chunks(w).take(4) {
+                        for &p in &row[..4] {
+                            s += p as i64;
+                            q += p as i64 * p as i64;
+                        }
                     }
+                    out[by / 4 * 16 + bx / 4] = 16 * q - s * s;
                 }
-                out[by / 4 * 16 + bx / 4] = 16 * q - s * s;
             }
-        }
+        });
         out
     }
 
@@ -2114,10 +2133,11 @@ impl<D: Decide> Encoder<D> {
         if w == 0 || h == 0 {
             return 0;
         }
-        let px = self.source(0, x, y, w, h);
         let n = (w * h) as u64;
-        let (sum, sse) = px.iter().fold((0u64, 0u64), |(s, q), &p| {
-            (s + p as u64, q + (p as u64) * (p as u64))
+        let (sum, sse) = self.source(0..1, x, y, w, h, |px| {
+            px.iter().fold((0u64, 0u64), |(s, q), &p| {
+                (s + p as u64, q + (p as u64) * (p as u64))
+            })
         });
         (sse * n - sum * sum) / (n * n)
     }
@@ -2476,11 +2496,25 @@ impl<D: Decide> Encoder<D> {
         total
     }
 
-    /// The source pixels of a plane in `w`×`h` at a block's corner.
-    fn source(&self, plane: usize, x: i32, y: i32, w: usize, h: usize) -> Vec<u8> {
-        let mut out = Vec::with_capacity(w * h);
-        self.src[plane].read(x as usize * 4, (y as usize * 4) % SB, w, h, &mut out);
-        out
+    /// The source pixels of `planes` in `w`×`h` at a block's corner, one plane after another,
+    /// in a buffer kept for the next call.
+    fn source<R>(
+        &self,
+        planes: Range<usize>,
+        x: i32,
+        y: i32,
+        w: usize,
+        h: usize,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> R {
+        let mut out = self.source_scratch.take();
+        out.clear();
+        for p in planes {
+            self.src[p].read(x as usize * 4, (y as usize * 4) % SB, w, h, &mut out);
+        }
+        let r = f(&out);
+        self.source_scratch.set(out);
+        r
     }
 
     /// The sum of absolute 4×4 Hadamard coefficients of the luma residual in a block's visible
@@ -2582,9 +2616,11 @@ impl<D: Decide> Encoder<D> {
     /// Searches the superblock and leaves its plan to be coded.
     fn search_sb(&mut self, ti: usize, x: i32, y: i32) {
         self.plan.clear();
-        for txs in std::mem::take(&mut self.chosen) {
+        let mut chosen = std::mem::take(&mut self.chosen);
+        for txs in chosen.drain(..) {
             self.recycle(txs);
         }
+        self.chosen = chosen;
         self.next = 0;
         let s = self.snap_contexts(x, y, 16, 16);
         self.dry = true;
@@ -2607,14 +2643,20 @@ impl<D: Decide> Encoder<D> {
         let src = &self.src[0];
         let x0 = x as usize * 4;
         let mut px = [0u8; 65 * 65];
-        for (r, row) in px.chunks_exact_mut(65).enumerate() {
-            let line = match r {
-                0 if self.sby == 0 => src.row(0, 0, src.stride),
-                0 => self.src_above.clone(),
-                _ => src.row(r - 1, 0, src.stride),
-            };
+        let fill = |row: &mut [u8], line: &[u8]| {
             row[0] = line[x0.saturating_sub(1)];
             row[1..].copy_from_slice(&line[x0..x0 + 64]);
+        };
+        for (r, row) in px.chunks_exact_mut(65).enumerate() {
+            if r == 0 && self.sby != 0 {
+                fill(row, &self.src_above);
+            } else {
+                let y = r.saturating_sub(1);
+                fill(
+                    row,
+                    &src.comp.slice::<BD, _>((y * src.stride.., ..src.stride)),
+                );
+            }
         }
         Cnn::new(&px, self.sb_qidx)
     }
@@ -2832,7 +2874,15 @@ impl<D: Decide> Encoder<D> {
                 _ => {}
             }
             if best.as_ref().is_none_or(|b| cost < b.0) {
-                best = Some((cost, bits, Option::None, self.plan[plan_len..].to_vec()));
+                let mut nodes = self.spare_nodes.pop().unwrap_or_default();
+                nodes.clear();
+                nodes.extend_from_slice(&self.plan[plan_len..]);
+                if let Some((.., snap, old)) = best.replace((cost, bits, Option::None, nodes)) {
+                    self.spare_nodes.push(old);
+                    if let Some(snap) = snap {
+                        self.unsnap(snap);
+                    }
+                }
             }
         }
         let (cost, bits, snap, nodes) = best.unwrap();
@@ -2869,7 +2919,8 @@ impl<D: Decide> Encoder<D> {
         self.unsnap(start);
         self.counter.bits = base + bits;
         self.plan.truncate(plan_len);
-        self.plan.extend(nodes);
+        self.plan.extend_from_slice(&nodes);
+        self.spare_nodes.push(nodes);
     }
 
     /// Finds the best modes of a block and leaves them applied; its node goes on the plan and its
@@ -3051,7 +3102,7 @@ impl<D: Decide> Encoder<D> {
             }
         }
         if limits.palette {
-            for pal in palette::candidates_y(&self.source(0, x, y, vw, vh)) {
+            for pal in self.source(0..1, x, y, vw, vh, palette::candidates_y) {
                 let mut c = Intra {
                     y_mode: DC_PRED,
                     ..Default::default()
@@ -3266,8 +3317,11 @@ impl<D: Decide> Encoder<D> {
                 }
             }
             if limits.palette {
-                let (u, v) = (self.source(1, x, y, vw, vh), self.source(2, x, y, vw, vh));
-                for (pu, pv) in palette::candidates_uv(&u, &v) {
+                let cands = self.source(1..3, x, y, vw, vh, |uv| {
+                    let (u, v) = uv.split_at(vw * vh);
+                    palette::candidates_uv(u, v)
+                });
+                for (pu, pv) in cands {
                     let mut c = Intra {
                         uv_mode: DC_PRED,
                         uv_angle: 0,
