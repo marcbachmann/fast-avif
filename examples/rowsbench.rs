@@ -1,7 +1,8 @@
 //! `rowsbench <file.obu> <whole|rows|rows-nolf|whole-nolf> <helpers>`: decodes the one picture of
 //! an OBU stream once, whole with `helpers` workers on a pool of the caller's threads or by rows
 //! with `helpers` threads for the rows spawner, and prints its wall and CPU time, the peak RSS and
-//! a hash of the picture's rows. `-nolf` turns the in-loop filters off.
+//! a hash of the picture's rows. `-nolf` turns the in-loop filters off; `-read` reads every row
+//! once it is final, as an application converting them would.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -105,10 +106,39 @@ fn hash(p: &Picture) -> u64 {
     h
 }
 
+/// Hashes the bytes of rows `from..to` of each plane into `sum`, about a nanosecond a byte.
+fn read(p: &Picture, from: usize, to: usize, mut sum: u64) -> u64 {
+    let sample = if p.bit_depth() > 8 { 2 } else { 1 };
+    for (i, c) in [
+        PlanarImageComponent::Y,
+        PlanarImageComponent::U,
+        PlanarImageComponent::V,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if i > 0 && p.pixel_layout() == PixelLayout::I400 {
+            break;
+        }
+        let s = (i > 0 && p.pixel_layout() == PixelLayout::I420) as usize;
+        let w = ((p.width() as usize + s) >> s) * sample;
+        let stride = p.stride(c) as usize;
+        let base = p.plane_ptr(c);
+        for y in (from + s) >> s..(to + s) >> s {
+            let row = unsafe { std::slice::from_raw_parts(base.add(y * stride), w) };
+            for &b in row {
+                sum = (sum ^ b as u64).wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    sum
+}
+
 fn main() -> Result<(), Rav1dError> {
     let args: Vec<String> = std::env::args().collect();
     let data = std::fs::read(&args[1]).expect("input");
     let mode = args[2].as_str();
+    let reads = mode.ends_with("-read");
     let helpers: usize = args[3].parse().expect("helpers");
     let whole = mode.starts_with("whole");
     let mut s = Settings::new();
@@ -135,17 +165,31 @@ fn main() -> Result<(), Rav1dError> {
         Ok(()) | Err(Rav1dError::TryAgain) => {}
         Err(e) => return Err(e),
     }
+    let mut sum = 0;
     if !whole {
-        let h = d.rows_picture()?.height();
-        while d.decode_rows()? < h {
+        let rows = d.rows_picture()?;
+        let h = rows.height();
+        let mut done = 0;
+        loop {
+            let n = d.decode_rows()?;
+            if reads {
+                sum = read(&rows, done as usize, n as usize, sum);
+            }
+            done = n;
             calls += 1;
+            if n == h {
+                break;
+            }
         }
     }
     let p = d.get_picture()?;
+    if whole && reads {
+        sum = read(&p, 0, p.height() as usize, sum);
+    }
     let wall = start.elapsed().as_secs_f64() * 1e3;
     let cpu = cpu_ms() - cpu0;
     println!(
-        "mode={mode} h={helpers} wall_ms={wall:.1} cpu_ms={cpu:.0} hwm_kb={} {}x{} calls={calls} hash={:016x}",
+        "mode={mode} h={helpers} wall_ms={wall:.1} cpu_ms={cpu:.0} hwm_kb={} {}x{} calls={calls} read={sum} hash={:016x}",
         hwm_kb(),
         p.width(),
         p.height(),
