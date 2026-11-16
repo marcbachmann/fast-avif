@@ -45,11 +45,12 @@ use fast_avif_shared::msac::{
     MsacContext,
 };
 use fast_avif_shared::picture::Rav1dPicture;
+#[cfg(feature = "encoder")]
+use fast_avif_shared::pixels::Pixels as _;
 use fast_avif_shared::props::Rav1dDataProps;
 use fast_avif_shared::qm::DAV1D_QM_TBL;
 use fast_avif_shared::relaxed_atomic::RelaxedAtomic;
 use fast_avif_shared::shared_bytes::SharedBytes;
-#[cfg(feature = "encoder")]
 use fast_avif_shared::strided::Strided as _;
 use fast_avif_shared::sync::{Condvar, Mutex};
 use fast_avif_shared::tables::{
@@ -5146,9 +5147,34 @@ pub(crate) fn rav1d_filter_trials(
     let Rav1dContextTaskType::Single(t) = &c.tc[0].task else {
         panic!("Expected a single-threaded context");
     };
+    let mut unfiltered: Vec<Vec<u8>> = Vec::new();
     let decoded = {
         let f = fc.data.try_write().unwrap();
         let mut t = t.lock();
+        let pic = f.cur.data.clone().unwrap();
+        let planes = if f.cur.p.layout == Rav1dPixelLayout::I400 {
+            1
+        } else {
+            3
+        };
+        unfiltered = (0..planes)
+            .map(|p| Vec::with_capacity(pic.data[p].byte_len()))
+            .collect();
+        // The picture is copied a row behind the tiles and given back, so it is never held twice.
+        let mut keep = |rows: i32| {
+            for (p, copy) in unfiltered.iter_mut().enumerate() {
+                let plane = &pic.data[p];
+                let end = match rows == f.sr_cur.p.p.h {
+                    true => plane.byte_len(),
+                    false => rows as usize * plane.stride() as usize,
+                };
+                let from = copy.len();
+                if end > from {
+                    copy.extend_from_slice(&plane.byte_slice()[from..end]);
+                    plane.give_back(from..end);
+                }
+            }
+        };
         let usable = !f.lf.ring
             && f.bitdepth_max == 0xff
             && matches!(
@@ -5169,7 +5195,13 @@ pub(crate) fn rav1d_filter_trials(
                 break;
             };
             res = decode_sbrow(c, &mut t, &f, tile_row, sby, None);
+            if res.is_ok() {
+                keep(final_rows(&f, sby));
+            }
             sby += 1;
+        }
+        if res.is_ok() {
+            keep(f.sr_cur.p.p.h);
         }
         res
     };
@@ -5190,8 +5222,12 @@ pub(crate) fn rav1d_filter_trials(
         } else {
             3
         };
-        let unfiltered: Vec<Vec<u8>> = (0..planes).map(|p| pic.data[p].bytes()).collect();
         let (w, h) = (f.cur.p.w as usize, f.cur.p.h as usize);
+        let sb = f.sb_step as usize * 4;
+        let end = |p: usize, rows: usize| match rows == h {
+            true => pic.data[p].byte_len(),
+            false => rows * pic.data[p].stride() as usize,
+        };
         let mut trial = |edit: &dyn Fn(&mut Rav1dFrameHeader)| {
             let mut hdr = Rav1dFrameHeader::clone(&original);
             edit(&mut hdr);
@@ -5208,16 +5244,30 @@ pub(crate) fn rav1d_filter_trials(
             );
             set_filter_levels(f, &hdr);
             f.frame_hdr = Some(Arc::new(hdr));
-            for (p, bytes) in unfiltered.iter().enumerate() {
-                pic.data[p].put_bytes(bytes);
-            }
-            for sby in 0..f.sbh {
-                (f.bd_fn().refilter_sbrow)(c, f, &mut t, sby);
-            }
+            // Row by row: the rows the filters reach are put back, and the rows no later filter
+            // changes are measured and given back.
             let mut out = [0; 3];
-            for (p, o) in out[..planes].iter_mut().enumerate() {
-                let stride = pic.data[p].stride() as usize;
-                *o = measure(p, &pic.data[p].byte_slice(), stride, w, h);
+            let (mut restored, mut measured) = (0, 0);
+            for sby in 0..f.sbh {
+                let ahead = ((sby as usize + 2) * sb).min(h);
+                if ahead > restored {
+                    for (p, bytes) in unfiltered.iter().enumerate() {
+                        pic.data[p].put_range(bytes, end(p, restored)..end(p, ahead));
+                    }
+                    restored = ahead;
+                }
+                (f.bd_fn().refilter_sbrow)(c, f, &mut t, sby);
+                let done = final_rows(f, sby) as usize;
+                if done > measured {
+                    for (p, o) in out[..planes].iter_mut().enumerate() {
+                        let plane = &pic.data[p];
+                        let stride = plane.stride() as usize;
+                        let rows = &plane.byte_slice()[measured * stride..];
+                        *o += measure(p, rows, stride, w, measured..done);
+                        plane.give_back(end(p, measured)..end(p, done));
+                    }
+                    measured = done;
+                }
             }
             out
         };

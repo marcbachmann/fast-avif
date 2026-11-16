@@ -2,6 +2,8 @@
 //! search them at its default speeds: the frame header is written last, so the strengths can be
 //! chosen once every tile is coded.
 
+use std::ops::Range;
+
 use fast_avif_shared::filter_trials::FilterTrials;
 use fast_avif_shared::headers::Rav1dFrameHeader;
 
@@ -35,14 +37,14 @@ fn put_filters(fr: &Frame, mono: bool, cdef: bool, hdr: &mut Rav1dFrameHeader) {
 pub fn search(e: &mut Encoder<Rd>, src: &[&[u8]], trials: &dyn FilterTrials) {
     let (w, h) = (e.seq.width as usize, e.seq.height as usize);
     let (mono, cdef) = (e.seq.mono, e.seq.cdef);
-    let mut measure = |p: usize, px: &[u8], stride: usize, pw: usize, ph: usize| {
-        assert!((pw, ph) == (w, h));
+    let mut measure = |p: usize, px: &[u8], stride: usize, pw: usize, rows: Range<usize>| {
+        assert!(pw == w && rows.end <= h);
         let mut sum = 0;
-        for y in (0..h).step_by(64) {
+        for y in rows.clone().step_by(64) {
             for x in (0..w).step_by(64) {
-                let (tw, th) = ((w - x).min(64), (h - y).min(64));
+                let (tw, th) = ((w - x).min(64), (rows.end - y).min(64));
                 sum += dist::sse(
-                    &px[y * stride + x..],
+                    &px[(y - rows.start) * stride + x..],
                     stride,
                     &src[p][y * w + x..],
                     w,
@@ -205,11 +207,12 @@ mod tests {
             e.frame.lf = lf;
             let measure = || {
                 let src = &src;
-                move |p: usize, px: &[u8], stride: usize, _: usize, _: usize| -> u64 {
-                    let at = (0..h).flat_map(|y| (0..w).step_by(64).map(move |x| (y, x)));
+                move |p: usize, px: &[u8], stride: usize, _: usize, rows: Range<usize>| -> u64 {
+                    let y0 = rows.start;
+                    let at = rows.flat_map(|y| (0..w).step_by(64).map(move |x| (y, x)));
                     at.map(|(y, x)| {
                         dist::sse(
-                            &px[y * stride + x..],
+                            &px[(y - y0) * stride + x..],
                             stride,
                             &src[p][y * w + x..],
                             w,
@@ -223,16 +226,16 @@ mod tests {
             let mut trial_measure = measure();
             // The oracle sums the squared differences on its own, plane by plane, row by row.
             let mut decoded_measure =
-                |p: usize, px: &[u8], stride: usize, _: usize, _: usize| -> u64 {
-                    (0..h)
-                        .map(|y| {
-                            px[y * stride..][..w]
-                                .iter()
-                                .zip(&src[p][y * w..][..w])
-                                .map(|(&a, &b)| (a as i64 - b as i64).pow(2) as u64)
-                                .sum::<u64>()
-                        })
-                        .sum()
+                |p: usize, px: &[u8], stride: usize, _: usize, rows: Range<usize>| -> u64 {
+                    let y0 = rows.start;
+                    rows.map(|y| {
+                        px[(y - y0) * stride..][..w]
+                            .iter()
+                            .zip(&src[p][y * w..][..w])
+                            .map(|(&a, &b)| (a as i64 - b as i64).pow(2) as u64)
+                            .sum::<u64>()
+                    })
+                    .sum()
                 };
             let mut runs = 0;
             fast_avif_dec::DecoderTrials

@@ -224,6 +224,35 @@ impl Rav1dPictureDataComponent {
         self.0.index_mut(..).copy_from_slice(bytes);
     }
 
+    /// Puts back `bytes[at]` of a copy of this plane.
+    pub fn put_range(&self, bytes: &[u8], at: Range<usize>) {
+        self.0.index_mut(at.clone()).copy_from_slice(&bytes[at]);
+    }
+
+    /// Gives the whole pages of bytes `at` back to the system, which reads them as zeros after,
+    /// on Linux; elsewhere it keeps them.
+    pub fn give_back(&self, at: Range<usize>) {
+        #[cfg(target_os = "linux")]
+        {
+            extern "C" {
+                fn madvise(addr: *mut std::ffi::c_void, len: usize, advice: i32) -> i32;
+            }
+            const MADV_DONTNEED: i32 = 4;
+            const PAGE: usize = 4096;
+            let base = self.0.as_mut_ptr() as usize;
+            let from = (base + at.start).next_multiple_of(PAGE) - base;
+            let to = ((base + at.end) & !(PAGE - 1)).saturating_sub(base);
+            if to > from {
+                let pages = self.0.index_mut(from..to);
+                // SAFETY: the pages lie inside the plane and are borrowed mutably; private
+                // anonymous pages read as zeros after, which only changes their contents.
+                unsafe { madvise(pages.as_ptr() as *mut _, to - from, MADV_DONTNEED) };
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = at;
+    }
+
     pub fn copy_from(&self, src: &Self) {
         let dst = &mut *self.0.index_mut(..);
         let src = &*src.0.index(..);

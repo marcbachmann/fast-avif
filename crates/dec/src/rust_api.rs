@@ -411,7 +411,7 @@ impl fast_avif_shared::filter_trials::FilterTrials for DecoderTrials {
         let (w, h) = (pic.width() as usize, pic.height() as usize);
         let mut out = [0; 3];
         for (p, &c) in comps[..planes].iter().enumerate() {
-            out[p] = measure(p, pic.plane(c), pic.stride(c) as usize, w, h);
+            out[p] = measure(p, pic.plane(c), pic.stride(c) as usize, w, 0..h);
         }
         out
     }

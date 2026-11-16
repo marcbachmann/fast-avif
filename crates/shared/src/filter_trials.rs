@@ -1,11 +1,14 @@
 //! The encoder's search of the deblocking and CDEF strengths runs on a decoder: the decoder
 //! implements the trials, the encoder takes them by reference.
 
+use std::ops::Range;
+
 use crate::error::Rav1dResult;
 use crate::headers::Rav1dFrameHeader;
 
-/// What a filter trial measures of a plane: its index, its pixels, their stride, width and height.
-pub type Measure<'a> = dyn FnMut(usize, &[u8], usize, usize, usize) -> u64 + 'a;
+/// What a filter trial measures of rows of a plane: its index, the pixels from the first of the
+/// rows, their stride and width, and the rows. The sums of a plane's rows make its measure.
+pub type Measure<'a> = dyn FnMut(usize, &[u8], usize, usize, Range<usize>) -> u64 + 'a;
 
 /// One filter trial: puts the unfiltered picture back, filters it under a copy of the frame
 /// header as the edit leaves it, and measures each plane.
