@@ -200,9 +200,35 @@ pub fn nearest2(u: &[u8], v: &[u8], (pu, pv): (u8, u8)) -> u8 {
     best.1
 }
 
+/// Up to 8 palette colours.
+#[derive(Clone, Copy, Default)]
+pub struct Colours {
+    len: u8,
+    c: [u8; 8],
+}
+
+impl Colours {
+    fn of(c: impl IntoIterator<Item = u8>) -> Self {
+        let mut out = Self::default();
+        for (d, c) in out.c.iter_mut().zip(c) {
+            *d = c;
+            out.len += 1;
+        }
+        out
+    }
+}
+
+impl std::ops::Deref for Colours {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.c[..self.len as usize]
+    }
+}
+
 /// Luma palettes worth trying for these pixels: their colours when there are 2 to 8, else
 /// k-means palettes of 8 and 4 colours when there are no more than 64.
-pub fn candidates_y(px: &[u8]) -> Vec<Vec<u8>> {
+pub fn candidates_y(px: &[u8]) -> impl Iterator<Item = Colours> {
     let mut hist = [0u32; 256];
     for &p in px {
         hist[p as usize] += 1;
@@ -214,12 +240,19 @@ pub fn candidates_y(px: &[u8]) -> Vec<Vec<u8>> {
         n += 1;
     }
     let colors = &all[..n];
-    match colors.len() {
-        0 | 1 => vec![],
-        2..=8 => vec![colors.to_vec()],
-        9..=64 => [8, 4].iter().map(|&k| kmeans1(&hist, &colors, k)).collect(),
-        _ => vec![],
-    }
+    let mut out = [Colours::default(); 2];
+    let n = match colors.len() {
+        2..=8 => {
+            out[0] = Colours::of(colors.iter().copied());
+            1
+        }
+        9..=64 => {
+            out = [8, 4].map(|k| kmeans1(&hist, colors, k));
+            2
+        }
+        _ => 0,
+    };
+    out.into_iter().take(n)
 }
 
 /// The first of the smallest distances, as `min_by` with `total_cmp` picks it.
@@ -233,7 +266,7 @@ fn nearest_of(d: impl Iterator<Item = f64>) -> usize {
     best.1
 }
 
-fn kmeans1(hist: &[u32; 256], colors: &[u8], k: usize) -> Vec<u8> {
+fn kmeans1(hist: &[u32; 256], colors: &[u8], k: usize) -> Colours {
     let mut by_count = [0u8; 64];
     let by_count = &mut by_count[..colors.len()];
     by_count.copy_from_slice(colors);
@@ -257,53 +290,80 @@ fn kmeans1(hist: &[u32; 256], colors: &[u8], k: usize) -> Vec<u8> {
             }
         }
     }
-    let mut out: Vec<u8> = centres.iter().map(|c| c.round() as u8).collect();
+    let mut out = [0u8; 8];
+    let out = &mut out[..k];
+    for (o, c) in out.iter_mut().zip(centres.iter()) {
+        *o = c.round() as u8;
+    }
     out.sort_unstable();
-    out.dedup();
-    out
+    Colours::of(dedup(out))
+}
+
+fn dedup<T: Copy + PartialEq>(sorted: &[T]) -> impl Iterator<Item = T> + '_ {
+    sorted
+        .iter()
+        .enumerate()
+        .filter(|&(i, c)| i == 0 || sorted[i - 1] != *c)
+        .map(|(_, &c)| c)
 }
 
 /// Chroma palettes (U colours sorted, V alongside) worth trying for these pixel pairs. A block
 /// with more than 64 pairs has none, which is known after the 65th distinct pair.
-pub fn candidates_uv(u: &[u8], v: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+pub fn candidates_uv(u: &[u8], v: &[u8]) -> impl Iterator<Item = (Colours, Colours)> {
+    let mut out = [(Colours::default(), Colours::default()); 2];
     let mut seen = [0u64; 1024];
-    let mut keys = Vec::with_capacity(65);
+    let mut keys = [0u16; 64];
+    let mut n = 0;
     for (&a, &b) in u.iter().zip(v) {
         let k = (a as usize) << 8 | b as usize;
         if seen[k >> 6] & 1 << (k & 63) == 0 {
             seen[k >> 6] |= 1 << (k & 63);
-            keys.push(k as u16);
-            if keys.len() > 64 {
-                return vec![];
+            if n == 64 {
+                return out.into_iter().take(0);
             }
+            keys[n] = k as u16;
+            n += 1;
         }
     }
+    let keys = &mut keys[..n];
     keys.sort_unstable();
-    let mut counts: Vec<((u8, u8), u32)> = keys
-        .iter()
-        .map(|&k| (((k >> 8) as u8, k as u8), 0))
-        .collect();
+    let mut counts = [((0u8, 0u8), 0u32); 64];
+    let counts = &mut counts[..n];
+    for (c, &k) in counts.iter_mut().zip(keys.iter()) {
+        c.0 = ((k >> 8) as u8, k as u8);
+    }
     for (&a, &b) in u.iter().zip(v) {
         let k = (a as u16) << 8 | b as u16;
         counts[keys.binary_search(&k).unwrap()].1 += 1;
     }
     let split = |c: &[(u8, u8)]| {
         (
-            c.iter().map(|p| p.0).collect(),
-            c.iter().map(|p| p.1).collect(),
+            Colours::of(c.iter().map(|p| p.0)),
+            Colours::of(c.iter().map(|p| p.1)),
         )
     };
-    match counts.len() {
-        0 | 1 => vec![],
-        2..=8 => vec![split(&counts.iter().map(|c| c.0).collect::<Vec<_>>())],
-        _ => [8, 4]
-            .iter()
-            .map(|&k| split(&kmeans2(&counts, k)))
-            .collect(),
-    }
+    let n = match counts.len() {
+        0 | 1 => 0,
+        2..=8 => {
+            let mut pairs = [(0u8, 0u8); 8];
+            for (p, c) in pairs.iter_mut().zip(counts.iter()) {
+                *p = c.0;
+            }
+            out[0] = split(&pairs[..counts.len()]);
+            1
+        }
+        _ => {
+            out = [8, 4].map(|k| {
+                let (pairs, n) = kmeans2(counts, k);
+                split(&pairs[..n])
+            });
+            2
+        }
+    };
+    out.into_iter().take(n)
 }
 
-fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
+fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> ([(u8, u8); 8], usize) {
     let mut by_count = [((0u8, 0u8), 0u32); 64];
     let by_count = &mut by_count[..counts.len()];
     by_count.copy_from_slice(counts);
@@ -329,13 +389,19 @@ fn kmeans2(counts: &[((u8, u8), u32)], k: usize) -> Vec<(u8, u8)> {
             }
         }
     }
-    let mut out: Vec<(u8, u8)> = centres
-        .iter()
-        .map(|c| (c.0.round() as u8, c.1.round() as u8))
-        .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
+    let mut out = [(0u8, 0u8); 8];
+    let rounded = &mut out[..k];
+    for (o, c) in rounded.iter_mut().zip(centres.iter()) {
+        *o = (c.0.round() as u8, c.1.round() as u8);
+    }
+    rounded.sort_unstable();
+    let mut deduped = [(0u8, 0u8); 8];
+    let mut n = 0;
+    for (d, c) in deduped.iter_mut().zip(dedup(rounded)) {
+        *d = c;
+        n += 1;
+    }
+    (deduped, n)
 }
 
 #[cfg(test)]
